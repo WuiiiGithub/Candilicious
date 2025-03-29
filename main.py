@@ -1,4 +1,6 @@
-import discord, asyncio, os, threading
+import os
+
+import discord, asyncio, threading
 from dotenv import load_dotenv
 from discord.ext import commands
 from flask import Flask, render_template
