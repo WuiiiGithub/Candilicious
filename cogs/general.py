@@ -1,16 +1,27 @@
 from discord import Interaction, Embed, app_commands, Object
 from discord.ext import commands, tasks
 from datetime import datetime
-import os, pymongo
+import os, pymongo, traceback
+from library import logging
 
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
 selfCollection = db["Self"]
+
+dlog = logging.Logger("General")
 
 class General(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        try:
+            await self.bot.tree.sync()
+        except:
+            traceback.print_exc()
+
     @app_commands.command(name="tos", description="Shows terms of service")
+    @dlog.command()
     async def tos(self, inter: Interaction):
         tos = selfCollection.find_one({"_id": "tos"})
         if tos:
@@ -27,6 +38,7 @@ class General(commands.Cog):
             ))
 
     @app_commands.command(name="privacy", description="Shows privacy policy")
+    @dlog.command()
     async def privacy(self, inter: Interaction):
         privacy = selfCollection.find_one({"_id": "privacy"})
         if privacy:
@@ -43,6 +55,7 @@ class General(commands.Cog):
             ))
 
     @app_commands.command(name="about", description="Shows details about the bot")
+    @dlog.command()
     async def about(self, inter: Interaction):
         about = selfCollection.find_one({"_id": "about"})
         if about:
@@ -59,6 +72,7 @@ class General(commands.Cog):
             ))
 
     @app_commands.command(name="new", description="Shows the details of the newest update.")
+    @dlog.command()
     async def new(self, inter: Interaction):
         update = selfCollection.find_one({"_id": "updates"})
         if update:

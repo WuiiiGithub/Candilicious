@@ -3,6 +3,9 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from discord.ext import commands
 from discord import app_commands
+from library.logging import Logger
+
+dlog = Logger("Study")
 
 load_dotenv()
 
@@ -83,6 +86,7 @@ class Study(commands.Cog):
     @app_commands.command(name="config", description="Configure your study channel")
     @app_commands.guild_only()
     @app_commands.describe(study="Please enter your study channel")
+    @dlog.command()
     async def config(self, inter: discord.Interaction, study: discord.VoiceChannel):
         """Save the study channel in the database."""
         try:
