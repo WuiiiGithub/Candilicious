@@ -1,79 +1,28 @@
-import discord, os, asyncio, pymongo, traceback, json, io
+import discord, os, asyncio, pymongo, traceback, json, io, qrcode
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from discord.ext import commands
 from discord import app_commands
+from library.templates import *
 from library.logging import Logger
+from library.session import *
 
-dlog = Logger("Study")
+dlog = Logger("Study", style="default")
 
 load_dotenv()
 
 db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
 serverCollection = db["Servers"]
 learnerCollection = db["Learners"]
-from datetime import datetime
-
-class sessionLearners:
-    def __init__(self):
-        self.learners = {}
-
-    def started(self, id: str):
-        self.learners[id] = datetime.now()
-        print(f"📌 Session started for {str(id)} at {self.learners[id]}.")
-
-    def cancel(self, id: str):
-        if id in self.learners:
-            del self.learners[id]
-            print(f"🚫 Session canceled for {id}.")
-        else:
-            print(f"⚠️ No active session found for {id}, cannot cancel.")
-
-    def ended(self, user_id: str, server_id: str):
-        if learnerCollection is None:
-            print("❌ Database collection is None! Cannot update session.")
-            return
-
-        if user_id not in self.learners:
-            print(f"⚠️ No active session found for {user_id}, skipping database update.")
-            return  
-
-        elapsed_seconds = (datetime.now() - self.learners[user_id]).total_seconds()
-        total_mins = int(elapsed_seconds // 60)
-        hours, mins = divmod(total_mins, 60)
-
-        if hours == 0 and mins == 0:
-            print(f"⏳ Skipping update for {user_id}, no meaningful time spent.")
-            return
-
-        print(f"📢 Ending session for {str(user_id)} on server {str(server_id)}: +{hours} hrs, +{mins} mins.")
-
-        result = learnerCollection.update_one(
-            {"_id": user_id},
-            {
-                "$inc": {
-                    f"servers.{server_id}.time.hrs": hours, 
-                    f"servers.{server_id}.time.mins": mins
-                },
-                "$setOnInsert": {"_id": user_id}
-            },
-            upsert=True
-        )
-
-        if result.matched_count > 0:
-            print(f"✅ Updated session for {user_id} on server {server_id}: +{hours} hrs, +{mins} mins.")
-        elif result.upserted_id:
-            print(f"✅ Created new session for {user_id} on server {server_id}: +{hours} hrs, +{mins} mins.")
-        else:
-            print(f"❌ Database update failed for {user_id} on server {server_id}. No changes were made.")
-
-        del self.learners[user_id]
+exceptionCollection = db["exception"]
+exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
 
 class Study(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.monitoringUsers = {}  
+        self.monitoringUsers = {}
+        self.exceptions = tempDataHandler()
         self.learnings = sessionLearners()
         print("✅ Entered Study Cogs")
 
@@ -92,44 +41,57 @@ class Study(commands.Cog):
         try:
             server_id = str(inter.guild_id)
             study_channel_id = str(study.id)
-            
-            print(f"⚙️ Configuring Study Channel for Server: {server_id} | Channel: {study_channel_id}")
+
+            print(
+                f"⚙️ Configuring Study Channel for Server: {server_id} | Channel: {study_channel_id}"
+            )
             serverCollection.update_one(
                 {"_id": server_id},
                 {"$set": {"_id": server_id, "channel": study_channel_id}},
-                upsert=True
+                upsert=True,
             )
             await inter.response.send_message(
                 embed=discord.Embed(
                     title="Study Configurations",
                     description=f"**Configuration Successful!** :tada:\nNow the study channel is {study.mention}",
                     timestamp=datetime.now(),
-                    color=0x3498db
+                    color=0x3498DB,
                 ),
-                delete_after=20
+                delete_after=20,
             )
         except Exception as e:
             print("❌ Error in `/config` command:", e)
             traceback.print_exc()
 
     @commands.Cog.listener()
-    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ):
         """Track users joining and activity changes in the study channel."""
         try:
             member_id = str(member.id)
             server_id = str(member.guild.id)
-            
+
             print(f"🔎 Checking study channel for Server: {server_id}")
             study_data = serverCollection.find_one({"_id": server_id})
 
             if not study_data or "channel" not in study_data:
                 print("⚠️ No study channel configured for this server.")
-                return  
+                return
 
             study_channel_id = str(study_data["channel"])
             print(f"📌 Study Channel ID Found: {study_channel_id}")
 
-            if after.channel and str(after.channel.id) == study_channel_id and (before.channel is None or str(before.channel.id) != study_channel_id):
+            if (
+                after.channel
+                and str(after.channel.id) == study_channel_id
+                and (
+                    before.channel is None or str(before.channel.id) != study_channel_id
+                )
+            ) and not self.exceptions.isInside:
                 print(f"👤 {member.name} joined study VC: {after.channel.name}")
                 self.learnings.started(id=member_id)
 
@@ -137,59 +99,85 @@ class Study(commands.Cog):
                     title=f"🎉 {member.display_name} is back! 🎉",
                     description=f"Welcome back {member.mention}!\nStudy time resumes!",
                     timestamp=datetime.now(),
-                    color=0x3498db
+                    color=0x3498DB,
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
                 embed.add_field(
                     name="Request",
-                    value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!"
+                    value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
                 )
                 await after.channel.send(embed=embed, delete_after=20)
 
                 print(f"⏳ Starting activity monitor for {member.name}")
-                task = asyncio.create_task(self.activityMonitor(member, study_channel_id))
+                task = asyncio.create_task(
+                    self.activityMonitor(member, study_channel_id)
+                )
                 self.monitoringUsers[member_id] = task
 
-            elif before.channel and str(before.channel.id) == study_channel_id and (after.channel is None or str(after.channel.id) != study_channel_id):
+            elif (
+                before.channel
+                and str(before.channel.id) == study_channel_id
+                and (after.channel is None or str(after.channel.id) != study_channel_id)
+            ):
                 print(f"🚪 {member.name} left study VC: {before.channel.name}")
 
                 if member_id in self.monitoringUsers:
                     print(f"🛑 Stopping activity monitor for {member.name}")
                     self.monitoringUsers[member_id].cancel()
                     del self.monitoringUsers[member_id]
-                
-                self.learnings.ended(user_id=member_id, server_id=server_id)
+
+                self.learnings.ended(user_id=member_id, name=member.display_name, server_id=server_id)
 
                 await before.channel.send(
-                    embed=discord.Embed(description=f"{member.mention} might be on a break. ☕", color=0x3498db),
-                    delete_after=90                    
+                    embed=discord.Embed(
+                        description=f"{member.mention} might be on a break. ☕",
+                        color=0x3498DB,
+                    ),
+                    delete_after=90,
                 )
 
-            elif member_id in self.monitoringUsers and ((not before.self_stream and after.self_stream) or (not before.self_video and after.self_video)):
-                await after.channel.send(embed=discord.Embed(
-                    title="",
-                    description=f"{member.mention}'s Activity Detected! ✅",
-                    timestamp=datetime.now(),
-                    color=0x3498db
-                ), delete_after=20)
-                print(f"✅ {member.name} enabled camera or screen share. Stopping timer.")
+            elif member_id in self.monitoringUsers and (
+                (not before.self_stream and after.self_stream)
+                or (not before.self_video and after.self_video)
+            ):
+                await after.channel.send(
+                    embed=discord.Embed(
+                        title="",
+                        description=f"{member.mention}'s Activity Detected! ✅",
+                        timestamp=datetime.now(),
+                        color=0x3498DB,
+                    ),
+                    delete_after=20,
+                )
+                print(
+                    f"✅ {member.name} enabled camera or screen share. Stopping timer."
+                )
                 self.monitoringUsers[member_id].cancel()
                 del self.monitoringUsers[member_id]
 
-            elif before.channel and str(before.channel.id) == study_channel_id and member_id not in self.monitoringUsers and \
-                ((before.self_stream and not after.self_stream) or (before.self_video and not after.self_video)):
+            elif (
+                before.channel
+                and str(before.channel.id) == study_channel_id
+                and member_id not in self.monitoringUsers
+                and (
+                    (before.self_stream and not after.self_stream)
+                    or (before.self_video and not after.self_video)
+                )
+            ) and not self.exceptions.isInside:
 
                 print(f"⚠️ {member.name} disabled cam/screen share. Restarting timer.")
 
                 embed = discord.Embed(
                     title="⚠️ Attention Required!",
                     description=f"{member.mention}, you turned off your camera or screen share.\n"
-                                "Please turn it back on within **5 minutes**, or you will be removed.",
-                    color=discord.Color.orange()
+                    "Please turn it back on within **5 minutes**, or you will be removed.",
+                    color=discord.Color.orange(),
                 )
                 await after.channel.send(embed=embed, delete_after=20)
 
-                task = asyncio.create_task(self.activityMonitor(member, study_channel_id))
+                task = asyncio.create_task(
+                    self.activityMonitor(member, study_channel_id)
+                )
                 try:
                     self.learnings.ended(user_id=member_id, server_id=server_id)
                 except:
@@ -203,28 +191,41 @@ class Study(commands.Cog):
 
     async def activityMonitor(self, member: discord.Member, studyId: str):
         """Wait 5 minutes and disconnect user if they don't enable camera or screen share."""
-        print(f"⏳ Waiting 5 minutes for {member.name} to start camera or screen share...")
+        print(
+            f"⏳ Waiting 5 minutes for {member.name} to start camera or screen share..."
+        )
         await asyncio.sleep(300)  # Wait for 5 minutes
         # Ensure user is still in the correct voice channel
-        if member.voice and member.voice.channel and str(member.voice.channel.id) == studyId:
+        if (
+            member.voice
+            and member.voice.channel
+            and str(member.voice.channel.id) == studyId
+        ):
             if not member.voice.self_stream and not member.voice.self_video:
-                print(f"⏳ {member.name} didn't enable camera/screen share. Disconnecting...")      
+                print(
+                    f"⏳ {member.name} didn't enable camera/screen share. Disconnecting..."
+                )
                 try:
-                    await member.voice.channel.send(embed=discord.Embed(
-                        description=f"{member.mention} Inactivity Detected. 🚨", 
-                        timestamp=datetime.now(),
-                        color=0x3498db,
-                    ), delete_after=20)
-                    await member.move_to(None)  
-                        
+                    await member.voice.channel.send(
+                        embed=discord.Embed(
+                            description=f"{member.mention} Inactivity Detected. 🚨",
+                            timestamp=datetime.now(),
+                            color=0x3498DB,
+                        ),
+                        delete_after=20,
+                    )
+                    await member.move_to(None)
+
                     try:
                         self.learnings.cancel(str(member.id))
                     except Exception as e:
                         print(f"⚠️ Error canceling learning session: {e}")
                         traceback.print_exc()
-                            
+
                     except discord.Forbidden:
-                            print(f"⚠️ Missing permissions to send/delete messages in {member.voice.channel.name}")
+                        print(
+                            f"⚠️ Missing permissions to send/delete messages in {member.voice.channel.name}"
+                        )
                     except discord.HTTPException:
                         print("⚠️ Failed to send/delete inactivity message.")
                 except asyncio.CancelledError:
@@ -235,78 +236,110 @@ class Study(commands.Cog):
                     print(f"❌ Unexpected error while moving {member.name}: {e}")
                     traceback.print_exc()
 
-
     @app_commands.guild_only()
-    @app_commands.command(name="census", description="Do census to take decision and act based on it.")
-    @app_commands.choices(scenario=[
-        app_commands.Choice(name="VC mein Badmoshhh h | Someone is being Naughty", value="badmoshi"),
-        app_commands.Choice(name="Award Legendary Learner", value="learner"),
-        app_commands.Choice(name="Moj Masti Karni h T-T | I want to have fun", value="fun"),
-        app_commands.Choice(name="Learner Not Learning", value="cheat")
-    ])
-    @app_commands.describe(scenario="Pick the scenario happening in your current VC.")
-    @app_commands.describe(user="Used when someone is naughty just select that user")
-    async def census(self, inter: discord.Interaction, scenario: str, user: discord.User=None):
+    @app_commands.command(name="exception",description="This is to create an exception for you coz you have low network.")
+    async def exception(self, inter: discord.Interaction):
         try:
-            # Determine the poll question based on the chosen scenario.
-            if scenario == "badmoshi": 
-                question_text = f"Guys, do you think {user.display_name} is doing badmoshi/Naughtiness?"
-            elif scenario == "learner":
-                question_text = f"Guys, do you think {user.display_name} is most sincerely learning?"
-            elif scenario == "fun":
-                question_text = f"Guys, {user.display_name} wants to spend some time having fun. Would you like to join?"
-            elif scenario == "cheat":
-                question_text = f"Guys, do you think {user.display_name} is actually learning right now?"
-            else:
-                return  
-            msg = await inter.channel.send(embed=discord.Embed(
-                title="Census",
-                description=question_text,
-                timestamp=datetime.now()
-            ))
-
-            await msg.add_reaction("✅")
-            await msg.add_reaction("❎")
-
-            await asyncio.sleep(30)
-
-            count = 0
-            for reaction in msg.reactions:
-                if reaction == "✅":
-                    count+=1
-                if reaction == "❎":
-                    count-=1
-            print(count)
-
-            if count and scenario=="badmoshi":
-                await inter.channel.send(embed=discord.Embed(
-                    title="Badmoshiii",
-                    description=f"Got you! badmosh {user.mention} :imp_smiling:",
-                    timestamp=datetime.now()
-                ))
-            await inter.user.move_to(None)
+            tokenData = exceptionCollection.find_one_and_update(
+                    {"user_id": inter.user.id},
+                    {
+                        "$setOnInsert": { "user_id": inter.user.id },
+                        "$set": {"expiresAt": datetime.now(UTC) + timedelta(minutes=10)}
+                    },
+                    upsert=True,
+                    return_document=True
+                )
+            token = TokenManager(os.getenv("SECRET_KEY")).genToken({"_id": str(tokenData["_id"])}, 10)
             
-        except:
+            token = str(token)
+            link = os.getenv("FLASK_DOMAIN") + "except/" + token
+            qr = qrcode.QRCode(box_size=10, border=5)
+            qr.add_data(link)
+            qr.make(fit=True)
+            img = qr.make_image(fill="black", back_color="white")
+            with io.BytesIO() as image_binary:
+                img.save(image_binary, format="PNG")
+                image_binary.seek(0)
+                await inter.response.send_message(
+                    content=f"## [Verify]({link})",
+                    file=discord.File(image_binary, "qrcode.png"),
+                    ephemeral=True,
+                )
+            asyncio.tasks.create_task(self.exceptionVerifier(inter))
+            
+        except Exception as e:
+            traceback.print_exc()
+
+    async def exceptionVerifier(self, inter: discord.Interaction):
+        try:
+            t = datetime.now()
+            while (details := self.bot.userNetworkConnection.get(inter.user.id, None)) is None:
+                if (datetime.now() - t).total_seconds() >= 90:
+                    break
+                await asyncio.sleep(1)  
+            
+            if details is None:
+                await inter.followup.send(content="Too late!", ephemeral=True)
+                return
+
+            download = details["download"]
+            upload = details["upload"]
+            ping = details["ping"]
+
+            if download >= 2.5 and upload >= 2.5 and ping <= 50:
+                await inter.followup.send(content="You have good internet speed lol!", ephemeral=True)
+                self.bot.userNetworkConnection.pop(inter.user.id, None)
+            else:
+                self.exceptions.add(inter.user.id)
+                await inter.followup.send(content="5 Mins access granted!", ephemeral=True)
+
+        except Exception:
             traceback.print_exc()
 
 
+    @app_commands.guild_only()
+    @app_commands.command(
+        name="leaderboard", description="Check out your study leaderboard."
+    )
+    @app_commands.choices(
+        scope=[
+            app_commands.Choice(name="Local Leaderboard", value=1),
+            app_commands.Choice(name="Global Leaderboard", value=0),
+        ]
+    )
+    @app_commands.describe(
+        scope="It describes if you want to see leaderboard within the server or globally."
+    )
+    async def leaderboard(self, inter: discord.Interaction, scope: int = 1):
+        if scope == 1:
+            toppers = learnerCollection.aggregate(
+                [
+                    {
+                        "$project": {
+                            "_id": 1,
+                            "name": 1,
+                            "time": {"$ifNull": [f"$servers.{inter.guild_id}.time", 0]},
+                        }
+                    },
+                    {"$sort": {"time": -1}},
+                    {"$limit": 10},
+                ]
+            )
+            await inter.response.send_message(leaderboard_template(toppers=toppers))
+        await inter.response.send_message(
+            "The Leaderboard command is still under development!", ephemeral=True
+        )
 
     @app_commands.guild_only()
-    @app_commands.command(name="leaderboard", description="Check out your study leaderboard.")
-    @app_commands.choices(scope=[
-        app_commands.Choice(name="Local Leaderboard", value=1),
-        app_commands.Choice(name="Global Leaderboard", value=0)
-    ])
-    @app_commands.describe(scope="It describes if you want to see leaderboard within the server or globally.")
-    async def leaderboard(self, inter: discord.Interaction, scope: int=1):
-        await inter.response.send_message("The Leaderboard command is still under development!", ephemeral=True)
-
-    @app_commands.guild_only()
-    @app_commands.command(name="delete", description="Delete your or your server configuration.")
-    @app_commands.choices(scope=[
-        app_commands.Choice(name="Delete your collected data", value=1),
-        app_commands.Choice(name="Delete Server Configuration", value=0)
-    ])
+    @app_commands.command(
+        name="delete", description="Delete your or your server configuration."
+    )
+    @app_commands.choices(
+        scope=[
+            app_commands.Choice(name="Delete your collected data", value=1),
+            app_commands.Choice(name="Delete Server Configuration", value=0),
+        ]
+    )
     @app_commands.describe(scope="This parameter tells about the scope of deletion")
     async def delete(self, inter: discord.Interaction, scope: int = 1):
         file = None
@@ -314,13 +347,16 @@ class Study(commands.Cog):
         if scope:
             user_data = learnerCollection.find_one({"_id": str(inter.user.id)})
             if not user_data:
-                return await inter.response.send_message(embed=discord.Embed(
-                    title="",
-                    description="No data found for you."
-                ), ephemeral=True)
+                return await inter.response.send_message(
+                    embed=discord.Embed(title="", description="No data found for you."),
+                    ephemeral=True,
+                )
 
             learnerCollection.delete_one({"_id": str(inter.user.id)})
-            file = discord.File(io.BytesIO(json.dumps(user_data, indent=4).encode()), f"{inter.user.display_name}.json")
+            file = discord.File(
+                io.BytesIO(json.dumps(user_data, indent=4).encode()),
+                f"{inter.user.display_name}.json",
+            )
 
         else:
             if not inter.user.guild_permissions.manage_guild:
@@ -328,42 +364,107 @@ class Study(commands.Cog):
                     embed=discord.Embed(
                         title="Missing Permissions",
                         description="You are not a manager of this server.\nPlease request the manager to perform this operation.",
-                        color=0x348db
+                        color=0x348DB,
                     ),
-                    ephemeral=True
+                    ephemeral=True,
                 )
 
             server_data = serverCollection.find_one({"_id": str(inter.guild.id)})
             if not server_data:
-                return await inter.response.send_message(embed=discord.Embed(
-                    title="",
-                    description="No server data found."
-                ), ephemeral=True)
+                return await inter.response.send_message(
+                    embed=discord.Embed(title="", description="No server data found."),
+                    ephemeral=True,
+                )
 
             serverCollection.delete_one({"_id": str(inter.guild.id)})
-            file = discord.File(io.BytesIO(json.dumps(server_data, indent=4).encode()), f"{inter.guild.name}.json")
+            file = discord.File(
+                io.BytesIO(json.dumps(server_data, indent=4).encode()),
+                f"{inter.guild.name}.json",
+            )
 
         try:
-            await inter.user.send(content="The data being deleted is attached below.", file=file)
-            await inter.response.send_message(discord.Embed(
-                title="",
-                description="Deletion successful. Check your DMs."
-            ), ephemeral=True)
+            await inter.user.send(
+                content="The data being deleted is attached below.", file=file
+            )
+            await inter.response.send_message(
+                discord.Embed(
+                    title="", description="Deletion successful. Check your DMs."
+                ),
+                ephemeral=True,
+            )
         except discord.Forbidden:
             await inter.response.send_message(
                 embed=discord.Embed(
                     title="DMs Disabled",
                     description="I am not able to DM you. Please enable DMs!",
-                    color=0x348db
+                    color=0x348DB,
                 ),
-                ephemeral=True
+                ephemeral=True,
             )
+
+    @app_commands.guild_only()
+    @app_commands.command(name="census", description="Take a decision over a case by voting.")
+    @app_commands.choices(scenario=[
+        app_commands.Choice(name="User's behavior is disturbing", value="dtb"),
+        app_commands.Choice(name="User is not showing their learning", value="cheat"),
+    ])
+    @app_commands.describe(
+        scenario="Tells about the case you are in a study session", 
+        user="The user whom you are referring to in the scenario"
+    )
+    async def census(inter: discord.Interaction, scenario: str, user: discord.Member):
+        await inter.response.defer()  # Defer response to avoid timeout
+
+        if scenario == "dtb":
+            title = "Disturbing Behaviour Suspected!"
+            description = f"It has come to our attention that {user.mention} is behaving inappropriately in the study channel. Is that right?"
+        elif scenario == "cheat":
+            title = "Suspected Cheating"
+            description = f"It has come to our attention that {user.mention} is not demonstrating their learning in the study channel. Is that right?"
+        else:
+            await inter.followup.send("Sorry, it's an unknown scenario.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            timestamp=datetime.now(),
+            color=discord.Color.red()
+        )
+
+        message = await inter.channel.send(embed=embed)
+
+        await message.add_reaction("✅")
+        await message.add_reaction("❎")
+
+        await asyncio.sleep(20)  
+
+        message = await inter.channel.fetch_message(message.id) 
+        yes_votes = 0
+        no_votes = 0
+
+        for reaction in message.reactions:
+            if reaction.emoji == "✅":
+                yes_votes = reaction.count - 1  
+            elif reaction.emoji == "❎":
+                no_votes = reaction.count - 1
+
+        if yes_votes > no_votes:
+            result_msg = f"The vote is in favor of the scenario: **{yes_votes} ✅ vs {no_votes} ❎**."
+        elif no_votes > yes_votes:
+            result_msg = f"The vote is against the scenario: **{yes_votes} ✅ vs {no_votes} ❎**."
+        else:
+            result_msg = f"The vote is tied: **{yes_votes} ✅ vs {no_votes} ❎**."
+
+        await inter.channel.send(result_msg)
+
+        
 
 async def setup(bot):
     Study_cog = Study(bot)
     await bot.add_cog(Study_cog)
 
-    guild_ids = [1354101256662286397, 1218819398974963752] 
+    guild_ids = [1354101256662286397, 1218819398974963752]
     for guild_id in guild_ids:
         for command in Study_cog.__cog_app_commands__:
             print(f"Adding {command.name} in server with ID {guild_id}.")

@@ -7,7 +7,7 @@ from library import logging
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
 selfCollection = db["Self"]
 
-dlog = logging.Logger("General")
+dlog = logging.Logger("General", style="default")
 
 class General(commands.Cog):
     def __init__(self, bot):
