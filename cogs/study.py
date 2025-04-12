@@ -91,7 +91,7 @@ class Study(commands.Cog):
                 and (
                     before.channel is None or str(before.channel.id) != study_channel_id
                 )
-            ) and not self.exceptions.isInside:
+            ):
                 print(f"👤 {member.name} joined study VC: {after.channel.name}")
                 self.learnings.started(id=member_id)
 
@@ -102,10 +102,11 @@ class Study(commands.Cog):
                     color=0x3498DB,
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
-                embed.add_field(
-                    name="Request",
-                    value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
-                )
+                if self.exceptions.isInside:
+                    embed.add_field(
+                        name="Request",
+                        value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
+                    )
                 await after.channel.send(embed=embed, delete_after=20)
 
                 print(f"⏳ Starting activity monitor for {member.name}")
@@ -126,7 +127,7 @@ class Study(commands.Cog):
                     self.monitoringUsers[member_id].cancel()
                     del self.monitoringUsers[member_id]
 
-                self.learnings.ended(user_id=member_id, name=member.display_name, server_id=server_id)
+                self.learnings.ended(user_id=member_id, server_id=server_id)
 
                 await before.channel.send(
                     embed=discord.Embed(
@@ -179,7 +180,7 @@ class Study(commands.Cog):
                     self.activityMonitor(member, study_channel_id)
                 )
                 try:
-                    self.learnings.ended(user_id=member_id, server_id=server_id)
+                    self.learnings.ended(user_id=member_id, server_id=server_id, name=member.display_name)
                 except:
                     traceback.print_exc()
                 self.learnings.started(member_id)
@@ -237,10 +238,13 @@ class Study(commands.Cog):
                     traceback.print_exc()
 
     @app_commands.guild_only()
-    @app_commands.command(name="exception",description="This is to create an exception for you coz you have low network.")
+    @app_commands.command(
+        name="exception",
+        description="This is to create an exception for you coz you have low network.",
+    )
     async def exception(self, inter: discord.Interaction):
         try:
-            tokenData = exceptionCollection.find_one_and_update(
+            token = exceptionCollection.find_one_and_update(
                     {"user_id": inter.user.id},
                     {
                         "$setOnInsert": { "user_id": inter.user.id },
@@ -248,9 +252,7 @@ class Study(commands.Cog):
                     },
                     upsert=True,
                     return_document=True
-                )
-            token = TokenManager(os.getenv("SECRET_KEY")).genToken({"_id": str(tokenData["_id"])}, 10)
-            
+                )["_id"]
             token = str(token)
             link = os.getenv("FLASK_DOMAIN") + "except/" + token
             qr = qrcode.QRCode(box_size=10, border=5)
@@ -261,7 +263,7 @@ class Study(commands.Cog):
                 img.save(image_binary, format="PNG")
                 image_binary.seek(0)
                 await inter.response.send_message(
-                    content=f"## [Verify]({link})",
+                    content=link,
                     file=discord.File(image_binary, "qrcode.png"),
                     ephemeral=True,
                 )
@@ -271,30 +273,18 @@ class Study(commands.Cog):
             traceback.print_exc()
 
     async def exceptionVerifier(self, inter: discord.Interaction):
-        try:
-            t = datetime.now()
-            while (details := self.bot.userNetworkConnection.get(inter.user.id, None)) is None:
-                if (datetime.now() - t).total_seconds() >= 90:
-                    break
-                await asyncio.sleep(1)  
-            
-            if details is None:
-                await inter.followup.send(content="Too late!", ephemeral=True)
-                return
+        t = datetime.now()
+        while (details:=self.bot.userNetworkConnection.get(inter.user.id, None))==None and (datetime.now() - t).total_seconds() <= 90:
+            continue
+        download = details["download"]
+        upload = details["upload"]
+        ping = details['ping']
 
-            download = details["download"]
-            upload = details["upload"]
-            ping = details["ping"]
-
-            if download >= 2.5 and upload >= 2.5 and ping <= 50:
-                await inter.followup.send(content="You have good internet speed lol!", ephemeral=True)
-                self.bot.userNetworkConnection.pop(inter.user.id, None)
-            else:
-                self.exceptions.add(inter.user.id)
-                await inter.followup.send(content="5 Mins access granted!", ephemeral=True)
-
-        except Exception:
-            traceback.print_exc()
+        if (download>=2.5 and upload>=2.5) and ping<=50:
+            await inter.response.edit_message("You have good internet speed lol!")
+        else:
+            self.exceptions.add(inter.user.id)
+            await inter.response.edit_message("5 Mins access granted!")
 
 
     @app_commands.guild_only()
@@ -402,63 +392,7 @@ class Study(commands.Cog):
                 ephemeral=True,
             )
 
-    @app_commands.guild_only()
-    @app_commands.command(name="census", description="Take a decision over a case by voting.")
-    @app_commands.choices(scenario=[
-        app_commands.Choice(name="User's behavior is disturbing", value="dtb"),
-        app_commands.Choice(name="User is not showing their learning", value="cheat"),
-    ])
-    @app_commands.describe(
-        scenario="Tells about the case you are in a study session", 
-        user="The user whom you are referring to in the scenario"
-    )
-    async def census(inter: discord.Interaction, scenario: str, user: discord.Member):
-        await inter.response.defer()  # Defer response to avoid timeout
 
-        if scenario == "dtb":
-            title = "Disturbing Behaviour Suspected!"
-            description = f"It has come to our attention that {user.mention} is behaving inappropriately in the study channel. Is that right?"
-        elif scenario == "cheat":
-            title = "Suspected Cheating"
-            description = f"It has come to our attention that {user.mention} is not demonstrating their learning in the study channel. Is that right?"
-        else:
-            await inter.followup.send("Sorry, it's an unknown scenario.", ephemeral=True)
-            return
-
-        embed = discord.Embed(
-            title=title,
-            description=description,
-            timestamp=datetime.now(),
-            color=discord.Color.red()
-        )
-
-        message = await inter.channel.send(embed=embed)
-
-        await message.add_reaction("✅")
-        await message.add_reaction("❎")
-
-        await asyncio.sleep(20)  
-
-        message = await inter.channel.fetch_message(message.id) 
-        yes_votes = 0
-        no_votes = 0
-
-        for reaction in message.reactions:
-            if reaction.emoji == "✅":
-                yes_votes = reaction.count - 1  
-            elif reaction.emoji == "❎":
-                no_votes = reaction.count - 1
-
-        if yes_votes > no_votes:
-            result_msg = f"The vote is in favor of the scenario: **{yes_votes} ✅ vs {no_votes} ❎**."
-        elif no_votes > yes_votes:
-            result_msg = f"The vote is against the scenario: **{yes_votes} ✅ vs {no_votes} ❎**."
-        else:
-            result_msg = f"The vote is tied: **{yes_votes} ✅ vs {no_votes} ❎**."
-
-        await inter.channel.send(result_msg)
-
-        
 
 async def setup(bot):
     Study_cog = Study(bot)

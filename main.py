@@ -1,16 +1,15 @@
-import os
-# os.system(". ./env/bin/activate; pip install uvicorn;pip install uvicorn[standard]")
+import os, cloud_setup
 import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
 from discord.ext import commands
-from flask import Flask, render_template, make_response
+from flask import Flask, render_template
 from asgiref.wsgi import WsgiToAsgi
-import uvicorn
+import uvicorn, config
 
 load_dotenv()
 
-exceptionCollection = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious[Beta]"]["exception"]
+exceptionCollection = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.dbName]["exception"]
 
 intents=discord.Intents.all()
 bot=commands.Bot(
@@ -60,7 +59,7 @@ def page_not_found(e):
 
 def run_flask():
     asgi_app = WsgiToAsgi(app)  
-    uvicorn.run(asgi_app, host="0.0.0.0", port=10000)
+    uvicorn.run(asgi_app, host="0.0.0.0", port=config.port)
 
 async def load():
     for filename in os.listdir('cogs'):

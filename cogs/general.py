@@ -3,8 +3,9 @@ from discord.ext import commands, tasks
 from datetime import datetime
 import os, pymongo, traceback
 from library import logging
+import config
 
-db = pymongo.MongoClient(os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
+db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
 selfCollection = db["Self"]
 
 dlog = logging.Logger("General", style="default")
@@ -29,7 +30,7 @@ class General(commands.Cog):
                 title="Terms of Service", 
                 description=tos["content"],
                 timestamp=tos["updated"],
-                color=0x3498db
+                color=config.msgColor
             ))
         else:
             await inter.response.send_message(embed=Embed(
@@ -46,7 +47,7 @@ class General(commands.Cog):
                 title="Privacy Policy", 
                 description=privacy["content"],
                 timestamp=privacy["updated"],
-                color=0x3498db
+                color=config.msgColor
             ))
         else:
             await inter.response.send_message(embed=Embed(
@@ -63,7 +64,7 @@ class General(commands.Cog):
                 title="About", 
                 description=about["content"],
                 timestamp=about["updated"],
-                color=0x3498db
+                color=config.msgColor
             ))
         else:
             await inter.response.send_message(embed=Embed(
@@ -80,7 +81,7 @@ class General(commands.Cog):
                 title="What's New?", 
                 description=update["content"],
                 timestamp=update["updated"],
-                color=0x3498db
+                color=config.msgColor
             ))
         else:
             await inter.response.send_message(embed=Embed(
@@ -93,7 +94,7 @@ async def setup(bot):
     General_cog = General(bot)
     await bot.add_cog(General_cog)
 
-    guild_ids = [1354101256662286397, 1218819398974963752] 
+    guild_ids = config.availableIn["guilds"]
     for guild_id in guild_ids:
         for command in General_cog.__cog_app_commands__:
             print(f"Adding {command.name} in server with ID {guild_id}.")
