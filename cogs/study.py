@@ -1,4 +1,4 @@
-import discord, os, asyncio, pymongo, traceback, json, io, qrcode
+import discord, config, os, asyncio, pymongo, traceback, json, io, qrcode
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from discord.ext import commands
@@ -11,10 +11,10 @@ dlog = Logger("Study", style="default")
 
 load_dotenv()
 
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
+db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.dbName]
 serverCollection = db["Servers"]
 learnerCollection = db["Learners"]
-exceptionCollection = db["exception"]
+exceptionCollection = db["Exceptions"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
 
@@ -73,7 +73,9 @@ class Study(commands.Cog):
         """Track users joining and activity changes in the study channel."""
         try:
             if member.bot:
-                print
+                print("The member is bot. Hence, activity ignored.")
+                return
+            
             member_id = str(member.id)
             server_id = str(member.guild.id)
 

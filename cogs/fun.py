@@ -8,8 +8,8 @@ from discord import (
     FFmpegPCMAudio
 )
 from datetime import timedelta
-import os
-import config
+import os, config
+from study import serverCollection
 from traceback import print_exc
 from discord.ext import commands
 
@@ -17,6 +17,7 @@ memes = {
     "audio": {},
     "effects": {}
 }
+
 for filename in os.listdir('static/memes/audio/songs'):
     file_path = os.path.join('static/memes/audio/songs', filename)
     if os.path.isfile(file_path):
@@ -49,20 +50,35 @@ class Fun(commands.Cog):
     ])
     async def play_sound(
         self,
-        interaction: Interaction,
+        inter: Interaction,
         sound: str
     ):
         try:
+            serverDetails = serverCollection.find_one({'_id': str(inter.guild_id)})
+            if not serverDetails:
+                print("The server is not configured")
+                await inter.response.send_message(embed=Embed(
+                    description='The server is not configured. Please configure the server and try again later.'
+                ), color=config.msgColor)
+
             file_path = memes['audio'][sound]
-            voice = interaction.user.voice
+            voice = inter.user.voice
+
             if not voice:
-                await interaction.response.send_message("You need to be in a voice channel!", ephemeral=True)
+                await inter.response.send_message("You need to be in a voice channel!", ephemeral=True)
                 return
+            
+            if serverDetails['channel'] == str(voice.channel.id):
+                await inter.response.send_message(embed=Embed(
+                    description="Sorry, You can't play memes in study channel."
+                ), color=config.msgColor)
+                return
+            
             if not os.path.isfile(file_path):
-                await interaction.response.send_message("Sound file not found!", ephemeral=True)
+                await inter.response.send_message("Sound file not found!", ephemeral=True)
                 return
             vc = await voice.channel.connect()
-            await interaction.response.send_message(f"🎵 Playing *{sound.replace('-', ' ')}* ~*{interaction.user.display_name}*")
+            await inter.response.send_message(f"🎵 Playing *{sound.replace('-', ' ')}* ~*{inter.user.display_name}*")
             vc.play(FFmpegPCMAudio(file_path, executable='./ffmpeg'), after=lambda e: print(f"Finished playing: {e}"))
             while vc.is_playing():
                 await utils.sleep_until(utils.utcnow() + timedelta(seconds=1))
@@ -76,27 +92,41 @@ class Fun(commands.Cog):
     ])
     async def play_effects(
         self,
-        interaction: Interaction,
+        inter: Interaction,
         sound: str
     ):
         try:
+            serverDetails = serverCollection.find_one({'_id': str(inter.guild_id)})
+            if not serverDetails:
+                print("The server is not configured")
+                await inter.response.send_message(embed=Embed(
+                    description='The server is not configured. Please configure the server and try again later.'
+                ), color=config.msgColor)
+
             file_path = memes['effects'][sound]
-            voice = interaction.user.voice
+            voice = inter.user.voice
+            
             if not voice:
-                await interaction.response.send_message("You need to be in a voice channel!", ephemeral=True)
+                await inter.response.send_message("You need to be in a voice channel!", ephemeral=True)
                 return
+            
+            if serverDetails['channel'] == str(voice.channel.id):
+                await inter.response.send_message(embed=Embed(
+                    description="Sorry, You can't play memes in study channel."
+                ), color=config.msgColor)
+                return
+            
             if not os.path.isfile(file_path):
-                await interaction.response.send_message("Sound file not found!", ephemeral=True)
+                await inter.response.send_message("Sound file not found!", ephemeral=True)
                 return
             vc = await voice.channel.connect()
-            await interaction.response.send_message(f"🎵 Playing *{sound.replace('-', ' ')}*   ~*{interaction.user.display_name}*")
+            await inter.response.send_message(f"🎵 Playing *{sound.replace('-', ' ')}*   ~*{inter.user.display_name}*")
             vc.play(FFmpegPCMAudio(file_path, executable='./ffmpeg'), after=lambda e: print(f"Finished playing: {e}"))
             while vc.is_playing():
                 await utils.sleep_until(utils.utcnow() + timedelta(seconds=1))
             await vc.disconnect()
         except Exception as e:
             print_exc()
-
 
 async def setup(bot):
     General_cog = Fun(bot)
