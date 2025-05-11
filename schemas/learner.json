@@ -1,0 +1,11 @@
+{
+    "_id": "<user_id>",
+    "servers": {
+        "<server_id>": {
+            "time": {
+                "hrs": "<hrs>",
+                "mins": "<mins>" 
+            }
+        }
+    }
+}
