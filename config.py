@@ -6,6 +6,10 @@ availableIn = {
     "guilds": [1354101256662286397, 1218819398974963752]
 }
 
+logging = {
+    "style": ""
+}
+
 # Study Session
 ## Inactivity Thresholds
 kickDelay = 1

@@ -55,7 +55,7 @@ class Study(commands.Cog):
                     title="Study Configurations",
                     description=f"**Configuration Successful!** :tada:\nNow the study channel is {study.mention}",
                     timestamp=datetime.now(),
-                    color=0x3498DB,
+                    color=config.msgColor,
                 ),
                 delete_after=20,
             )
@@ -104,7 +104,7 @@ class Study(commands.Cog):
                     title=f"🎉 {member.display_name} is back! 🎉",
                     description=f"Welcome back {member.mention}!\nStudy time resumes!",
                     timestamp=datetime.now(),
-                    color=0x3498DB,
+                    color=config.msgColor,
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
                 if self.exceptions.isInside:
@@ -126,6 +126,10 @@ class Study(commands.Cog):
                 and (after.channel is None or str(after.channel.id) != study_channel_id)
             ):
                 print(f"🚪 {member.name} left study VC: {before.channel.name}")
+                await before.channel.send(embed=discord.Embed(
+                    description=f"🚪 {member.name} left study VC: {before.channel.name}",
+                    color=config.msgColor
+                ), delete_after=config.msgDelAfter)
 
                 if member_id in self.monitoringUsers:
                     print(f"🛑 Stopping activity monitor for {member.name}")
@@ -137,7 +141,7 @@ class Study(commands.Cog):
                 await before.channel.send(
                     embed=discord.Embed(
                         description=f"{member.mention} might be on a break. ☕",
-                        color=0x3498DB,
+                        color=config.msgColor,
                     ),
                     delete_after=90,
                 )
@@ -151,7 +155,7 @@ class Study(commands.Cog):
                         title="",
                         description=f"{member.mention}'s Activity Detected! ✅",
                         timestamp=datetime.now(),
-                        color=0x3498DB,
+                        color=config.msgColor,
                     ),
                     delete_after=20,
                 )
@@ -216,7 +220,7 @@ class Study(commands.Cog):
                         embed=discord.Embed(
                             description=f"{member.mention} Inactivity Detected. 🚨",
                             timestamp=datetime.now(),
-                            color=0x3498DB,
+                            color=config.msgColor,
                         ),
                         delete_after=20,
                     )
@@ -295,10 +299,10 @@ class Study(commands.Cog):
             self.exceptions.add(inter.user.id)
             await inter.followup.send(content="5 Mins access granted!")
 
-
     @app_commands.guild_only()
     @app_commands.command(
-        name="leaderboard", description="Check out your study leaderboard."
+        name="leaderboard", 
+        description="Check out your study leaderboard."
     )
     @app_commands.choices(
         scope=[
@@ -326,7 +330,8 @@ class Study(commands.Cog):
             )
             await inter.response.send_message(leaderboard_template(toppers=toppers))
         await inter.response.send_message(
-            "The Leaderboard command is still under development!", ephemeral=True
+            "The Leaderboard command is still under development!", 
+            ephemeral=True
         )
 
     @app_commands.guild_only()
@@ -401,13 +406,22 @@ class Study(commands.Cog):
                 ephemeral=True,
             )
 
+    @app_commands.guild_only()
+    @app_commands.command(name='decide', description='Decide on something...')
+    async def decide(self, inter: discord.Interaction):
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"The command is still under construction."
+            )
+        )
+
 
 
 async def setup(bot):
     Study_cog = Study(bot)
     await bot.add_cog(Study_cog)
 
-    guild_ids = [1354101256662286397, 1218819398974963752]
+    guild_ids = config.availableIn['guilds']
     for guild_id in guild_ids:
         for command in Study_cog.__cog_app_commands__:
             print(f"Adding {command.name} in server with ID {guild_id}.")

@@ -8,8 +8,7 @@ from discord import (
     FFmpegPCMAudio
 )
 from datetime import timedelta
-import os, config
-from study import serverCollection
+import os, config, pymongo
 from traceback import print_exc
 from discord.ext import commands
 
@@ -17,6 +16,8 @@ memes = {
     "audio": {},
     "effects": {}
 }
+
+serverCollection = pymongo.MongoClient(os.getenv('MONGODB_URI'))[config.dbName]['Servers']
 
 for filename in os.listdir('static/memes/audio/songs'):
     file_path = os.path.join('static/memes/audio/songs', filename)
@@ -58,8 +59,9 @@ class Fun(commands.Cog):
             if not serverDetails:
                 print("The server is not configured")
                 await inter.response.send_message(embed=Embed(
-                    description='The server is not configured. Please configure the server and try again later.'
-                ), color=config.msgColor)
+                    description='The server is not configured. Please configure the server and try again later.',
+                    color=config.msgColor
+                ))
 
             file_path = memes['audio'][sound]
             voice = inter.user.voice
@@ -70,8 +72,9 @@ class Fun(commands.Cog):
             
             if serverDetails['channel'] == str(voice.channel.id):
                 await inter.response.send_message(embed=Embed(
-                    description="Sorry, You can't play memes in study channel."
-                ), color=config.msgColor)
+                    description="Sorry, You can't play memes in study channel.",
+                    color=config.msgColor
+                ))
                 return
             
             if not os.path.isfile(file_path):
@@ -100,8 +103,9 @@ class Fun(commands.Cog):
             if not serverDetails:
                 print("The server is not configured")
                 await inter.response.send_message(embed=Embed(
-                    description='The server is not configured. Please configure the server and try again later.'
-                ), color=config.msgColor)
+                    description='The server is not configured. Please configure the server and try again later.',
+                    color=config.msgColor
+                ))
 
             file_path = memes['effects'][sound]
             voice = inter.user.voice
@@ -112,8 +116,9 @@ class Fun(commands.Cog):
             
             if serverDetails['channel'] == str(voice.channel.id):
                 await inter.response.send_message(embed=Embed(
-                    description="Sorry, You can't play memes in study channel."
-                ), color=config.msgColor)
+                    description="Sorry, You can't play memes in study channel.",
+                    color=config.msgColor
+                ))  
                 return
             
             if not os.path.isfile(file_path):

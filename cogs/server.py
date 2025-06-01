@@ -22,12 +22,54 @@ class Server(commands.Cog):
         except:
             traceback.print_exc()
 
-    #@app_commands.command(name="active", description="")
-
-
+    @app_commands.guild_only()
+    @app_commands.command(name='attendence', description='Mark your attendence here :)')
+    async def find(self, inter: discord.Interaction):
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"The command is still under construction."
+            )
+        )
     
+    @app_commands.guild_only()
+    @app_commands.command(name='clean', description='Remove all inactive people in server.')
+    async def find(self, inter: discord.Interaction):
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"The command is still under construction."
+            )
+        )
+    
+    @app_commands.guild_only()
+    @app_commands.command(name='invite', description='Manage invite links to users.')
+    async def find(self, inter: discord.Interaction):
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"The command is still under construction."
+            )
+        )
+    
+    @app_commands.guild_only()
+    @app_commands.command(name='lookup', description='Find a study buddy.')
+    async def lookup(self, inter: discord.Interaction):
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"The command is still under construction."
+            )
+        )
 
 
+    @app_commands.guild_only()
+    @app_commands.command(
+        name="doubt", 
+        description="Flag this as a doubt."
+    )
+    async def doubt(self, inter: discord.Interaction):
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"The command is still under construction."
+            )
+        )
 
 async def setup(bot):
     Server_cog = Server(bot)

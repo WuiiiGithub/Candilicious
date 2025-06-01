@@ -1,7 +1,7 @@
-from discord import Interaction, Embed, app_commands, Object
+from discord import app_commands, Object
 from discord.ext import commands, tasks
 from datetime import datetime
-import os, pymongo, traceback
+import os, pymongo, traceback, discord
 from library import logging
 import config
 
@@ -23,71 +23,79 @@ class General(commands.Cog):
 
     @app_commands.command(name="tos", description="Shows terms of service")
     @dlog.command()
-    async def tos(self, inter: Interaction):
+    async def tos(self, inter: discord.Interaction):
         tos = selfCollection.find_one({"_id": "tos"})
         if tos:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 title="Terms of Service", 
                 description=tos["content"],
                 timestamp=tos["updated"],
                 color=config.msgColor
             ))
         else:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 description="An error occured please contact support.",
                 timestamp=datetime.now()
             ))
 
     @app_commands.command(name="privacy", description="Shows privacy policy")
     @dlog.command()
-    async def privacy(self, inter: Interaction):
+    async def privacy(self, inter: discord.Interaction):
         privacy = selfCollection.find_one({"_id": "privacy"})
         if privacy:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 title="Privacy Policy", 
                 description=privacy["content"],
                 timestamp=privacy["updated"],
                 color=config.msgColor
             ))
         else:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 description="An error occured please contact support.",
                 timestamp=datetime.now()
             ))
 
     @app_commands.command(name="about", description="Shows details about the bot")
     @dlog.command()
-    async def about(self, inter: Interaction):
+    async def about(self, inter: discord.Interaction):
         about = selfCollection.find_one({"_id": "about"})
         if about:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 title="About", 
                 description=about["content"],
                 timestamp=about["updated"],
                 color=config.msgColor
             ))
         else:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 description="An error occured please contact support.",
                 timestamp=datetime.now()
             ))
 
     @app_commands.command(name="new", description="Shows the details of the newest update.")
     @dlog.command()
-    async def new(self, inter: Interaction):
+    async def new(self, inter: discord.Interaction):
         update = selfCollection.find_one({"_id": "updates"})
         if update:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 title="What's New?", 
                 description=update["content"],
                 timestamp=update["updated"],
                 color=config.msgColor
             ))
         else:
-            await inter.response.send_message(embed=Embed(
+            await inter.response.send_message(embed=discord.Embed(
                 description="An error occured please contact support.",
                 timestamp=datetime.now()
             ))
+
+    @app_commands.command(name="vote", description="Vote for the bot.")
+    async def vote(self, inter: discord.Interaction):
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"The command is still under construction."
+            )
+        )
 
 
 async def setup(bot):
