@@ -1,19 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>About Us</title>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>About Us</title>
 
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
       tailwind.config = {
         theme: {
           extend: {
             fontFamily: {
-              sans: ['Inter', 'sans-serif'], // Default font for body
-              display: ['"Coming Soon"', 'cursive'], // For titles/headings
+              sans: ['Inter', 'sans-serif'], 
+              display: ['"Coming Soon"', 'cursive'], 
             },
             colors: {
               pink: {
@@ -45,10 +44,11 @@
       }
     </script>
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+        <link
+            href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+            rel="stylesheet">
 
-    <style>
+        <style>
         /* Keyframe animations */
         @keyframes fadeIn {
             0% { opacity: 0; transform: translateY(20px); }
@@ -307,123 +307,182 @@
             scrollbar-width: none;  /* Firefox */
         }
     </style>
-</head>
-<body class="font-sans bg-pink-50 text-gray-800 flex flex-col items-center min-h-screen p-4 relative">
-    <!-- Sparkle Container (for animated background sparkles) -->
-    <div id="sparkle-container" class="absolute inset-0 z-0"></div>
+    </head>
+    <body
+        class="font-sans bg-pink-50 text-gray-800 flex flex-col items-center min-h-screen p-4 relative">
 
-    <div class="relative z-10 bg-white p-8 md:p-12 rounded-3xl shadow-2xl shadow-pink-500/50 text-center mx-auto border border-pink-200 fade-in-up my-auto max-w-5xl w-full">
-        <!-- Back Button (SVG Icon) -->
-        <button onclick="window.location.href='/'" class="back-button" aria-label="Go back to home">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-left">
-                <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
-            </svg>
-        </button>
+        <div id="sparkle-container" class="absolute inset-0 z-0"></div>
 
-        <h1 class="font-display text-4xl md:text-5xl font-extrabold text-pink-600 mb-6 text-center">
-            About Us
-        </h1>
+        <div
+            class="relative z-10 bg-white p-8 md:p-12 rounded-3xl shadow-2xl shadow-pink-500/50 text-center mx-auto border border-pink-200 fade-in-up my-auto max-w-5xl w-full">
 
-        <!-- Quote Section -->
-        <div class="quote-section text-purple-700">
-            <p>
-                "For us, it's not about 'you' or 'me'; it's about the 'we' – people who think and feel the same, united by a desire to empower student communities through accessible, open-source initiatives."
-            </p>
-        </div>
+            <button onclick="window.location.href='/'" class="back-button"
+                aria-label="Go back to home">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round" class="lucide lucide-arrow-left">
+                    <path d="M19 12H5" /><path d="m12 19-7-7 7-7" />
+                </svg>
+            </button>
 
-        <div class="main-content-wrapper flex flex-col lg:flex-row mt-8">
-            <!-- Right Column: Discord Widget (Floated for textbook-like wrap) -->
-            <div class="widget-column p-4 flex flex-col items-center justify-start mt-8 lg:mt-0 lg:pl-2">
-                <div id="discord-widget-container" class="w-full max-w-sm">
-                    <p class="text-center text-gray-600 mb-4">Loading Discord widget...</p>
-                    <div id="discord-widget-content" class="discord-widget-card hidden relative">
-                        <!-- Widget content will be dynamically loaded here -->
-                        <div class="flex justify-between items-center mb-0 relative">
-                            <h3 class="discord-widget-header text-2xl font-bold">
-                                <span id="server-name-hover-area" class="cursor-pointer"></span>
-                                <div id="server-description-tooltip" class="server-description-tooltip text-sm text-gray-700">
-                                    Candilicious is proudly brought to you by <strong class="text-pink-700">WuiiiLabs</strong>. Join our vibrant community on Discord!
+            <h1
+                class="font-display text-4xl md:text-5xl font-extrabold text-pink-600 mb-6 text-center">
+                About Us
+            </h1>
+
+            <div class="quote-section text-purple-700">
+                <p>
+                    "For us, it's not about 'you' or 'me'; it's about the 'we' – people who think and feel the same, united by a desire to empower student communities through accessible, open-source initiatives."
+                </p>
+            </div>
+
+            <div class="main-content-wrapper flex flex-col lg:flex-row mt-8">
+
+                <div
+                    class="widget-column p-4 flex flex-col items-center justify-start mt-8 lg:mt-0 lg:pl-2">
+                    <div id="discord-widget-container" class="w-full max-w-sm">
+                        <p class="text-center text-gray-600 mb-4">Loading
+                            Discord widget...</p>
+                        <div id="discord-widget-content"
+                            class="discord-widget-card hidden relative">
+
+                            <div
+                                class="flex justify-between items-center mb-0 relative">
+                                <h3
+                                    class="discord-widget-header text-2xl font-bold">
+                                    <span id="server-name-hover-area"
+                                        class="cursor-pointer"></span>
+                                    <div id="server-description-tooltip"
+                                        class="server-description-tooltip text-sm text-gray-700">
+                                        Candilicious is proudly brought to you
+                                        by <strong
+                                            class="text-pink-700">WuiiiLabs</strong>.
+                                        Join our vibrant community on Discord!
+                                    </div>
+                                </h3>
+                                <button id="widget-dropdown-btn-actual"
+                                    class="p-2 rounded-full hover:bg-pink-100 transition-colors duration-200">
+
+                                    <svg class="w-6 h-6 text-pink-700"
+                                        fill="currentColor" viewBox="0 0 24 24">
+                                        <path
+                                            d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" />
+                                    </svg>
+                                </button>
+                                <div id="widget-dropdown-menu-actual"
+                                    class="dropdown-content">
+                                    <a href="https://discord.gg/p9w4pGHRt7"
+                                        target="_blank"
+                                        class="text-pink-700 hover:bg-pink-100">Join
+                                        Server</a>
                                 </div>
-                            </h3>
-                            <button id="widget-dropdown-btn-actual" class="p-2 rounded-full hover:bg-pink-100 transition-colors duration-200">
-                                <!-- Three dots icon -->
-                                <svg class="w-6 h-6 text-pink-700" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
-                                </svg>
-                            </button>
-                            <div id="widget-dropdown-menu-actual" class="dropdown-content">
-                                <a href="https://discord.gg/p9w4pGHRt7" target="_blank" class="text-pink-700 hover:bg-pink-100">Join Server</a>
+                            </div>
+                            <p
+                                class="text-sm text-gray-800 mb-4 flex items-center justify-start">
+                                <span id="online-dot-animation"
+                                    class="online-dot mr-2 hidden"></span>
+                                <span id="online-count-text"></span>
+                            </p>
+                            <hr
+                                class="border-t-2 border-pink-300 border-dashed my-4">
+                            <div id="members-list"
+                                class="space-y-2 max-h-[280px] overflow-y-auto no-scrollbar">
+
                             </div>
                         </div>
-                        <p class="text-sm text-gray-800 mb-4 flex items-center justify-start">
-                            <span id="online-dot-animation" class="online-dot mr-2 hidden"></span>
-                            <span id="online-count-text"></span>
+                        <p id="discord-widget-error"
+                            class="text-center text-red-500 mt-4 hidden">
+                            Failed to load Discord widget. Please try again
+                            later.
                         </p>
-                        <hr class="border-t-2 border-pink-300 border-dashed my-4">
-                        <div id="members-list" class="space-y-2 max-h-[280px] overflow-y-auto no-scrollbar">
-                            <!-- Members will be injected here -->
-                        </div>
                     </div>
-                    <p id="discord-widget-error" class="text-center text-red-500 mt-4 hidden">
-                        Failed to load Discord widget. Please try again later.
+                </div>
+
+                <div
+                    class="vision-column-part1 text-center lg:text-left p-4 lg:pr-2">
+                    <h2
+                        class="font-display text-3xl font-extrabold text-purple-600 mb-4">
+                        Our Vision: Learning Without Limits
+                    </h2>
+                    <p class="text-gray-700 text-base md:text-lg mb-4">
+                        At WuiiiLabs, we've come to critically view the
+                        traditional education system. Why? Because it often
+                        stifles the very things that lead to true genius:
+                        creativity and new perspectives. We see a world where
+                        students are forced to 'byheart' rather than genuinely
+                        learn, where loopholes in examination systems are rife,
+                        and teachers are constrained by rigid curricula, leaving
+                        little room for fostering true intellectual growth.
                     </p>
                 </div>
             </div>
 
-            <!-- Left Column: Vision Part 1 -->
-            <div class="vision-column-part1 text-center lg:text-left p-4 lg:pr-2">
-                <h2 class="font-display text-3xl font-extrabold text-purple-600 mb-4">
-                    Our Vision: Learning Without Limits
-                </h2>
+            <div class="vision-column-part2 text-center lg:text-left p-4 mt-4">
                 <p class="text-gray-700 text-base md:text-lg mb-4">
-                    At WuiiiLabs, we've come to critically view the traditional education system. Why? Because it often stifles the very things that lead to true genius: creativity and new perspectives. We see a world where students are forced to 'byheart' rather than genuinely learn, where loopholes in examination systems are rife, and teachers are constrained by rigid curricula, leaving little room for fostering true intellectual growth.
+                    In an age rich with AI, the internet, and accessible tutors,
+                    educational institutions risk becoming mere
+                    'Certifying Organizations'. This also opens doors to
+                    alarming immoral practices. We believe it's time for a more
+                    efficient system for educating young minds. Our vision for
+                    Candilicious is to be a part of the movement where students
+                    are truly free in their learning journey. We're taking our
+                    "baby steps" by developing open-source facilities that
+                    leverage modern technology to empower students, ensuring
+                    learning is accessible and engaging for everyone.
+                </p>
+                <p class="text-gray-700 text-base md:text-lg mb-4">
+                    Our journey is just beginning, and while we're not sure how
+                    far we'll go, we promise to always try our best! We believe
+                    that truly great things for the student community should be
+                    accessible to everyone. That's why we're committed to making
+                    our contributions open source. Our ultimate vision? A world
+                    where every student is free in their learning journey.
                 </p>
             </div>
+
+            <svg class="absolute w-16 h-16 md:w-20 md:h-20 animated-candy"
+                style="top: 2%; left: -5%; transform: rotate(10deg); animation-delay: 0.5s;"
+                viewBox="0 0 24 24" fill="none"
+                xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z"
+                    fill="#F472B6" />
+                <circle cx="12" cy="7" r="1.5" fill="#F9A8D4" />
+                <circle cx="9" cy="11" r="1.5" fill="#F9A8D4" />
+                <circle cx="15" cy="11" r="1.5" fill="#F9A8D4" />
+                <circle cx="12" cy="15" r="1.5" fill="#F9A8D4" />
+                <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#EC4899" />
+                <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#EC4899" />
+                <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#EC4899" />
+                <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#EC4899" />
+            </svg>
+            <svg class="absolute w-12 h-12 md:w-16 md:h-16 animated-candy"
+                style="bottom: 2%; right: -5%; transform: rotate(-15deg); animation-delay: 1.2s;"
+                viewBox="0 0 24 24" fill="none"
+                xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z"
+                    fill="#C084FC" />
+                <circle cx="12" cy="7" r="1.5" fill="#D8B4FE" />
+                <circle cx="9" cy="11" r="1.5" fill="#D8B4FE" />
+                <circle cx="15" cy="11" r="1.5" fill="#D8B4FE" />
+                <circle cx="12" cy="15" r="1.5" fill="#D8B4FE" />
+                <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#A78BFA" />
+                <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#A78BFA" />
+                <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#A78BFA" />
+                <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#A78BFA" />
+            </svg>
         </div>
 
-        <!-- Single Column: Vision Part 2 (Continues below the floated widget) -->
-        <div class="vision-column-part2 text-center lg:text-left p-4 mt-4">
-            <p class="text-gray-700 text-base md:text-lg mb-4">
-                In an age rich with AI, the internet, and accessible tutors, educational institutions risk becoming mere 'Certifying Organizations'. This also opens doors to alarming immoral practices. We believe it's time for a more efficient system for educating young minds. Our vision for Candilicious is to be a part of the movement where students are truly free in their learning journey. We're taking our "baby steps" by developing open-source facilities that leverage modern technology to empower students, ensuring learning is accessible and engaging for everyone.
-            </p>
-            <p class="text-gray-700 text-base md:text-lg mb-4">
-                Our journey is just beginning, and while we're not sure how far we'll go, we promise to always try our best! We believe that truly great things for the student community should be accessible to everyone. That's why we're committed to making our contributions open source. Our ultimate vision? A world where every student is free in their learning journey.
-            </p>
-        </div>
-
-        <!-- Floating candy icons -->
-        <svg class="absolute w-16 h-16 md:w-20 md:h-20 animated-candy" style="top: 2%; left: -5%; transform: rotate(10deg); animation-delay: 0.5s;" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z" fill="#F472B6"/>
-            <circle cx="12" cy="7" r="1.5" fill="#F9A8D4"/>
-            <circle cx="9" cy="11" r="1.5" fill="#F9A8D4"/>
-            <circle cx="15" cy="11" r="1.5" fill="#F9A8D4"/>
-            <circle cx="12" cy="15" r="1.5" fill="#F9A8D4"/>
-            <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#EC4899"/>
-            <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#EC4899"/>
-            <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#EC4899"/>
-            <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#EC4899"/>
-        </svg>
-        <svg class="absolute w-12 h-12 md:w-16 md:h-16 animated-candy" style="bottom: 2%; right: -5%; transform: rotate(-15deg); animation-delay: 1.2s;" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z" fill="#C084FC"/>
-            <circle cx="12" cy="7" r="1.5" fill="#D8B4FE"/>
-            <circle cx="9" cy="11" r="1.5" fill="#D8B4FE"/>
-            <circle cx="15" cy="11" r="1.5" fill="#D8B4FE"/>
-            <circle cx="12" cy="15" r="1.5" fill="#D8B4FE"/>
-            <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#A78BFA"/>
-            <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#A78BFA"/>
-            <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#A78BFA"/>
-            <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#A78BFA"/>
-        </svg>
-    </div>
-
-    <script>
+        <script>
         document.addEventListener('DOMContentLoaded', () => {
             const sparkleContainer = document.getElementById('sparkle-container');
             const discordWidgetContainer = document.getElementById('discord-widget-container');
             const discordWidgetContent = document.getElementById('discord-widget-content');
             const discordWidgetError = document.getElementById('discord-widget-error');
             
-            // Re-attach event listeners for dynamically created dropdown elements
+            
             function setupDropdownListeners() {
                 const newDropdownBtn = document.getElementById('widget-dropdown-btn-actual');
                 const newDropdownMenu = document.getElementById('widget-dropdown-menu-actual');
@@ -433,11 +492,11 @@
 
                 if (newDropdownBtn && newDropdownMenu) {
                     newDropdownBtn.addEventListener('click', (event) => {
-                        event.stopPropagation(); // Prevent click from bubbling up and closing immediately
+                        event.stopPropagation(); 
                         newDropdownMenu.classList.toggle('show');
                     });
 
-                    // Close the dropdown if clicked outside
+                    
                     document.addEventListener('click', (event) => {
                         if (!newDropdownBtn.contains(event.target) && !newDropdownMenu.contains(event.target)) {
                             newDropdownMenu.classList.remove('show');
@@ -445,7 +504,7 @@
                     });
                 }
 
-                // Setup hover for server name description
+                
                 if (serverNameHoverArea && serverDescriptionTooltip) {
                     serverNameHoverArea.addEventListener('mouseenter', () => {
                         serverDescriptionTooltip.style.visibility = 'visible';
@@ -462,29 +521,29 @@
             }
 
 
-            // --- Sparkle Effect ---
+            
             function createSparkle() {
                 const sparkle = document.createElement('div');
                 sparkle.classList.add('sparkle-effect');
-                const size = Math.random() * 8 + 4; // Random size between 4px and 12px
+                const size = Math.random() * 8 + 4; 
                 sparkle.style.width = `${size}px`;
                 sparkle.style.height = `${size}px`;
                 sparkle.style.left = `${Math.random() * 100}%`;
                 sparkle.style.top = `${Math.random() * 100}%`;
-                sparkle.style.animationDuration = `${Math.random() * 1.5 + 1}s`; // Random duration 1-2.5s
-                sparkle.style.animationDelay = `${Math.random() * 2}s`; // Random delay 0-2s
+                sparkle.style.animationDuration = `${Math.random() * 1.5 + 1}s`; 
+                sparkle.style.animationDelay = `${Math.random() * 2}s`; 
                 sparkleContainer.appendChild(sparkle);
 
                 sparkle.addEventListener('animationend', () => {
                     sparkle.remove();
                 });
             }
-            setInterval(createSparkle, 250); // Create a new sparkle every 250ms
+            setInterval(createSparkle, 250); 
 
-            // --- Discord Widget Functionality ---
+            
             const DISCORD_WIDGET_API_URL = "https://discord.com/api/guilds/1192774455806677103/widget.json";
 
-            // Function to HTML-escape strings for safe display
+            
             function escapeHtml(unsafe) {
                 return unsafe
                      .replace(/&/g, "&amp;")
@@ -495,9 +554,9 @@
             }
 
             async function fetchDiscordWidgetData() {
-                discordWidgetContainer.querySelector('p').textContent = 'Loading Discord widget...'; // Show loading message
-                discordWidgetContent.classList.add('hidden'); // Hide content initially
-                discordWidgetError.classList.add('hidden'); // Hide error initially
+                discordWidgetContainer.querySelector('p').textContent = 'Loading Discord widget...'; 
+                discordWidgetContent.classList.add('hidden'); 
+                discordWidgetError.classList.add('hidden'); 
 
                 try {
                     const response = await fetch(DISCORD_WIDGET_API_URL);
@@ -508,27 +567,27 @@
                     renderDiscordWidget(data);
                 } catch (error) {
                     console.error("Error fetching Discord widget data:", error);
-                    discordWidgetContainer.querySelector('p').classList.add('hidden'); // Hide loading
-                    discordWidgetError.classList.remove('hidden'); // Show error message
+                    discordWidgetContainer.querySelector('p').classList.add('hidden'); 
+                    discordWidgetError.classList.remove('hidden'); 
                 }
             }
 
             function renderDiscordWidget(data) {
-                discordWidgetContainer.querySelector('p').classList.add('hidden'); // Hide loading message
-                discordWidgetContent.classList.remove('hidden'); // Show content
+                discordWidgetContainer.querySelector('p').classList.add('hidden'); 
+                discordWidgetContent.classList.remove('hidden'); 
 
                 let membersHtml = '';
                 const presenceCount = data.presence_count !== undefined ? data.presence_count : 0;
-                const membersToShow = Math.min(data.members ? data.members.length : 0, 10); // Show up to 10 members
+                const membersToShow = Math.min(data.members ? data.members.length : 0, 10); 
 
                 if (data.members && data.members.length > 0) {
-                    // Sort members: online first, then idle, then offline
+                    
                     data.members.sort((a, b) => {
                         const statusOrder = { 'online': 1, 'idle': 2, 'offline': 3 };
                         return statusOrder[a.status] - statusOrder[b.status];
                     });
 
-                    // Limit to top 10 members for display
+                    
                     const displayMembers = data.members.slice(0, 10);
 
                     membersHtml = displayMembers.map(member => `
@@ -554,7 +613,7 @@
                             </div>
                         </h3>
                         <button id="widget-dropdown-btn-actual" class="p-2 rounded-full hover:bg-pink-100 transition-colors duration-200">
-                            <!-- Three dots icon -->
+                            
                             <svg class="w-6 h-6 text-pink-700" fill="currentColor" viewBox="0 0 24 24">
                                 <path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/>
                             </svg>
@@ -573,14 +632,14 @@
                     </div>
                 `;
 
-                // Re-attach event listener for the dynamically created button
+                
                 setupDropdownListeners();
             }
 
-            // Call to fetch widget data when page loads
+            
             fetchDiscordWidgetData();
 
         });
     </script>
-</body>
+    </body>
 </html>

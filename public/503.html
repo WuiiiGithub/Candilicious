@@ -1,19 +1,18 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Service Unavailable - Candilicious</title>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Service Unavailable - Candilicious</title>
 
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
       tailwind.config = {
         theme: {
           extend: {
             fontFamily: {
-              sans: ['Inter', 'sans-serif'], // Default font for body
-              display: ['"Coming Soon"', 'cursive'], // For titles/headings
+              sans: ['Inter', 'sans-serif'], 
+              display: ['"Coming Soon"', 'cursive'], 
             },
             colors: {
               pink: {
@@ -45,11 +44,12 @@
       }
     </script>
 
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+        <link
+            href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+            rel="stylesheet">
 
-    <style>
-        /* Keyframe animations for various elements */
+        <style>
+        
         @keyframes bounce {
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-20px); }
@@ -92,69 +92,80 @@
             border-radius: 50%;
             pointer-events: none;
             opacity: 0;
-            animation: sparkle 1.5s forwards; /* Adjust duration as needed */
+            animation: sparkle 1.5s forwards; 
         }
     </style>
-</head>
-<body class="font-sans bg-pink-50 text-gray-800 flex items-center justify-center min-h-screen p-4 overflow-hidden relative">
+    </head>
+    <body
+        class="font-sans bg-pink-50 text-gray-800 flex items-center justify-center min-h-screen p-4 overflow-hidden relative">
 
-    <!-- Sparkle Container (for animated background sparkles) -->
-    <div id="sparkle-container" class="absolute inset-0 z-0"></div>
+        <div id="sparkle-container" class="absolute inset-0 z-0"></div>
 
-    <div class="relative z-10 bg-white p-8 md:p-12 rounded-3xl shadow-2xl shadow-pink-500/50 text-center max-w-xl mx-auto border border-pink-200 fade-in-up">
-        <h1 class="font-display text-7xl md:text-8xl font-extrabold text-pink-700 mb-4">
-            ⏳ 503!
-        </h1>
-        <h2 class="font-display text-3xl md:text-4xl font-extrabold text-purple-600 mb-4">
-            Service Temporarily Unavailable
-        </h2>
-        <p class="text-lg md:text-xl text-gray-700 mb-8">
-            Our sweet servers are taking a little nap! We're either undergoing maintenance or experiencing high traffic.
-            Please check back in a few minutes, and we'll be ready for more fun!
-        </p>
-        <a href="/" class="inline-block bg-purple-600 text-white px-8 py-4 rounded-full text-lg font-semibold shadow-md hover:bg-purple-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2">
-            Back to Candyland 🍬
-        </a>
-        <!-- Cute floating candy icon (SVG for better scalability) -->
-        <svg class="absolute w-20 h-20 md:w-24 md:h-24 animated-candy" style="top: -20px; right: -20px; transform: rotate(15deg);" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z" fill="#EC4899"/>
-            <circle cx="12" cy="7" r="1.5" fill="#FBCFEA"/>
-            <circle cx="9" cy="11" r="1.5" fill="#FBCFEA"/>
-            <circle cx="15" cy="11" r="1.5" fill="#FBCFEA"/>
-            <circle cx="12" cy="15" r="1.5" fill="#FBCFEA"/>
-            <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#DB2777"/>
-            <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#DB2777"/>
-            <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#DB2777"/>
-            <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#DB2777"/>
-        </svg>
-    </div>
+        <div
+            class="relative z-10 bg-white p-8 md:p-12 rounded-3xl shadow-2xl shadow-pink-500/50 text-center max-w-xl mx-auto border border-pink-200 fade-in-up">
+            <h1
+                class="font-display text-7xl md:text-8xl font-extrabold text-pink-700 mb-4">
+                ⏳ 503!
+            </h1>
+            <h2
+                class="font-display text-3xl md:text-4xl font-extrabold text-purple-600 mb-4">
+                Service Temporarily Unavailable
+            </h2>
+            <p class="text-lg md:text-xl text-gray-700 mb-8">
+                Our sweet servers are taking a little nap! We're either
+                undergoing maintenance or experiencing high traffic.
+                Please check back in a few minutes, and we'll be ready for more
+                fun!
+            </p>
+            <a href="/"
+                class="inline-block bg-purple-600 text-white px-8 py-4 rounded-full text-lg font-semibold shadow-md hover:bg-purple-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2">
+                Back to Candyland 🍬
+            </a>
 
-    <script>
+            <svg class="absolute w-20 h-20 md:w-24 md:h-24 animated-candy"
+                style="top: -20px; right: -20px; transform: rotate(15deg);"
+                viewBox="0 0 24 24" fill="none"
+                xmlns="http://www.w3.org/2000/svg">
+                <path
+                    d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z"
+                    fill="#EC4899" />
+                <circle cx="12" cy="7" r="1.5" fill="#FBCFEA" />
+                <circle cx="9" cy="11" r="1.5" fill="#FBCFEA" />
+                <circle cx="15" cy="11" r="1.5" fill="#FBCFEA" />
+                <circle cx="12" cy="15" r="1.5" fill="#FBCFEA" />
+                <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#DB2777" />
+                <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#DB2777" />
+                <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#DB2777" />
+                <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#DB2777" />
+            </svg>
+        </div>
+
+        <script>
         document.addEventListener('DOMContentLoaded', () => {
             const sparkleContainer = document.getElementById('sparkle-container');
 
-            // Function to create a random sparkle element
+            
             function createSparkle() {
                 const sparkle = document.createElement('div');
                 sparkle.classList.add('sparkle-effect');
-                const size = Math.random() * 10 + 5; // Random size between 5px and 15px
+                const size = Math.random() * 10 + 5; 
                 sparkle.style.width = `${size}px`;
                 sparkle.style.height = `${size}px`;
                 sparkle.style.left = `${Math.random() * 100}%`;
                 sparkle.style.top = `${Math.random() * 100}%`;
-                sparkle.style.animationDuration = `${Math.random() * 1 + 1}s`; // Random duration 1-2s
-                sparkle.style.animationDelay = `${Math.random() * 2}s`; // Random delay 0-2s
+                sparkle.style.animationDuration = `${Math.random() * 1 + 1}s`; 
+                sparkle.style.animationDelay = `${Math.random() * 2}s`; 
                 sparkleContainer.appendChild(sparkle);
 
-                // Remove sparkle after its animation ends to prevent DOM overload
+                
                 sparkle.addEventListener('animationend', () => {
                     sparkle.remove();
                 });
             }
 
-            // Generate a continuous stream of sparkles
-            setInterval(createSparkle, 200); // Create a new sparkle every 200ms
+            
+            setInterval(createSparkle, 200); 
         });
     </script>
-</body>
+    </body>
 </html>
