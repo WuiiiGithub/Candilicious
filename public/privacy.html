@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - Candilicious</title>
+
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'], 
+              display: ['"Coming Soon"', 'cursive'], 
+            },
+            colors: {
+              pink: {
+                50: '#FDF2F8',
+                100: '#FCE7F3',
+                200: '#FBCFEA',
+                300: '#F9A8D4',
+                400: '#F472B6',
+                500: '#EC4899',
+                600: '#DB2777',
+                700: '#BE185D',
+                800: '#9D174D',
+                900: '#831843',
+              },
+              purple: {
+                100: '#F3E8FF',
+                200: '#E9D5FF',
+                300: '#D8B4FE',
+                400: '#C084FC',
+                500: '#A78BFA',
+              },
+              blue: {
+                600: '#2563EB',
+                700: '#1D4ED8',
+              }
+            }
+          }
+        }
+      }
+    </script>
+
+    
+    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <style>
+        
+        @keyframes fadeIn {
+            0% { opacity: 0; transform: translateY(20px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes float-sweet {
+            0% { transform: translateY(0px) rotate(0deg); }
+            25% { transform: translateY(-5px) rotate(2deg); }
+            50% { transform: translateY(0px) rotate(0deg); }
+            75% { transform: translateY(5px) rotate(-2deg); }
+            100% { transform: translateY(0px) rotate(0deg); }
+        }
+
+        @keyframes sparkle {
+            0% { opacity: 0; transform: scale(0); }
+            50% { opacity: 1; transform: scale(1); }
+            100% { opacity: 0; transform: scale(0); }
+        }
+
+        .fade-in-up {
+            animation: fadeIn 0.8s ease-out forwards;
+        }
+
+        .animated-candy {
+            animation: float-sweet 4s ease-in-out infinite;
+        }
+
+        .sparkle-effect {
+            position: absolute;
+            background-color: #fff;
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+            animation: sparkle 1.5s forwards; 
+        }
+    </style>
+</head>
+<body class="font-sans bg-pink-50 text-gray-800 flex flex-col items-center min-h-screen p-4 relative">
+    
+    <div id="sparkle-container" class="absolute inset-0 z-0"></div>
+
+    <div class="relative z-10 bg-white p-8 md:p-12 rounded-3xl shadow-2xl shadow-pink-500/50 text-center md:text-left max-w-3xl mx-auto border border-pink-200 fade-in-up my-auto">
+        <h1 class="font-display text-4xl md:text-5xl font-extrabold text-pink-600 mb-6 text-center">
+            Privacy Policy
+        </h1>
+        <p class="text-lg md:text-xl text-gray-700 mb-8 text-center">
+            Candilicious Bot respects your privacy. 
+            <br>
+            Here’s how we handle your data:
+        </p>
+
+        <ul class="list-disc list-inside text-gray-700 text-left space-y-4 mb-10 text-base md:text-lg">
+            <li>
+                <strong class="text-pink-700">No Personal Data Collection:</strong> We do not collect or permanently store any personally identifiable information from your interactions with the bot.
+            </li>
+            <li>
+                <strong class="text-pink-700">Temporary Data Storage:</strong> All user interactions with the bot are only stored temporarily for immediate processing and are promptly deleted after use.
+            </li>
+            <li>
+                <strong class="text-pink-700">No Data Sharing:</strong> The bot does not share or sell any user data to third parties. Your information remains private.
+            </li>
+            <li>
+                <strong class="text-pink-700">Minimal Metadata Logging:</strong> Certain commands may log minimal, non-personally identifiable metadata (e.g., command usage counts) for debugging and service improvement purposes. This data cannot be traced back to individual users.
+            </li>
+        </ul>
+
+        <p class="text-lg md:text-xl text-gray-700 mb-8 text-center">
+            Your data privacy is our top priority. If you have any concerns, please don't hesitate to contact support.
+        </p>
+
+        <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 justify-center">
+            <a href="/" class="inline-block bg-purple-600 text-white px-8 py-4 rounded-full text-lg font-semibold shadow-md hover:bg-purple-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2">
+                Back to Home 🏠
+            </a>
+            <a href="{{ url_for('tos_page')}}" class="inline-block bg-white text-pink-600 border-2 border-pink-600 px-8 py-4 rounded-full text-lg font-semibold shadow-md hover:bg-pink-50 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2">
+                Terms of Service
+            </a>
+        </div>
+
+        
+        <svg class="absolute w-16 h-16 md:w-20 md:h-20 animated-candy" style="top: 10%; left: -5%; transform: rotate(10deg); animation-delay: 0.5s;" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z" fill="#F472B6"/>
+            <circle cx="12" cy="7" r="1.5" fill="#F9A8D4"/>
+            <circle cx="9" cy="11" r="1.5" fill="#F9A8D4"/>
+            <circle cx="15" cy="11" r="1.5" fill="#F9A8D4"/>
+            <circle cx="12" cy="15" r="1.5" fill="#F9A8D4"/>
+            <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#EC4899"/>
+            <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#EC4899"/>
+            <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#EC4899"/>
+            <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#EC4899"/>
+        </svg>
+        <svg class="absolute w-12 h-12 md:w-16 md:h-16 animated-candy" style="bottom: 5%; right: -5%; transform: rotate(-15deg); animation-delay: 1.2s;" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z" fill="#C084FC"/>
+            <circle cx="12" cy="7" r="1.5" fill="#D8B4FE"/>
+            <circle cx="9" cy="11" r="1.5" fill="#D8B4FE"/>
+            <circle cx="15" cy="11" r="1.5" fill="#D8B4FE"/>
+            <circle cx="12" cy="15" r="1.5" fill="#D8B4FE"/>
+            <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#A78BFA"/>
+            <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#A78BFA"/>
+            <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#A78BFA"/>
+            <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#A78BFA"/>
+        </svg>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const sparkleContainer = document.getElementById('sparkle-container');
+
+            
+            function createSparkle() {
+                const sparkle = document.createElement('div');
+                sparkle.classList.add('sparkle-effect');
+                const size = Math.random() * 8 + 4; 
+                sparkle.style.width = `${size}px`;
+                sparkle.style.height = `${size}px`;
+                sparkle.style.left = `${Math.random() * 100}%`;
+                sparkle.style.top = `${Math.random() * 100}%`;
+                sparkle.style.animationDuration = `${Math.random() * 1.5 + 1}s`; 
+                sparkle.style.animationDelay = `${Math.random() * 2}s`; 
+                sparkleContainer.appendChild(sparkle);
+
+                
+                sparkle.addEventListener('animationend', () => {
+                    sparkle.remove();
+                });
+            }
+
+            
+            setInterval(createSparkle, 250); 
+        });
+    </script>
+</body>
+</html>

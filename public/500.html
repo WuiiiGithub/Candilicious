@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oh no! Server Error - Candilicious</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'], // Default font for body
+              display: ['"Coming Soon"', 'cursive'], // For titles/headings
+            },
+            colors: {
+              pink: {
+                50: '#FDF2F8',
+                100: '#FCE7F3',
+                200: '#FBCFEA',
+                300: '#F9A8D4',
+                400: '#F472B6',
+                500: '#EC4899',
+                600: '#DB2777',
+                700: '#BE185D',
+                800: '#9D174D',
+                900: '#831843',
+              },
+              purple: {
+                100: '#F3E8FF',
+                200: '#E9D5FF',
+                300: '#D8B4FE',
+                400: '#C084FC',
+                500: '#A78BFA',
+              },
+              blue: {
+                600: '#2563EB',
+                700: '#1D4ED8',
+              }
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <style>
+        /* Keyframe animations for various elements */
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+
+        @keyframes fadeIn {
+            0% { opacity: 0; transform: translateY(20px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes float-sweet {
+            0% { transform: translateY(0px) rotate(0deg); }
+            25% { transform: translateY(-5px) rotate(2deg); }
+            50% { transform: translateY(0px) rotate(0deg); }
+            75% { transform: translateY(5px) rotate(-2deg); }
+            100% { transform: translateY(0px) rotate(0deg); }
+        }
+
+        @keyframes sparkle {
+            0% { opacity: 0; transform: scale(0); }
+            50% { opacity: 1; transform: scale(1); }
+            100% { opacity: 0; transform: scale(0); }
+        }
+
+        .animated-candy {
+            animation: float-sweet 4s ease-in-out infinite;
+        }
+
+        .animated-text-bounce {
+            animation: bounce 1.5s ease-in-out infinite;
+        }
+
+        .fade-in-up {
+            animation: fadeIn 0.8s ease-out forwards;
+        }
+
+        .sparkle-effect {
+            position: absolute;
+            background-color: #fff;
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+            animation: sparkle 1.5s forwards; /* Adjust duration as needed */
+        }
+    </style>
+</head>
+<body class="font-sans bg-pink-50 text-gray-800 flex items-center justify-center min-h-screen p-4 overflow-hidden relative">
+
+    <!-- Sparkle Container (for animated background sparkles) -->
+    <div id="sparkle-container" class="absolute inset-0 z-0"></div>
+
+    <div class="relative z-10 bg-white p-8 md:p-12 rounded-3xl shadow-2xl shadow-pink-500/50 text-center max-w-xl mx-auto border border-pink-200 fade-in-up">
+        <h1 class="font-display text-7xl md:text-8xl font-extrabold text-pink-700 mb-4">
+            😵 500!
+        </h1>
+        <h2 class="font-display text-3xl md:text-4xl font-extrabold text-purple-600 mb-4">
+            Whoops! Something went wrong on our end!
+        </h2>
+        <p class="text-lg md:text-xl text-gray-700 mb-8">
+            Our little Candilicious helpers are working hard to fix this glitch.
+            Please sprinkle some patience and try again soon!
+        </p>
+        <a href="/" class="inline-block bg-purple-600 text-white px-8 py-4 rounded-full text-lg font-semibold shadow-md hover:bg-purple-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2">
+            Back to Candyland 🍬
+        </a>
+        <!-- Cute floating candy icon (SVG for better scalability) -->
+        <svg class="absolute w-20 h-20 md:w-24 md:h-24 animated-candy" style="top: -20px; right: -20px; transform: rotate(15deg);" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C8.686 2 6 4.686 6 8V16C6 19.314 8.686 22 12 22C15.314 22 18 19.314 18 16V8C18 4.686 15.314 2 12 2ZM12 4C14.21 4 16 5.79 16 8V16C16 18.21 14.21 20 12 20C9.79 20 8 18.21 8 16V8C8 5.79 9.79 4 12 4Z" fill="#EC4899"/>
+            <circle cx="12" cy="7" r="1.5" fill="#FBCFEA"/>
+            <circle cx="9" cy="11" r="1.5" fill="#FBCFEA"/>
+            <circle cx="15" cy="11" r="1.5" fill="#FBCFEA"/>
+            <circle cx="12" cy="15" r="1.5" fill="#FBCFEA"/>
+            <path d="M19.5 7.5L21 6V9L19.5 7.5Z" fill="#DB2777"/>
+            <path d="M4.5 7.5L3 6V9L4.5 7.5Z" fill="#DB2777"/>
+            <path d="M19.5 16.5L21 15V18L19.5 16.5Z" fill="#DB2777"/>
+            <path d="M4.5 16.5L3 15V18L4.5 16.5Z" fill="#DB2777"/>
+        </svg>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const sparkleContainer = document.getElementById('sparkle-container');
+
+            // Function to create a random sparkle element
+            function createSparkle() {
+                const sparkle = document.createElement('div');
+                sparkle.classList.add('sparkle-effect');
+                const size = Math.random() * 10 + 5; // Random size between 5px and 15px
+                sparkle.style.width = `${size}px`;
+                sparkle.style.height = `${size}px`;
+                sparkle.style.left = `${Math.random() * 100}%`;
+                sparkle.style.top = `${Math.random() * 100}%`;
+                sparkle.style.animationDuration = `${Math.random() * 1 + 1}s`; // Random duration 1-2s
+                sparkle.style.animationDelay = `${Math.random() * 2}s`; // Random delay 0-2s
+                sparkleContainer.appendChild(sparkle);
+
+                // Remove sparkle after its animation ends to prevent DOM overload
+                sparkle.addEventListener('animationend', () => {
+                    sparkle.remove();
+                });
+            }
+
+            // Generate a continuous stream of sparkles
+            setInterval(createSparkle, 200); // Create a new sparkle every 200ms
+        });
+    </script>
+</body>
+</html>
