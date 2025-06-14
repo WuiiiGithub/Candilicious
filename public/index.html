@@ -3,43 +3,436 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title> Candilicious </title>
+    <title>Candilicious - Study Bot</title>
 
-    <!-- CSS -->
-    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'], // Default font for body
+              display: ['"Coming Soon"', 'cursive'], // For titles/headings
+            },
+            colors: {
+              pink: {
+                50: '#FDF2F8',
+                100: '#FCE7F3',
+                200: '#FBCFEA',
+                300: '#F9A8D4',
+                400: '#F472B6',
+                500: '#EC4899',
+                600: '#DB2777',
+                700: '#BE185D',
+                800: '#9D174D',
+                900: '#831843',
+              },
+              purple: { // Added a complementary color for accents
+                100: '#F3E8FF',
+                200: '#E9D5FF',
+                300: '#D8B4FE',
+                400: '#C084FC',
+                500: '#A78BFA',
+              },
+              blue: {
+                600: '#2563EB',
+                700: '#1D4ED8',
+              }
+            }
+          }
+        }
+      }
+    </script>
 
-    <!-- Favicons -->
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Favicons - Assuming these paths are correct and accessible -->
     <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon/favicon-16x16.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/favicon/favicon-48x48.png">
     <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon/favicon-64x64.png">
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon/apple-touch-icon.png">
 
-    <!-- Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&display=swap" rel="stylesheet">
+    <style>
+        /* Custom scrollbar for modal content (Webkit browsers) */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none; /* Hide scrollbar for Chrome, Safari, Opera */
+        }
+        /* Hide scrollbar for IE, Edge, Firefox */
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+
+        /* Show default cursor on desktop, enable global pointer glow */
+        @media (min-width: 768px) { /* Apply only on desktop/larger screens */
+            body {
+                cursor: auto; /* Show the default system cursor */
+            }
+            #pointer-glow {
+                display: block; /* Show the custom glow cursor */
+            }
+        }
+        @media (max-width: 767px) { /* Hide custom glow on smaller screens */
+            #pointer-glow {
+                display: none;
+            }
+        }
+
+        /* Global Pointer Glow Effect */
+        #pointer-glow {
+            position: fixed;
+            pointer-events: none; /* Ensures the glow doesn't block clicks */
+            width: 300px; /* Size of the glow, slightly larger to encompass more pink */
+            height: 300px;
+            /* White core (0-2%), transitioning immediately to dense rosy pink (15%), then fading (30-60%) */
+            background: radial-gradient(circle at center,
+                        rgba(255, 255, 255, 1.0) 0%, /* Pure white at the very center */
+                        rgba(255, 255, 255, 0.9) 2%,  /* Slightly fading white to ensure crisp core */
+                        rgba(255, 160, 180, 1.0) 15%, /* Rosy pink starts here, full opacity */
+                        rgba(255, 160, 180, 0.5) 30%, /* Fading pink */
+                        transparent 60%               /* Transparent further out */
+            );
+            transform: translate(-50%, -50%); /* Center the gradient on the cursor */
+            opacity: 0; /* Hidden by default, fades in on mousemove */
+            border-radius: 50%; /* Circular glow */
+            filter: blur(50px); /* Increased blur for smoother transition of colors */
+            transition: opacity 0.05s ease-out; /* Faster fade in/out for responsiveness */
+            z-index: 9998; /* Below modals, above other content */
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+        }
+
+        @keyframes float {
+            0% { transform: translateY(0px) translateX(0px); }
+            25% { transform: translateY(-8px) translateX(8px); } /* More prominent float */
+            50% { transform: translateY(0px) translateX(0px); }
+            75% { transform: translateY(8px) translateX(-8px); }
+            100% { transform: translateY(0px) translateX(0px); }
+        }
+
+        .animate-pulse-subtle {
+            animation: pulse 2s infinite ease-in-out;
+        }
+
+        .animate-float {
+            animation: float 8s infinite ease-in-out; /* Slower, more graceful float */
+        }
+
+        /* Slightly adjust shadow intensity for elements, less than hero */
+        .feature-card-shadow {
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06); /* Softer shadow */
+        }
+        .feature-card-shadow:hover {
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12); /* Still noticeable hover, but not overpowering */
+        }
+        /* Hero section shadow is already quite strong, keeping it */
+
+    </style>
 </head>
-<body>
-    <div class="p-3 m-5 border rounded-xl transition-shadow border-pink-200 shadow-lg shadow-pink-500/50 text-pink-400 font-black text-lg font-baloo hover:shadow-pink-300 hover:shadow-xl" style="text-shadow: 2px 2px 4px rgba(255, 95, 178, 0.493);">
-        <img src="./assets/image.png" class="" width="32" height="32" style="display: inline; scale: 1.3;">
-        Candilicious
+<body class="font-sans bg-pink-50 text-gray-800">
+
+    <!-- Global Pointer Glow Element -->
+    <div id="pointer-glow" class="hidden md:block"></div>
+
+    <!-- Fullscreen Prompt Modal -->
+    <div id="fullscreenPromptModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-[10000] hidden">
+        <div class="bg-pink-100 rounded-2xl p-8 shadow-2xl max-w-lg w-full text-center border border-pink-300">
+            <h3 class="font-display text-3xl font-bold text-pink-700 mb-4">Welcome to Candilicious! 🎉</h3>
+            <p class="text-lg text-gray-700 mb-6">For the best experience, we recommend viewing this site in fullscreen mode.</p>
+            <button id="enterFullscreenBtn" class="bg-purple-600 text-white px-8 py-4 rounded-full text-lg font-semibold shadow-md hover:bg-purple-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2">
+                Go Fullscreen & Dive In!
+            </button>
+            <button id="dismissFullscreenBtn" class="mt-4 text-pink-600 hover:text-pink-800 transition-colors duration-200 text-sm">
+                No thanks, continue browsing.
+            </button>
+        </div>
     </div>
 
-    <section class="p-5 mt-10 ms-6 me-6 rounded-2xl hover:scale-101 transition-transform duration-500 ease-in-out flex flex-col md:flex-row items-center justify-center bg-pink-50">
-        <!-- Left Content -->
-        <div class="md:w-1/2 flex justify-center">
-          <img src="./assets/image.png" alt="Hero Image" class="w-full max-w-md md:max-w-lg">
+
+    <!-- Header Section -->
+    <header class="bg-white shadow-sm py-4 px-6 md:px-10 flex items-center justify-between sticky top-0 z-50">
+        <div class="flex items-center space-x-2">
+            <!-- Candilicious Logo/Icon -->
+            <img src="./assets/favicon/android-chrome-192x192.png" alt="Candilicious Icon" class="w-10 h-10 rounded-full shadow-md">
+            <h1 class="font-display text-2xl md:text-3xl font-black text-pink-600" style="text-shadow: 1px 1px 2px rgba(236, 72, 153, 0.3);">
+                Candilicious
+            </h1>
         </div>
-        <!-- Right Content -->
-        <div class="text-center md:text-left md:w-1/2 space-y-4">
-          <h1 class="text-4xl md:text-6xl font-bold text-gray-900">Candilicious</h1>
-          <p class="text-lg text-gray-600 ">
-            Lorem, ipsum dolor sit amet consectetur adipisicing elit. Nobis culpa est vero fuga autem nulla consequuntur consectetur fugit temporibus at, voluptas accusamus ipsum error delectus dignissimos nihil id corrupti dolores? Lorem ipsum dolor sit amet consectetur adipisicing elit. Itaque esse, obcaecati commodi odio reiciendis maiores, vitae natus beatae autem enim id ipsam aperiam mollitia, aspernatur cumque consequuntur laborum corrupti sequi?
-          </p>
-          <button class="bg-blue-600 text-white px-6 py-3 rounded-md hover:bg-blue-700">
-            Get Started
-          </button>
+        <nav class="hidden md:flex space-x-6 text-pink-700 font-medium">
+            <a href="#features" class="hover:text-pink-900 transition-colors duration-200 smooth-scroll">Features</a>
+            <a href="#vision" class="hover:text-pink-900 transition-colors duration-200 smooth-scroll">Our Vision</a>
+            <a href="#contact" class="hover:text-pink-900 transition-colors duration-200 smooth-scroll">Contact</a>
+        </nav>
+        <!-- Mobile Menu Button (Optional, not implemented in this basic example) -->
+        <button class="md:hidden p-2 rounded-md text-pink-600 hover:bg-pink-100 focus:outline-none focus:ring-2 focus:ring-pink-500">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+        </button>   
+
+    </header>
+
+    <!-- Hero Section -->
+    <section id="hero-section" class="py-20 md:py-32 bg-pink-100 flex flex-col md:flex-row items-center justify-center space-y-12 md:space-y-0 md:gap-28 px-6 rounded-b-3xl shadow-2xl shadow-pink-500/70">
+        <!-- Image on Left for larger screens, Top for smaller -->
+        <div class="md:w-1/2 flex justify-center p-4 order-1 md:order-1">
+            <img src="https://www.shutterstock.com/image-vector/happy-robot-3d-ai-character-600nw-2464455965.jpg" alt="Happy AI Robot Character" class="w-full max-w-sm sm:max-w-md md:max-w-xl rounded-xl shadow-lg transform transition-transform duration-500 hover:scale-105 object-cover h-auto animate-float">
+        </div>
+        <!-- Text Content on Right for larger screens, Bottom for smaller -->
+        <div class="md:w-1/2 text-center md:text-left space-y-6 flex flex-col items-center md:items-start justify-center p-4 order-2 md:order-2">
+            <h1 class="font-display text-4xl sm:text-5xl md:text-5xl lg:text-6xl font-extrabold text-pink-700 leading-tight">
+                Your Sweet Path to <span class="text-purple-600">Smarter Study</span>
+            </h1>
+            <p class="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto md:mx-0">
+                Candilicious helps students manage study sessions, track progress, and have fun, fostering a new freedom in learning beyond traditional education.
+            </p>
+            <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4 justify-center md:justify-start">
+                <button class="bg-pink-600 text-white px-6 py-3 rounded-full text-lg font-semibold shadow-md hover:bg-pink-700 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2 animate-pulse-subtle">
+                    Invite Candilicious 🎉
+                </button>
+                <a href="#features" class="bg-white text-pink-600 border-2 border-pink-600 px-6 py-3 rounded-full text-lg font-semibold shadow-md hover:bg-pink-50 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:ring-offset-2 flex items-center justify-center smooth-scroll">
+                    Learn More
+                </a>
+            </div>
         </div>
     </section>
-      
+
+    <!-- Features Section -->
+    <section id="features" class="py-16 px-6 md:px-12 bg-white">
+        <h2 class="font-display text-4xl md:text-5xl font-bold text-center text-pink-700 mb-12">Features That Help You Succeed</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
+
+            <!-- Feature Card 1: Study Session Management -->
+            <div class="bg-pink-50 p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center border border-pink-200 feature-card-shadow">
+                <div class="bg-pink-200 p-4 rounded-full mb-6">
+                    <svg class="w-10 h-10 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg>
+                </div>
+                <h3 class="font-display text-2xl font-semibold text-pink-700 mb-3">Study Session Management</h3>
+                <p class="text-gray-600">Configure study channels, monitor user activity, track time spent studying, and manage inactivity with warnings and disconnections.</p>
+            </div>
+
+            <!-- Feature Card 2: Leaderboards -->
+            <div class="bg-pink-50 p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center border border-pink-200 feature-card-shadow">
+                <div class="bg-pink-200 p-4 rounded-full mb-6">
+                    <svg class="w-10 h-10 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                </div>
+                <h3 class="font-display text-2xl font-semibold text-pink-700 mb-3">Leaderboards (Coming Soon!)</h3>
+                <p class="text-gray-600">View local leaderboards within your server and compete on a global leaderboard across all users and servers.</p>
+            </div>
+
+            <!-- Feature Card 3: Fun Commands -->
+            <div class="bg-pink-50 p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center border border-pink-200 feature-card-shadow">
+                <div class="bg-pink-200 p-4 rounded-full mb-6">
+                    <svg class="w-10 h-10 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </div>
+                <h3 class="font-display text-2xl font-semibold text-pink-700 mb-3">Fun Commands</h3>
+                <p class="text-gray-600">Inject some fun into your study breaks! Play meme songs and sound effects in your voice channels.</p>
+            </div>
+
+            <!-- Feature Card 4: Exception Scenarios -->
+            <div class="bg-pink-50 p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center border border-pink-200 feature-card-shadow">
+                <div class="bg-pink-200 p-4 rounded-full mb-6">
+                    <svg class="w-10 h-10 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </div>
+                <h3 class="font-display text-2xl font-semibold text-pink-700 mb-3">Handling Exception Scenarios</h3>
+                <p class="text-gray-600">Request temporary 5-minute exceptions for poor network conditions, ensuring uninterrupted study time.</p>
+            </div>
+
+            <!-- Feature Card 5: Data Management -->
+            <div class="bg-pink-50 p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center border border-pink-200 feature-card-shadow">
+                <div class="bg-pink-200 p-4 rounded-full mb-6">
+                    <svg class="w-10 h-10 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7V4c0-2.21 3.582-4 8-4s8 1.79 8 4v3m-8 4v8m0-8H6m6 0h6"></path></svg>
+                </div>
+                <h3 class="font-display text-2xl font-semibold text-pink-700 mb-3">Personal Data Management</h3>
+                <p class="text-gray-600">Empowers users to manage their own study data, with server data management options if configured.</p>
+            </div>
+
+            <!-- Feature Card 6: Community & Support -->
+            <div class="bg-pink-50 p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col items-center text-center border border-pink-200 feature-card-shadow">
+                <div class="bg-pink-200 p-4 rounded-full mb-6">
+                    <svg class="w-10 h-10 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H2v-2a3 3 0 015.356-1.857M17 20v-2c0-.134-.01-.267-.03-.4M2 18v2m0-2a3 3 0 015.356-1.857M2 18c0-.134.01-.267.03-.4m0 4h16m-4 0a3 3 0 00-3-3H9a3 3 0 00-3 3m-3 0h12"></path></svg>
+                </div>
+                <h3 class="font-display text-2xl font-semibold text-pink-700 mb-3">Community & Support</h3>
+                <p class="text-gray-600">Contribute to the project, report bugs, suggest features, and join a vibrant community dedicated to learning freedom.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Our Vision Section -->
+    <section id="vision" class="py-16 px-6 md:px-12 bg-white text-gray-900">
+        <h2 class="font-display text-4xl md:text-5xl font-bold text-center text-pink-700 mb-12">Our Vision for Learning Freedom</h2>
+        <div class="max-w-4xl mx-auto space-y-8 text-lg leading-relaxed">
+            <p>At Candilicious, we are strong critics of the current education system. We believe it often stifles creativity, discourages new perspectives, and forces rote memorization over genuine understanding. Our world needs new generations of thinkers, and we observe that current systems don't foster the genius seen in previous eras.</p>
+
+            <p>We envision a world where students are truly free in their learning journey. We believe online facilities and recent technologies are gradually dismantling traditional educational barriers, and this is a very positive development. Candilicious is our first step towards creating more opportunities for students to learn and grow freely.</p>
+
+            <p class="italic text-purple-700 font-semibold">"For us, it's not about 'you' or 'me'; it's about the 'we' – people who think and feel the same, united by a desire to empower student communities through accessible, open-source initiatives."</p>
+
+            <div class="bg-purple-50 p-6 rounded-lg shadow-inner border border-purple-200">
+                <h3 class="font-display text-2xl font-semibold text-purple-700 mb-4">Our Baby Steps:</h3>
+                <ul class="list-disc list-inside space-y-2 text-gray-700">
+                    <li>Encourage focused study by kicking inactive users from voice channels.</li>
+                    <li>Provide temporary exceptions for users with poor network conditions.</li>
+                    <li>Offer fun commands to play meme sound effects and songs in VCs, ensuring a balanced study environment.</li>
+                </ul>
+            </div>
+            <p>Having observed all this, we have a vision of creating more facilities for students to learn and grow. This is our baby steps in this journey. We are not sure how far we can go, but we will try our best. For us, it's not about 'you' or 'me' its about the 'we'. By using the word 'we', we mean people who think and feel the same. It is very important to note that, if we really want to do something great for student community then we need to keep it accessible to student community. And let the things remain accessible to them. So, we are planning our contributions related to these in Open Source.</p>
+            <p>In a short and a concluding line, we envision a world where the student is free in their learning journey.</p>
+
+            <div class="bg-pink-50 p-6 rounded-lg shadow-inner border border-pink-200">
+                <h3 class="font-display text-2xl font-semibold text-pink-700 mb-4">Ways of Contributing:</h3>
+                <ul class="list-disc list-inside space-y-2 text-gray-700">
+                    <li>Contribute to the codebase by submitting pull requests.</li>
+                    <li>Help by reporting bugs or suggesting new features.</li>
+                    <li>Help by spreading the word about Candilicious to your friends and communities.</li>
+                    <li>Help by testing the bot and providing feedback.</li>
+                    <li>Even help by engaging discussions in the community.</li>
+                    <li>Help by sharing your own study tips and resources.</li>
+                </ul>
+            </div>
+            <p class="text-center font-bold text-pink-600 mt-8">Happy studying with Candilicious! 🎉</p>
+        </div>
+    </section>
+
+    <!-- Footer Section -->
+    <footer id="contact" class="bg-pink-700 text-white py-10 px-6 md:px-12">
+        <div class="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 text-center md:text-left">
+            <div>
+                <h3 class="font-display text-2xl font-semibold mb-4">Candilicious</h3>
+                <p class="text-pink-200">Your partner in productive and enjoyable study sessions.</p>
+            </div>
+            <div>
+                <h3 class="font-display text-xl font-semibold mb-4">Quick Links</h3>
+                <ul class="space-y-2 text-pink-200">
+                    <li><a href="#" class="hover:underline smooth-scroll">Home</a></li>
+                    <li><a href="#features" class="hover:underline smooth-scroll">Features</a></li>
+                    <li><a href="#vision" class="hover:underline smooth-scroll">Our Vision</a></li>
+                    <li><a href="https://github.com/WuiiiGithub/Candlicious" target="_blank" class="hover:underline">GitHub Repo</a></li>
+                </ul>
+            </div>
+            <div>
+                <h3 class="font-display text-xl font-semibold mb-4">Legal & Support</h3>
+                <ul class="space-y-2 text-pink-200">
+                    <li><a href="/tos" class="hover:underline">Terms of Service</a></li>
+                    <li><a href="/privacy" class="hover:underline">Privacy Policy</a></li>
+                    <li><a href="/about" class="hover:underline">About Us</a></li>
+                    <li><a href="/new" class="hover:underline">Latest Updates</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="text-center text-pink-300 mt-10 border-t border-pink-600 pt-8">
+            &copy; 2025 Candilicious. All rights reserved.
+        </div>
+    </footer>
+
+    <!-- Modal Structure for Full Explanation (Kept hidden as AI section is hidden) -->
+    <div id="explanationModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[9999] hidden">
+        <div class="bg-white rounded-2xl p-6 shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-display text-2xl font-semibold text-pink-700">Full Explanation</h3>
+                <button id="closeModalBtn" class="text-gray-500 hover:text-gray-700 text-3xl font-bold leading-none">&times;</button>
+            </div>
+            <div id="modalContent" class="flex-grow overflow-y-auto text-gray-700 leading-relaxed no-scrollbar p-2 -mr-2">
+                <!-- Content will be injected here -->
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const heroSection = document.getElementById('hero-section');
+            const pointerGlow = document.getElementById('pointer-glow');
+            const fullscreenPromptModal = document.getElementById('fullscreenPromptModal');
+            const enterFullscreenBtn = document.getElementById('enterFullscreenBtn');
+            const dismissFullscreenBtn = document.getElementById('dismissFullscreenBtn');
+
+            // --- Global Pointer Glow Effect ---
+            // Only enable on desktop/larger screens (min-width: 768px)
+            if (pointerGlow) { // Check if pointerGlow element exists
+                document.body.addEventListener('mousemove', (e) => {
+                    // Update glow position only if screen is large enough
+                    if (window.innerWidth >= 768) {
+                        pointerGlow.style.left = `${e.clientX}px`;
+                        pointerGlow.style.top = `${e.clientY}px`;
+                        pointerGlow.style.opacity = 1; // Always visible when mouse moves
+                    }
+                });
+
+                document.body.addEventListener('mouseleave', () => {
+                    if (window.innerWidth >= 768) {
+                        pointerGlow.style.opacity = 0; // Fade out when mouse leaves body
+                    }
+                });
+
+                // Handle window resize to toggle glow visibility
+                window.addEventListener('resize', () => {
+                    if (window.innerWidth < 768) {
+                        pointerGlow.style.display = 'none'; // Hide glow on small screens
+                        document.body.style.cursor = 'auto'; // Restore default cursor
+                    } else {
+                        pointerGlow.style.display = 'block'; // Show glow on large screens
+                        document.body.style.cursor = 'auto'; // Keep default cursor visible
+                    }
+                });
+
+                // Set initial state on load
+                if (window.innerWidth < 768) {
+                    pointerGlow.style.display = 'none';
+                    document.body.style.cursor = 'auto';
+                } else {
+                    pointerGlow.style.display = 'block';
+                    document.body.style.cursor = 'auto'; // Keep default cursor visible
+                }
+            }
+
+
+            // --- Fullscreen Prompt Modal Functionality ---
+            fullscreenPromptModal.classList.add('hidden'); // Ensure it's hidden initially
+            enterFullscreenBtn.addEventListener('click', () => {
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen();
+                } else if (document.documentElement.mozRequestFullScreen) { /* Firefox */
+                    document.documentElement.mozRequestFullScreen();
+                } else if (document.documentElement.webkitRequestFullscreen) { /* Chrome, Safari and Opera */
+                    document.documentElement.webkitRequestFullscreen();
+                } else if (document.documentElement.msRequestFullscreen) { /* IE/Edge */
+                    document.documentElement.msRequestFullscreen();
+                }
+                fullscreenPromptModal.classList.add('hidden'); // Hide modal after attempt
+            });
+
+            dismissFullscreenBtn.addEventListener('click', () => {
+                fullscreenPromptModal.classList.add('hidden'); // Hide modal
+            });
+
+            window.addEventListener('load', () => {
+                fullscreenPromptModal.classList.remove('hidden'); // Make it visible on load
+            });
+
+            // --- Smooth Scrolling Functionality ---
+            document.querySelectorAll('a.smooth-scroll').forEach(anchor => {
+                anchor.addEventListener('click', function (e) {
+                    e.preventDefault();
+
+                    const targetId = this.getAttribute('href');
+                    const targetElement = document.querySelector(targetId);
+
+                    if (targetElement) {
+                        window.scrollTo({
+                            top: targetElement.offsetTop - (document.querySelector('header').offsetHeight), // Adjust for fixed header
+                            behavior: 'smooth'
+                        });
+                    }
+                });
+            });
+        });
+    </script>
+
 </body>
 </html>

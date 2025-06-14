@@ -3,7 +3,7 @@ import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
 from discord.ext import commands
-from flask import Flask, render_template
+from flask import Flask, render_template, abort, request
 from asgiref.wsgi import WsgiToAsgi
 import uvicorn, config
 
@@ -27,6 +27,18 @@ app = Flask(__name__, template_folder="public", static_folder="./public/assets")
 def home():
     favicons = os.listdir(os.path.join(app.static_folder, "favicon"))
     return render_template("index.html", favicons=favicons)
+
+@app.route('/tos')
+def tos_page():
+    return render_template("tos.html")
+
+@app.route('/privacy')
+def privacy_page():
+    return render_template("privacy.html")
+
+@app.route('/about')
+def about_page():
+    return render_template("about.html")
 
 @app.route("/except/<token>")
 def exception(token):
@@ -54,9 +66,22 @@ def exception(token):
     else:
         return "<img src='https://media.tenor.com/x8v1oNUOmg4AAAAM/rickroll-roll.gif' alt='Congrats! You are Rick Rolled!' width='100%' height='100%'>"
 
+app.errorhandler(403)
+def forbidden_error(e):
+    return render_template('403.html'), 403
+
 @app.errorhandler(404)
 def page_not_found(e):
     return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_server_error(e):
+    app.logger.error(f"Internal Server Error at {request.path}: {e}")
+    return render_template('500.html'), 500
+
+@app.errorhandler(503)
+def service_unavailable_error(e):
+    return render_template('503.html'), 503
 
 def run_flask():
     asgi_app = WsgiToAsgi(app)  

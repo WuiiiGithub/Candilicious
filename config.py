@@ -1,6 +1,6 @@
 from os import getenv as _getenv
 
-port = _getenv('FLASK_DOMAIN').split(':')[1]
+port = int(_getenv('FLASK_DOMAIN').split(':')[2])
 dbName = _getenv('DB_NAME')
 availableIn = {
     "guilds": [1354101256662286397, 1218819398974963752]
