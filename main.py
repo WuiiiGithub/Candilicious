@@ -1,15 +1,29 @@
-import os#, cloud_setup
+import os, sys#, cloud_setup
 import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
 from discord.ext import commands
-from flask import Flask, render_template, abort, request
+from flask import Flask, render_template, request
 from asgiref.wsgi import WsgiToAsgi
 import uvicorn, config
+from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure, OperationFailure
 
 load_dotenv()
+MONGODB_URI = os.getenv("MONGODB_URI")
 
-exceptionCollection = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.dbName]["exception"]
+try:
+    client = pymongo.MongoClient(host=MONGODB_URI, serverSelectionTimeoutMS=5000)
+    db = client[config.dbName]
+    exceptionCollection = db["exception"]
+    db.command('ping') 
+    print(f"Connected to MongoDB database: {config.dbName}")
+
+except (ServerSelectionTimeoutError, ConnectionFailure, OperationFailure) as e:
+    print(f"ERROR: Could not connect to MongoDB. \nPlease check MONGODB_URI and ensure your MongoDB server is running and accessible from the container. \nError: {e}")
+    sys.exit(1)
+except Exception as e:
+    print(f"An unexpected error occurred during MongoDB connection: {e}")
+    sys.exit(1)
 
 intents=discord.Intents.all()
 bot=commands.Bot(
@@ -23,6 +37,14 @@ bot.userNetworkConnection = {}
 
 app = Flask(__name__, template_folder="public", static_folder="./public/assets")
 
+@app.route('/ping')
+def ping():
+    try:
+        db.command('ping')
+        return "OK", 200
+    except Exception:
+        return "An error occured!", 500
+    
 @app.route('/')
 def home():
     favicons = os.listdir(os.path.join(app.static_folder, "favicon"))
@@ -103,6 +125,6 @@ async def main():
 try:
     asyncio.run(main())
 except KeyboardInterrupt:
-    print("="*50)
+    print('...',"="*50, sep='\n')
     print("The application has been stopped.")
     print("="*50)

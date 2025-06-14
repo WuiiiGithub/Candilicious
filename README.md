@@ -28,6 +28,16 @@ Candilicious Study Bot is a Discord bot designed to help study sessions manage s
     - If its configured on server even that data can be managed.
 
 ---
+## Docker Based Fast Run
+After installing the docker, you can go into the docker shell and just run the following commands to get the bot up and running in no time.  
+
+### Run
+```bash
+docker run --env-file .env -p 10000:10000 wuiiidocker/candilicious
+```
+Here `.env` is your environment secret file. Please keep that in the same folder from where this command is being run.
+
+---
 
 ## Installation  
 

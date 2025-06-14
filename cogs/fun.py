@@ -56,7 +56,7 @@ class Fun(commands.Cog):
     ):
         try:
             serverDetails = serverCollection.find_one({'_id': str(inter.guild_id)})
-            if not serverDetails:
+            if serverDetails==None:
                 print("The server is not configured")
                 await inter.response.send_message(embed=Embed(
                     description='The server is not configured. Please configure the server and try again later.',
@@ -82,7 +82,7 @@ class Fun(commands.Cog):
                 return
             vc = await voice.channel.connect()
             await inter.response.send_message(f"🎵 Playing *{sound.replace('-', ' ')}* ~*{inter.user.display_name}*")
-            vc.play(FFmpegPCMAudio(file_path, executable='./ffmpeg'), after=lambda e: print(f"Finished playing: {e}"))
+            vc.play(FFmpegPCMAudio(file_path), after=lambda e: print(f"Finished playing: {e}"))
             while vc.is_playing():
                 await utils.sleep_until(utils.utcnow() + timedelta(seconds=1))
             await vc.disconnect()
@@ -100,7 +100,7 @@ class Fun(commands.Cog):
     ):
         try:
             serverDetails = serverCollection.find_one({'_id': str(inter.guild_id)})
-            if not serverDetails:
+            if serverDetails==None:
                 print("The server is not configured")
                 await inter.response.send_message(embed=Embed(
                     description='The server is not configured. Please configure the server and try again later.',
@@ -126,7 +126,7 @@ class Fun(commands.Cog):
                 return
             vc = await voice.channel.connect()
             await inter.response.send_message(f"🎵 Playing *{sound.replace('-', ' ')}*   ~*{inter.user.display_name}*")
-            vc.play(FFmpegPCMAudio(file_path, executable='./ffmpeg'), after=lambda e: print(f"Finished playing: {e}"))
+            vc.play(FFmpegPCMAudio(file_path), after=lambda e: print(f"Finished playing: {e}"))
             while vc.is_playing():
                 await utils.sleep_until(utils.utcnow() + timedelta(seconds=1))
             await vc.disconnect()
