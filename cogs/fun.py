@@ -106,6 +106,7 @@ class Fun(commands.Cog):
                     description='The server is not configured. Please configure the server and try again later.',
                     color=config.msgColor
                 ))
+                return
 
             file_path = memes['effects'][sound]
             voice = inter.user.voice

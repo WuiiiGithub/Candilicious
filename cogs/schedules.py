@@ -7,7 +7,7 @@ import os, pymongo, traceback, asyncio
 from library import logging
 
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
-dlog = logging.Logger("Schedules", style="default")
+#dlog = logging.Logger("Schedules", style="default")
 
 class Schedules(commands.Cog):
     def __init__(self, bot):
@@ -57,7 +57,6 @@ class Schedules(commands.Cog):
             if total_seconds <= 0:
                 total_seconds = 300
 
-            # Acknowledge the remainder setup
             await inter.response.send_message(
                 embed=discord.Embed(
                     title="Remainder Set!",

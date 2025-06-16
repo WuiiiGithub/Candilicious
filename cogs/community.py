@@ -7,7 +7,7 @@ import os, pymongo, traceback
 from library import logging
 
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
-dlog = logging.Logger("Community", style="default")
+#dlog = logging.Logger("Community", style="default")
 
 class Community(commands.Cog):
     def __init__(self, bot):

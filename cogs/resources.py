@@ -1,9 +1,9 @@
 import discord, pymongo, traceback, os, config
 from discord.ext import commands
 from discord import app_commands
-from library.logging import Logger
+from library.logging import *
 
-dlog = Logger("Study", style="default")
+#dlog = Logger("Study", style="default")
 db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.dbName]
 
 class Resources(commands.Cog):

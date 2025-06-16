@@ -8,7 +8,7 @@ from library import logging, session
 
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
 
-dlog = logging.Logger("Server", style="default")
+#dlog = logging.Logger("Server", style="default")
 
 class Server(commands.Cog):
     def __init__(self, bot):
@@ -33,7 +33,7 @@ class Server(commands.Cog):
     
     @app_commands.guild_only()
     @app_commands.command(name='clean', description='Remove all inactive people in server.')
-    async def find(self, inter: discord.Interaction):
+    async def clean(self, inter: discord.Interaction):
         await inter.response.send_message(
             embed=discord.Embed(
                 description=f"The command is still under construction."
@@ -42,11 +42,15 @@ class Server(commands.Cog):
     
     @app_commands.guild_only()
     @app_commands.command(name='invite', description='Manage invite links to users.')
-    async def find(self, inter: discord.Interaction):
+    async def invite(self, inter: discord.Interaction):
+        link = await inter.channel.create_invite()
         await inter.response.send_message(
             embed=discord.Embed(
-                description=f"The command is still under construction."
-            )
+                title="Invite",
+                description=f"Wishing you to [join us](<{link}>).",
+                color=config.msgColor
+            ),
+            ephemeral=True
         )
     
     @app_commands.guild_only()

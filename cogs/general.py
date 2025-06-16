@@ -8,7 +8,7 @@ import config
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
 selfCollection = db["Self"]
 
-dlog = logging.Logger("General", style="default")
+#dlog = logging.Logger("General", style="default")
 
 class General(commands.Cog):
     def __init__(self, bot):
@@ -22,7 +22,6 @@ class General(commands.Cog):
             traceback.print_exc()
 
     @app_commands.command(name="tos", description="Shows terms of service")
-    @dlog.command()
     async def tos(self, inter: discord.Interaction):
         tos = selfCollection.find_one({"_id": "tos"})
         if tos:
@@ -39,7 +38,6 @@ class General(commands.Cog):
             ))
 
     @app_commands.command(name="privacy", description="Shows privacy policy")
-    @dlog.command()
     async def privacy(self, inter: discord.Interaction):
         privacy = selfCollection.find_one({"_id": "privacy"})
         if privacy:
@@ -56,7 +54,6 @@ class General(commands.Cog):
             ))
 
     @app_commands.command(name="about", description="Shows details about the bot")
-    @dlog.command()
     async def about(self, inter: discord.Interaction):
         about = selfCollection.find_one({"_id": "about"})
         if about:
@@ -73,7 +70,6 @@ class General(commands.Cog):
             ))
 
     @app_commands.command(name="new", description="Shows the details of the newest update.")
-    @dlog.command()
     async def new(self, inter: discord.Interaction):
         update = selfCollection.find_one({"_id": "updates"})
         if update:

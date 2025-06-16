@@ -1,13 +1,15 @@
 import discord, os, asyncio, pymongo, traceback, json, io, qrcode
+import config
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from discord.ext import commands
 from discord import app_commands
 from library.templates import *
-from library.logging import Logger
+from library.logging import *
 from library.session import *
 
-dlog = Logger("Study", style="default")
+filename = __name__.title()
+cogLog = CogLogger(filename=filename)
 
 load_dotenv()
 
@@ -35,15 +37,16 @@ class Study(commands.Cog):
     @app_commands.command(name="config", description="Configure your study channel")
     @app_commands.guild_only()
     @app_commands.describe(study="Please enter your study channel")
-    @dlog.command()
     async def config(self, inter: discord.Interaction, study: discord.VoiceChannel):
         """Save the study channel in the database."""
         try:
             server_id = str(inter.guild_id)
             study_channel_id = str(study.id)
-
-            print(
-                f"⚙️ Configuring Study Channel for Server: {server_id} | Channel: {study_channel_id}"
+            cmdLog = CommandLogger(filename=filename, inter=inter)
+            cmdLog.process(
+                status_code=0,
+                name='Waiting',
+                details=f"Trying to configure the study channel ({study_channel_id})."
             )
             serverCollection.update_one(
                 {"_id": server_id},
@@ -59,9 +62,22 @@ class Study(commands.Cog):
                 ),
                 delete_after=20,
             )
+            isError = False
         except Exception as e:
-            print("❌ Error in `/config` command:", e)
-            traceback.print_exc()
+            isError = True
+            cmdLog.process(
+                status_code=100,
+                name='Error',
+                details=e
+            )
+        finally:
+            if isError == False:
+                cmdLog.process(
+                    status_code=100,
+                    name='Executed',
+                    details='The server seems to have configured successfully.'
+                )
+            cmdLog.send()
 
     @commands.Cog.listener()
     async def on_voice_state_update(
@@ -76,7 +92,6 @@ class Study(commands.Cog):
                 print
             member_id = str(member.id)
             server_id = str(member.guild.id)
-
             print(f"🔎 Checking study channel for Server: {server_id}")
             study_data = serverCollection.find_one({"_id": server_id})
             
@@ -247,6 +262,15 @@ class Study(commands.Cog):
     )
     async def exception(self, inter: discord.Interaction):
         try:
+            cmdLog = CommandLogger(
+                filename=filename, 
+                inter=inter
+            )
+            cmdLog.process(
+                status_code=0,
+                name='Generation',
+                details="Initiating token generation process."
+            )
             token = exceptionCollection.find_one_and_update(
                     {"user_id": inter.user.id},
                     {
@@ -261,11 +285,27 @@ class Study(commands.Cog):
                 data={"_id": str(token)},
                 expireIn=10
             )
+            if token==None or token=='':
+                raise ValueError("Invalid token value.")
+            
+            cmdLog.process(
+                status_code=0,
+                name='Generated',
+                details=f"The token has been generated."
+            )
+
             link = os.getenv("FLASK_DOMAIN") + "except/" + token
+
+            cmdLog.process(
+                status_code=0,
+                name='Generation',
+                details=f"Generating a QR Code for exceptions."
+            )
             qr = qrcode.QRCode(box_size=10, border=8)
             qr.add_data(link)
             qr.make(fit=True)
             img = qr.make_image(fill="black", back_color="white")
+            isQRSent = False
             with io.BytesIO() as image_binary:
                 img.save(image_binary, format="PNG")
                 image_binary.seek(0)
@@ -274,13 +314,40 @@ class Study(commands.Cog):
                     file=discord.File(image_binary, "qrcode.png"),
                     ephemeral=True,
                 )
-            asyncio.tasks.create_task(self.exceptionVerifier(inter))
-            
-        except Exception as e:
-            traceback.print_exc()
+                isQRSent = True
 
-    async def exceptionVerifier(self, inter: discord.Interaction):
+            if isQRSent:
+                cmdLog.process(
+                    status_code=75,
+                    name='Sent',
+                    details=f"The QR Code to be used as an exception is sent."
+                )
+            asyncio.tasks.create_task(self.exceptionVerifier(inter, cmdLog))
+            
+            isError = False
+        except Exception as e:
+            isError = True
+            cmdLog.process(
+                status_code=100,
+                name='Error',
+                details=e
+            )
+        finally:
+            if isError == False:
+                cmdLog.process(
+                    status_code=100,
+                    name='Executed',
+                    details='The server seems to have configured successfully.'
+                )
+            cmdLog.send()
+
+    async def exceptionVerifier(self, inter: discord.Interaction, cmdLog):
         t = datetime.now()
+        cmdLog.process(
+            status_code=100,
+            name='Verification',
+            details='The verification process for the study exception has been started.'
+        )
         while (details:=self.bot.userNetworkConnection.get(inter.user.id, None))==None and (datetime.now() - t).total_seconds() <= 90:
             continue
         download = details["download"]
@@ -288,11 +355,20 @@ class Study(commands.Cog):
         ping = details['ping']
 
         if (download>=2.5 and upload>=2.5) and ping<=50:
+            cmdLog.process(
+                status_code=100,
+                name='Checked',
+                details='Exception Request has been cancelled.'
+            )
             await inter.followup.send(content="You have good internet speed lol!")
         else:
             self.exceptions.add(inter.user.id)
-            await inter.followup.send(content="5 Mins access granted!")
-
+            cmdLog.process(
+                status_code=100,
+                name='Verified',
+                details='Exception Request has been accepted.'
+            )
+            await inter.followup.send(content="10 Mins access granted!")
 
     @app_commands.guild_only()
     @app_commands.command(
@@ -308,24 +384,52 @@ class Study(commands.Cog):
         scope="It describes if you want to see leaderboard within the server or globally."
     )
     async def leaderboard(self, inter: discord.Interaction, scope: int = 1):
-        if scope == 1:
-            toppers = learnerCollection.aggregate(
-                [
-                    {
-                        "$project": {
-                            "_id": 1,
-                            "name": 1,
-                            "time": {"$ifNull": [f"$servers.{inter.guild_id}.time", 0]},
-                        }
-                    },
-                    {"$sort": {"time": -1}},
-                    {"$limit": 10},
-                ]
+        try:
+            cmdLog = CommandLogger(
+                filename=filename,
+                inter=inter
             )
-            await inter.response.send_message(leaderboard_template(toppers=toppers))
-        await inter.response.send_message(
-            "The Leaderboard command is still under development!", ephemeral=True
-        )
+            if scope == 1:
+                cmdLog.process(
+                    status_code=0,
+                    name='Fetching',
+                    details='Fetching the local toppers.'
+                )
+                toppers = list(learnerCollection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "_id": 1,
+                                "name": 1,
+                                "time": {"$ifNull": [f"$servers.{inter.guild_id}.time", 0]},
+                            }
+                        },
+                        {"$sort": {"time": -1}},
+                        {"$limit": 10},
+                    ]
+                ))
+                cmdLog.process(
+                    status_code=75,
+                    name='Fetched',
+                    details='Fetched the local toppers.'
+                )
+                await inter.response.send_message(embed=discord.Embed(
+                        description=leaderboard_template(toppers=toppers),
+                        color=config.msgColor
+                    ),
+                    delete_after=30
+                )
+            else:
+                cmdLog.process(
+                    status_code=100,
+                    name='Fetching',
+                    details='Fetching the local toppers.'
+                )
+                await inter.response.send_message(
+                    "The Leaderboard command is still under development!", ephemeral=True
+                )
+        except:
+            traceback.print_exc()
 
     @app_commands.guild_only()
     @app_commands.command(
@@ -345,7 +449,11 @@ class Study(commands.Cog):
             user_data = learnerCollection.find_one({"_id": str(inter.user.id)})
             if not user_data:
                 return await inter.response.send_message(
-                    embed=discord.Embed(title="", description="No data found for you."),
+                    embed=discord.Embed(
+                        title="", 
+                        description="No data found for you.",
+                        color=config.msgColor
+                    ),
                     ephemeral=True,
                 )
 
@@ -361,7 +469,7 @@ class Study(commands.Cog):
                     embed=discord.Embed(
                         title="Missing Permissions",
                         description="You are not a manager of this server.\nPlease request the manager to perform this operation.",
-                        color=0x348DB,
+                        color=config.msgColor,
                     ),
                     ephemeral=True,
                 )
@@ -369,7 +477,11 @@ class Study(commands.Cog):
             server_data = serverCollection.find_one({"_id": str(inter.guild.id)})
             if not server_data:
                 return await inter.response.send_message(
-                    embed=discord.Embed(title="", description="No server data found."),
+                    embed=discord.Embed(
+                        title="", 
+                        description="No server data found.",
+                        color=config.msgColor
+                    ),
                     ephemeral=True,
                 )
 
@@ -384,8 +496,9 @@ class Study(commands.Cog):
                 content="The data being deleted is attached below.", file=file
             )
             await inter.response.send_message(
-                discord.Embed(
-                    title="", description="Deletion successful. Check your DMs."
+                embed=discord.Embed(
+                    title="", description="Deletion successful. Check your DMs.",
+                    color=config.msgColor
                 ),
                 ephemeral=True,
             )
