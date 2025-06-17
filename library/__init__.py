@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta
+from datetime import timezone
+UTC = timezone.utc
 import pymongo, os, discord
 from asyncio import tasks, sleep
 

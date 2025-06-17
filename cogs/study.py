@@ -120,7 +120,7 @@ class Study(commands.Cog):
                     color=0x3498DB,
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
-                if self.exceptions.isInside:
+                if not self.exceptions.isInside:
                     embed.add_field(
                         name="Request",
                         value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
@@ -294,7 +294,10 @@ class Study(commands.Cog):
                 details=f"The token has been generated."
             )
 
-            link = os.getenv("FLASK_DOMAIN") + "except/" + token
+            domain = os.getenv("FLASK_DOMAIN")
+            if not domain.endswith('/'):
+                domain = domain + "/"
+            link = domain + "except/" + token
 
             cmdLog.process(
                 status_code=0,
@@ -350,6 +353,13 @@ class Study(commands.Cog):
         )
         while (details:=self.bot.userNetworkConnection.get(inter.user.id, None))==None and (datetime.now() - t).total_seconds() <= 90:
             continue
+
+        if details==None:
+            await inter.followup.send(embed=discord.Embed(
+                description="An error occured. Please try again!"
+            ))
+            return
+        
         download = details["download"]
         upload = details["upload"]
         ping = details['ping']

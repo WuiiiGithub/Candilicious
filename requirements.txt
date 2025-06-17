@@ -5,7 +5,6 @@ amqp==5.3.1
 anyio==4.9.0
 asgiref==3.8.1
 attrs==24.3.0
-audioop-lts==0.2.1
 autobahn==24.4.2
 Automat==24.8.1
 billiard==4.2.1
