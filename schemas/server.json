@@ -1,4 +1,10 @@
 {
-    "_id": "<server_id",
-    "channel": "<study_channel_id>"
+    "_id": "<str:server_id",
+    "channel": "<study_channel_id>",
+    "reminders": {
+        "text": "<str:reminder_text>",
+        "time": "<datetime:interval_time>",
+        "channel": "<discord.Channel:reminder_channel>",
+        "last_sent": "<datetime:reminder_sent_last_time"
+    }
 }

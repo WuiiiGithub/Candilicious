@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Union
 from .templates import timenow
 
 _ANSI_COLORS = {
@@ -26,7 +26,7 @@ def _get_ansi_color(status_code: int) -> str:
 
 class CogLogger:
     def __init__(self, filename: str):
-        self.filename = filename.title()
+        self.name = filename.replace('_', ' ').title()
 
     def _format_log_block(self, header_type: str, header_name: str, status_code: int, details: str = None) -> str:
         time = timenow()
@@ -45,9 +45,17 @@ class CogLogger:
 
         return '\n'.join(lines) + '\n|'
 
-    def log_cog(self, cog_name: str, action: Literal["loaded", "unloaded", "error"], status_code: int, details: str = None):
+    def log_cog(
+        self, 
+        action: Literal["loaded", "unloaded", "error", "syncing", "starting", "stopping"], 
+        status_code: int, 
+        details: str = None
+    ):
         log_block = self._format_log_block(
-            "Cog Event", f"{cog_name} {action}", status_code, details
+            "Cog Event", 
+            f"{self.name} {action}", 
+            status_code, 
+            details
         )
         print(log_block)
 

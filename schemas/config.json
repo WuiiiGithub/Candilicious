@@ -1,0 +1,10 @@
+{
+    "reminders" : {
+        "gifs": [
+            "<str:reminder_gifs"
+        ],
+        "texts": [
+            "<str:reminder_texts"
+        ]
+    }
+}

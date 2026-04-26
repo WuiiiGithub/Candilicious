@@ -1,10 +1,15 @@
 from os import getenv as _getenv
 
+owner_id = 1490291458119307304
+
 port = int(_getenv('FLASK_APP_PORT'))
 host = _getenv('FLASK_DOMAIN')
 dbName = _getenv('DB_NAME')
+dbURI = _getenv("MONGODB_URI")
 availableIn = {
-    "guilds": [1354101256662286397, 1218819398974963752]
+    "guilds": [
+        1491471841716605062
+    ]
 }
 
 logging = {
