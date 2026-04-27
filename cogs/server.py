@@ -6,7 +6,7 @@ from datetime import datetime
 import os, pymongo, traceback
 from library import logging, session
 
-serverCollection = pymongo.MongoClient(host=config.uri)[config.dbName]['server']
+serverCollection = pymongo.MongoClient(host=config.dbURI)[config.dbName]['server']
 
 #dlog = logging.Logger("Server", style="default")
 

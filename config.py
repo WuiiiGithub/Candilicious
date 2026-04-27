@@ -1,4 +1,6 @@
 from os import getenv as _getenv
+from dotenv import load_dotenv as _load
+_load()
 
 owner_id = 1490291458119307304
 
