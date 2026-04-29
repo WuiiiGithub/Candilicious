@@ -1,4 +1,5 @@
 import os, sys#, cloud_setup
+from pyngrok import ngrok
 import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
@@ -10,6 +11,12 @@ from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure, Opera
 
 load_dotenv()
 MONGODB_URI = os.getenv("MONGODB_URI")
+NGROK_AUTH_TOKEN = os.getenv("NGROK_AUTH_TOKEN")
+
+public_url = ngrok.connect(10000).public_url
+flask_url = os.getenv('FLASK_DOMAIN')
+if flask_url == None or flask_url == '' or '://localhost:' in str(flask_url):
+    os.environ['FLASK_DOMAIN'] == public_url
 
 try:
     client = pymongo.MongoClient(host=MONGODB_URI, serverSelectionTimeoutMS=5000)

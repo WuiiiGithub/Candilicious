@@ -8,7 +8,7 @@ from discord import (
     FFmpegPCMAudio
 )
 from datetime import timedelta
-import os, config, pymongo
+import os, config, pymongo, asyncio
 from traceback import print_exc
 from discord.ext import commands
 
@@ -74,11 +74,21 @@ class Fun(commands.Cog):
             if not os.path.isfile(file_path):
                 await inter.response.send_message("Sound file not found!", ephemeral=True)
                 return
-            vc = await voice.channel.connect()
+            
+            vc = inter.guild.voice_client
+            if vc:
+                if vc.is_playing():
+                    await inter.response.send_message("I'm already playing something! Please wait.", ephemeral=True)
+                    return
+                if vc.channel != voice.channel:
+                    await vc.move_to(voice.channel)
+            else:
+                vc = await voice.channel.connect()
+
             await inter.response.send_message(f"🎵 Playing *{sound.replace('-', ' ')}*   ~*{inter.user.display_name}*")
             vc.play(FFmpegPCMAudio(file_path), after=lambda e: print(f"Finished playing: {e}"))
             while vc.is_playing():
-                await utils.sleep_until(utils.utcnow() + timedelta(seconds=1))
+                await asyncio.sleep(1)
             await vc.disconnect()
         except Exception as e:
             print_exc()

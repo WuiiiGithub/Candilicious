@@ -103,11 +103,18 @@ class Study(commands.Cog):
             study_channel_id = str(study_data["channel"])
             print(f"📌 Study Channel ID Found: {study_channel_id}")
 
+            # Case of joining
             if (
+                # if he joined later channel
                 after.channel
+                # And if that channel is a study channel
                 and str(after.channel.id) == study_channel_id
+                # He came from non study channel or no place to study channel
                 and (
-                    before.channel is None or str(before.channel.id) != study_channel_id
+                    # Either no channel before
+                    before.channel is None 
+                    # Or either it was not study channel
+                    or str(before.channel.id) != study_channel_id
                 )
             ):
                 print(f"👤 {member.name} joined study VC: {after.channel.name}")
@@ -133,10 +140,19 @@ class Study(commands.Cog):
                 )
                 self.monitoringUsers[member_id] = task
 
-            elif (
+            # Case of leaving
+            if (
+                # If they were in some channel before
                 before.channel
+                # And channel was a study channel
                 and str(before.channel.id) == study_channel_id
-                and (after.channel is None or str(after.channel.id) != study_channel_id)
+                # And later they left study channel
+                and (
+                    # Either they left
+                    after.channel is None 
+                    # Or either they went to non study channel
+                    or str(after.channel.id) != study_channel_id
+                )
             ):
                 print(f"🚪 {member.name} left study VC: {before.channel.name}")
 
@@ -155,9 +171,26 @@ class Study(commands.Cog):
                     delete_after=90,
                 )
 
-            elif member_id in self.monitoringUsers and (
-                (not before.self_stream and after.self_stream)
-                or (not before.self_video and after.self_video)
+            # Case: Activity for already joined & not left
+            #       i.e. within vc activity
+            # --------------------------------------------
+            # This Case: Monitored user started activity
+            if (
+                # If user is among monitered users
+                member_id in self.monitoringUsers 
+                # and started activity
+                and (
+                    # Started screen share
+                    (
+                        not before.self_stream 
+                        and after.self_stream
+                    )
+                    # Or started video
+                    or (
+                        not before.self_video 
+                        and after.self_video
+                    )
+                )
             ):
                 await after.channel.send(
                     embed=discord.Embed(
@@ -174,14 +207,28 @@ class Study(commands.Cog):
                 self.monitoringUsers[member_id].cancel()
                 del self.monitoringUsers[member_id]
 
-            elif (
+            # Case: Non monitored/learning user stopped activity
+            if (
+                # if they were in some channel before
                 before.channel
+                # And if that channel is study channel
                 and str(before.channel.id) == study_channel_id
+                # This user is not being monitored yet
                 and member_id not in self.monitoringUsers
+                # Stopped Activity
                 and (
-                    (before.self_stream and not after.self_stream)
-                    or (before.self_video and not after.self_video)
+                    # Stopped Streaming
+                    (
+                        before.self_stream 
+                        and not after.self_stream
+                    )
+                    # Or stopped Video
+                    or (
+                        before.self_video 
+                        and not after.self_video
+                    )
                 )
+            # And not among exceptions
             ) and not self.exceptions.isInside:
 
                 print(f"⚠️ {member.name} disabled cam/screen share. Restarting timer.")
@@ -209,7 +256,9 @@ class Study(commands.Cog):
             traceback.print_exc()
 
     async def activityMonitor(self, member: discord.Member, studyId: str):
-        """Wait 5 minutes and disconnect user if they don't enable camera or screen share."""
+        """
+        Wait 5 minutes and disconnect user if they don't enable camera or screen share.
+        """
         print(
             f"⏳ Waiting 5 minutes for {member.name} to start camera or screen share..."
         )
@@ -370,6 +419,7 @@ class Study(commands.Cog):
                 name='Checked',
                 details='Exception Request has been cancelled.'
             )
+            details = None
             await inter.followup.send(content="You have good internet speed lol!")
         else:
             self.exceptions.add(inter.user.id)
