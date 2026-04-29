@@ -195,7 +195,7 @@ class Reminders(commands.Cog):
             self.reminders = list(serverCollection.aggregate(pipeline))
             print(self.reminders)
             if self.isReminderConfigChanged:
-                data = configCollection.find_one({"name": "reminders"})
+                data = configCollection.find_one({"_id": "reminders"})
                 self.texts, self.gifs = data['texts'], data['gifs']
         except Exception as e:
             traceback.print_exc()
