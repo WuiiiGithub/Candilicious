@@ -12,7 +12,7 @@ cogLog = CogLogger(filename=filename)
 load_dotenv()
 
 _db = pymongo.MongoClient(host=config.dbURI)[config.dbName]
-serverCollection = _db['server']
+serverCollection = _db['servers']
 configCollection = _db['config']
 
 class Reminders(commands.Cog):

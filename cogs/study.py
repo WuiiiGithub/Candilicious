@@ -14,8 +14,8 @@ cogLog = CogLogger(filename=filename)
 load_dotenv()
 
 db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
-serverCollection = db["Servers"]
-learnerCollection = db["Learners"]
+serverCollection = db["servers"]
+learnerCollection = db["users"]
 exceptionCollection = db["exception"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
@@ -89,7 +89,7 @@ class Study(commands.Cog):
         """Track users joining and activity changes in the study channel."""
         try:
             if member.bot:
-                print
+                return
             member_id = str(member.id)
             server_id = str(member.guild.id)
             print(f"🔎 Checking study channel for Server: {server_id}")
@@ -127,12 +127,13 @@ class Study(commands.Cog):
                     color=0x3498DB,
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
-                if not self.exceptions.isInside:
+
+                if not self.exceptions.isInside(member_id):
                     embed.add_field(
                         name="Request",
                         value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
                     )
-                await after.channel.send(embed=embed, delete_after=20)
+                await after.channel.send(content=member.mention, embed=embed, delete_after=20)
 
                 print(f"⏳ Starting activity monitor for {member.name}")
                 task = asyncio.create_task(
@@ -170,6 +171,9 @@ class Study(commands.Cog):
                     ),
                     delete_after=90,
                 )
+            print("="*10)
+            print(self.monitoringUsers)
+            print("="*10)
 
             # Case: Activity for already joined & not left
             #       i.e. within vc activity
@@ -202,7 +206,7 @@ class Study(commands.Cog):
                     delete_after=20,
                 )
                 print(
-                    f"✅ {member.name} enabled camera or screen share. Stopping timer."
+                    f"✅ {member.name} enabled camera or screen share. Stopping kick timer."
                 )
                 self.monitoringUsers[member_id].cancel()
                 del self.monitoringUsers[member_id]
@@ -229,7 +233,7 @@ class Study(commands.Cog):
                     )
                 )
             # And not among exceptions
-            ) and not self.exceptions.isInside:
+            ) and not self.exceptions.isInside(member_id):
 
                 print(f"⚠️ {member.name} disabled cam/screen share. Restarting timer.")
 
