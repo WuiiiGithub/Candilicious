@@ -25,19 +25,15 @@ class sessionLearners:
             print(f"⚠️ No active session found for {user_id}, skipping database update.")
             return  
 
-        hrs = (datetime.now() - self.learners[user_id]).total_seconds()/3600
+        mins = (datetime.now() - self.learners[user_id]).total_seconds()//60
 
-        if hrs*60*60 > 300:
-            print(f"⏳ Skipping update for {user_id}, no meaningful time spent.")
-            return
-
-        print(f"📢 Ending session for {str(user_id)} on server {str(server_id)}: +{hrs} hrs.")
+        print(f"📢 Ending session for {str(user_id)} on server {str(server_id)}: +{mins} mins.")
 
         learnerCollection.update_one(
             {"_id": user_id},
             {
                 "$inc": {
-                    f"servers.{server_id}.time": hrs, 
+                    f"servers.{server_id}.time": mins, 
                 },
                 "$set": {
                     "name": name

@@ -18,41 +18,21 @@ configCollection = _db['config']
 class Reminders(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.reminders = None
-
-        self.isReminderConfigChanged = False
-        self.gifs = None
-        self.texts = None
-
-        self.contextMenus = [
-            app_commands.ContextMenu(
-                name='Add GIF',
-                callback=self.add_GIF,
-            ),
-            app_commands.ContextMenu(
-                name='Add TXT',
-                callback=self.add_TXT,
-            )
-        ]
+        self.reminders_cache = []
+        self.gifs = []
+        self.texts = []
+        
         cogLog.log_cog(
             action='starting',
             status_code=0,
             details='Entered the Cog!'
         )
+        
+        # Start the background task
+        self.study_reminder.start()
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        cogLog.log_cog(
-            action='syncing',
-            status_code=0,
-            details='Sycing with the Bot Tree!'
-        )
-        await self.bot.tree.sync()
-        cogLog.log_cog(
-            action='syncing',
-            status_code=0,
-            details='Sycing with the Bot Tree!'
-        )
+    def cog_unload(self):
+        self.study_reminder.cancel()
 
     @app_commands.command(name="rconfig", description="Configure your reminder for server.")
     @app_commands.describe(
@@ -60,252 +40,169 @@ class Reminders(commands.Cog):
         channel='Select a channel to remind',
         text='Footer text to be used to remind with.'
     )
-    async def rconfig(self, inter: discord.Interaction, channel: Union[discord.TextChannel, discord.VoiceChannel]=None, time: int=None, text: str=None):
+    async def rconfig(self, inter: discord.Interaction, channel: Union[discord.TextChannel, discord.VoiceChannel] = None, time: int = None, text: str = None):
         try:
-            serverDoc = serverCollection.find_one({'_id': str(inter.guild_id)})             
-            reminderDoc = {}
-            if serverDoc:
-                reminderDoc = serverDoc.get('reminders', {})
+            serverDoc = serverCollection.find_one({'_id': str(inter.guild_id)}) or {}
+            reminderDoc = serverDoc.get('reminders', {})
             
             if not reminderDoc and not (channel or time or text):
-                await inter.response.send_message(
-                    embed=discord.Embed(
-                        description='Reminders not configured!',
-                        color=config.msgColor
-                    ),
-                    ephemeral=True 
-                )
+                await inter.response.send_message("Reminders not configured! Provide parameters to setup.", ephemeral=True)
                 return
                 
-            didUpdateFlag = False
-            if channel:
-                reminderDoc['channel'] = channel.id
-                didUpdateFlag = True
-            if time:
-                reminderDoc['time'] = time
-                didUpdateFlag = True
-            if text:
-                reminderDoc['text'] = text
-                didUpdateFlag = True
+            if channel: reminderDoc['channel'] = channel.id
+            if time: reminderDoc['time'] = time
+            if text: reminderDoc['text'] = text
 
-            title = 'Reminder Config'
-            if didUpdateFlag:
-                serverCollection.update_one(
-                    {'_id': str(inter.guild_id)},
-                    {
-                        "$set": {
-                            "reminders": reminderDoc
-                        }
-                    },
-                    upsert=True 
-                )
-                title += ' Updated'
+            # Update DB
+            serverCollection.update_one(
+                {'_id': str(inter.guild_id)},
+                {"$set": {"reminders": reminderDoc}},
+                upsert=True 
+            )
 
-            embed = discord.Embed(
-                title=title,
-                color=config.msgColor
-            )
-            embed.add_field(
-                name='Channel',
-                value=f"<#{reminderDoc.get('channel', 'Not Set')}>",
-                inline=False
-            )
-            embed.add_field(
-                name='Time',
-                value=f"{reminderDoc.get('time', 'Not Set')} mins",
-                inline=False
-            )
-            embed.add_field(
-                name='Text',
-                value=reminderDoc.get('text', 'Not Set'),
-                inline=False
-            )
+            # Refresh cache immediately
+            await self.refresh_reminders_cache()
+
+            embed = discord.Embed(title="Reminder Config Updated", color=config.msgColor)
+            embed.add_field(name='Channel', value=f"<#{reminderDoc.get('channel', 'Not Set')}>")
+            embed.add_field(name='Time', value=f"{reminderDoc.get('time', 'Not Set')} mins")
+            embed.add_field(name='Text', value=reminderDoc.get('text', 'Not Set'))
             await inter.response.send_message(embed=embed)
-        except Exception as e:
+        except Exception:
             traceback.print_exc()
 
-    @tasks.loop(minutes=60)
+    async def refresh_reminders_cache(self):
+        """
+        Helper to pull data from DB into memory.
+        """
+        try:
+            pipeline = [{"$match": {"reminders": {"$exists": True, "$ne": None}}}]
+            self.reminders_cache = list(serverCollection.aggregate(pipeline))
+            
+            conf = configCollection.find_one({"_id": "reminders"})
+            if conf:
+                self.texts = conf.get('texts', ["Keep studying!"])
+                self.gifs = conf.get('gifs', ['https://images-ext-1.discordapp.net/external/urjscwFcuDFRDEaUyi4CIuMKyP-HdabaYLF8_iB3sno/https/media.tenor.com/dS1sKvQgD4AAAAPo/hamster-ayasan.mp4'])
+        except Exception:
+            traceback.print_exc()
+
+    @tasks.loop(seconds=60)
     async def study_reminder(self):
-        if self.reminders == []:
+        if not self.reminders_cache:
+            await self.refresh_reminders_cache()
             return
-        else:
-            # After fetching data, send reminders
-            for reminder in self.reminders:
-                now = datetime.now(timezone.utc)
-                interval = float(reminder.get("time", 180))
-                last_sent = reminder.get("last_sent")
 
-                should_send = False
-                if last_sent is None:
+        now = datetime.now(timezone.utc)
+        
+        for reminder in self.reminders_cache:
+            data = reminder.get("reminders", {})
+            interval_mins = data.get("time")
+            channel_id = data.get("channel")
+            last_sent = data.get("last_sent")
+
+            if not interval_mins or not channel_id:
+                continue
+
+            should_send = False
+            if last_sent is None:
+                should_send = True
+            else:
+                if last_sent.tzinfo is None:
+                    last_sent = last_sent.replace(tzinfo=timezone.utc)
+                
+                diff = (now - last_sent).total_seconds() / 60.0
+                if diff >= interval_mins:
                     should_send = True
-                else:
-                    # Ensuring last sent should be timezone aware
-                    if last_sent.tzinfo is None:
-                        last_sent = last_sent.replace(tzinfo=timezone.utc)
-                    
-                    diff = (now - last_sent).total_seconds() / 60.0
-                    if diff >= interval:
-                        should_send = True
 
-                if should_send:
-                    channel = self.bot.get_channel(reminder["reminders"]["channel"]) 
-                    if channel:
+            if should_send:
+                channel = self.bot.get_channel(int(channel_id))
+                if channel:
+                    try:
                         embed = discord.Embed(
                             title="📖 STUDY TIME!",
-                            description=f"**{random.choice(self.texts)}**",
+                            description=f"**{random.choice(self.texts) if self.texts else 'Time to study!'}**",
                             color=discord.Color.red(),
                             timestamp=datetime.now()
-                        )                        
-                        embed.set_footer(text=reminder['reminders']["text"])
+                        )                       
+                        embed.set_footer(text=data.get("text", "Focus!"))
                         embed.set_image(url=random.choice(self.gifs))
                         
-                        await channel.send(content="YOOO WAKEUP @everyone", embed=embed, delete_after=60*1.9)
+                        await channel.send(content="YOOO WAKEUP everyone", embed=embed, delete_after=3600)
 
-                        # Update last_sent in DB
-                        await serverCollection.update_one(
-                            filter={
-                                "_id": reminder['_id']
-                            },
-                            update={
-                                "$set": {
-                                    "reminders.last_sent": now
-                                }
-                            }
+                        # Update DB (Sync call)
+                        serverCollection.update_one(
+                            {"_id": reminder['_id']},
+                            {"$set": {"reminders.last_sent": now}}
                         )
+                    except Exception as e:
+                        print(f"Failed to send reminder to {reminder['_id']}: {e}")
 
     @study_reminder.before_loop
     async def before_study_reminder(self):
-        try:
-            pipeline = [
-                {
-                    "$match": {
-                        "reminder": {
-                            "$exists": True,
-                            "$ne": None
-                        }
-                    }
-                },
-                {
-                    "$project": {
-                        "_id": 1,
-                        "reminders": 1
-                    }
-                }
-            ]
-            self.reminders = list(serverCollection.aggregate(pipeline))
-            print(self.reminders)
-            if self.isReminderConfigChanged:
-                data = configCollection.find_one({"_id": "reminders"})
-                self.texts, self.gifs = data['texts'], data['gifs']
-        except Exception as e:
-            traceback.print_exc()
-        
-    async def add_GIF(self, inter: discord.Interaction, message: discord.Message):
+        await self.bot.wait_until_ready()
+        await self.refresh_reminders_cache()
 
+    async def add_gif_context(self, inter: discord.Interaction, message: discord.Message):
         if inter.user.id != config.owner_id:
-            await inter.response.send_message(
-                "You are not allowed to use this command.",
-                ephemeral=True
-            )
-            return
+            return await inter.response.send_message("You are not allowed to use this command.", ephemeral=True)
 
         gif_url = None
-
-        #  Attachments (most reliable)
         if message.attachments:
-            for att in message.attachments:
-                if att.filename.lower().endswith(("gif", "webp", "mp4")):
-                    gif_url = att.url
-                    break
-
-        #  Embed images (Tenor/Giphy often land here)
-        if not gif_url and message.embeds:
+            gif_url = message.attachments[0].url
+        elif message.embeds:
             for emb in message.embeds:
-                if emb.image and emb.image.url:
+                if emb.image:
                     gif_url = emb.image.url
                     break
-
-        # Regex from message content
+        
         if not gif_url:
-            match = re.search(
-                r"(https?://[^\s]+?\.(?:gif|webp|mp4)(\?[^\s]*)?)", 
-                message.content
-            )
-            if match:
-                gif_url = match.group(1)
+            return await inter.response.send_message("No valid GIF found in this message.", ephemeral=True)
 
-        # Validation
-        if not gif_url:
-            embed = discord.Embed(
-                description="No valid GIF found in this message.",
-                color=config.msgColor
-            )
-            await inter.response.send_message(
-                embed,
-                ephemeral=True
-            )
-            return
-
-        # 5. DB update (no duplicates)
         configCollection.update_one(
-            {"name": "reminders"},
-            {"$addToSet": {"gifs": gif_url}}
+            {"_id": "reminders"},
+            {"$addToSet": {"gifs": gif_url}},
+            upsert=True
         )
-
-        embed = discord.Embed(
-            description="GIF Added ✅",
-            color=config.msgColor
-        )
+        
+        embed = discord.Embed(description="GIF Added ✅", color=config.msgColor)
         embed.set_image(url=gif_url)
-
         await inter.response.send_message(embed=embed, ephemeral=True)
 
-    async def add_TXT(self, inter: discord.Interaction, message: discord.Message):
-
+    async def add_text_context(self, inter: discord.Interaction, message: discord.Message):
         if inter.user.id != config.owner_id:
-            await inter.response.send_message(
-                "You are not allowed to use this command.",
-                ephemeral=True
-            )
-            return
+            return await inter.response.send_message("You are not allowed to use this command.", ephemeral=True)
 
-        text = message.content.strip()
+        content = message.content.strip()
+        if len(content) < 15:
+            return await inter.response.send_message("Message too short to add.", ephemeral=True)
 
-        # Filtering small/empty messages
-        if len(text) < 15:
-            await inter.response.send_message(
-                "Message too short to add.",
-                ephemeral=True
-            )
-            return
+        content = re.sub(r"\s+", " ", content)
 
-        # removing spammy whitespace
-        text = re.sub(r"\s+", " ", text)
-
-        # DB update
         configCollection.update_one(
-            {"name": "reminders"},
-            {"$addToSet": {"texts": text}}
+            {"_id": "reminders"},
+            {"$addToSet": {"texts": content}},
+            upsert=True
         )
-
-        embed = discord.Embed(
-            description="Text Added ✅", 
-            color=config.msgColor
-        )
-        embed.add_field(name="Saved Text", value=text[:1024], inline=False)
-
+        
+        embed = discord.Embed(description="Text Added ✅", color=config.msgColor)
+        embed.add_field(name="Saved Text", value=content[:1024], inline=False)
         await inter.response.send_message(embed=embed, ephemeral=True)
 
-
-async def setup(bot):
-    Reminders_cog = Reminders(bot)
-    await bot.add_cog(Reminders_cog)
-
-    guild_ids = config.availableIn["guilds"]
-    for guild_id in guild_ids:
-        for command in Reminders_cog.__cog_app_commands__:
-            print(f"Adding {command.name} in server with ID {guild_id}.")
-            bot.tree.add_command(command, guild=discord.Object(id=guild_id))
-        for ctxMenu in Reminders_cog.contextMenus:
-            print(f"Adding {command.name} in server with ID {guild_id}.")
-            bot.tree.add_command(ctxMenu, guild=discord.Object(id=guild_id))
+async def setup(bot: commands.Bot):
+    cog = Reminders(bot)
+    
+    gif_menu = app_commands.ContextMenu(
+        name="Add GIF to Reminders", 
+        callback=cog.add_gif_context
+    )
+    text_menu = app_commands.ContextMenu(name="Add Text to Reminders", callback=cog.add_text_context)
+    
+    await bot.add_cog(cog)
+    
+    guild_ids = config.availableIn.get("guilds", [])
+    for g_id in guild_ids:
+        guild_obj = discord.Object(id=g_id)
+        for cmd in cog.get_app_commands():
+            bot.tree.add_command(cmd, guild=guild_obj)
+        bot.tree.add_command(gif_menu, guild=guild_obj)
+        bot.tree.add_command(text_menu, guild=guild_obj)
