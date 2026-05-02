@@ -6,12 +6,13 @@ from library.session import TokenManager
 from discord.ext import commands
 from flask import Flask, render_template, request
 from asgiref.wsgi import WsgiToAsgi
-import uvicorn, config
+import uvicorn, config, traceback
 from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure, OperationFailure
 
 load_dotenv()
 MONGODB_URI = os.getenv("MONGODB_URI")
 NGROK_AUTH_TOKEN = os.getenv("NGROK_AUTH_TOKEN")
+APPLICATION_ID = os.getenv("APPLICATION_ID")
 
 public_url = ngrok.connect(10000).public_url
 flask_url = os.getenv('FLASK_DOMAIN')
@@ -37,7 +38,24 @@ bot=commands.Bot(
     command_prefix=".", 
     intents=intents, 
     help_command=None,
+    application_id=APPLICATION_ID
 )
+
+@bot.event
+async def on_ready():
+    print(f"✅ Logged in as {bot.user} ({bot.user.id})")
+    
+    guild_ids = config.availableIn.get("guilds", [])
+    for g_id in guild_ids:
+        try:
+            guild = discord.Object(id=g_id)
+            await bot.tree.sync(guild=guild)
+            print(f"✅ Synced commands for guild: {g_id}")
+        except Exception as e:
+            print(f"❌ Failed to sync guild {g_id}: {e}")
+            traceback.print_exc()
+    
+    print("All commands for all guids synced!")
 
 # My Vars
 bot.userNetworkConnection = {}

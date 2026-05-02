@@ -171,10 +171,7 @@ class Study(commands.Cog):
                     ),
                     delete_after=90,
                 )
-            print("="*10)
-            print(self.monitoringUsers)
-            print("="*10)
-
+            
             # Case: Activity for already joined & not left
             #       i.e. within vc activity
             # --------------------------------------------
