@@ -326,10 +326,10 @@ async def setup(bot: commands.Bot):
     Reminders_cog = Reminders(bot)
 
     gif_menu = app_commands.ContextMenu(
-        name="Add GIF to Reminders", callback=cog.add_gif_context
+        name="Add GIF to Reminders", callback=Reminders_cog.add_gif_context
     )
     text_menu = app_commands.ContextMenu(
-        name="Add Text to Reminders", callback=cog.add_text_context
+        name="Add Text to Reminders", callback=Reminders_cog.add_text_context
     )
 
     await bot.add_cog(Reminders_cog)
