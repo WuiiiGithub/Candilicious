@@ -6,5 +6,5 @@ from asyncio import tasks, sleep
 
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
 
-serverCollection = db["Servers"]
-learnerCollection = db["Learners"]
+serverCollection = db["servers"]
+userCollection = db["users"]

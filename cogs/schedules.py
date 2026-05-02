@@ -106,9 +106,3 @@ class Schedules(commands.Cog):
 async def setup(bot):
     Schedules_cog = Schedules(bot)
     await bot.add_cog(Schedules_cog)
-
-    guild_ids = config.availableIn["guilds"]
-    for guild_id in guild_ids:
-        for command in Schedules_cog.__cog_app_commands__:
-            print(f"Adding {command.name} in server with ID {guild_id}.")
-            bot.tree.add_command(command, guild=discord.Object(id=guild_id))

@@ -2,7 +2,7 @@ import jwt
 from library import (
     datetime, timedelta, UTC,
     os, discord, tasks, sleep,
-    learnerCollection
+    userCollection
 )
 class sessionLearners:
     def __init__(self):
@@ -17,7 +17,7 @@ class sessionLearners:
         print("Session Cancelled!")
 
     def ended(self, name: str, user_id: str, server_id: str):
-        if learnerCollection is None:
+        if userCollection is None:
             print("❌ Database collection is None! Cannot update session.")
             return
 
@@ -29,7 +29,7 @@ class sessionLearners:
 
         print(f"📢 Ending session for {str(user_id)} on server {str(server_id)}: +{mins} mins.")
 
-        learnerCollection.update_one(
+        userCollection.update_one(
             {"_id": user_id},
             {
                 "$inc": {

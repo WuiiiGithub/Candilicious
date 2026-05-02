@@ -97,9 +97,3 @@ class General(commands.Cog):
 async def setup(bot):
     General_cog = General(bot)
     await bot.add_cog(General_cog)
-
-    guild_ids = config.availableIn["guilds"]
-    for guild_id in guild_ids:
-        for command in General_cog.__cog_app_commands__:
-            print(f"Adding {command.name} in server with ID {guild_id}.")
-            bot.tree.add_command(command, guild=Object(id=guild_id))

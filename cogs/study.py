@@ -15,7 +15,7 @@ load_dotenv()
 
 db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
 serverCollection = db["servers"]
-learnerCollection = db["users"]
+userCollection = db["users"]
 exceptionCollection = db["exception"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
@@ -456,7 +456,7 @@ class Study(commands.Cog):
                     name='Fetching',
                     details='Fetching the local toppers.'
                 )
-                toppers = list(learnerCollection.aggregate(
+                toppers = list(userCollection.aggregate(
                     [
                         {
                             "$project": {
@@ -507,7 +507,7 @@ class Study(commands.Cog):
         file = None
 
         if scope:
-            user_data = learnerCollection.find_one({"_id": str(inter.user.id)})
+            user_data = userCollection.find_one({"_id": str(inter.user.id)})
             if not user_data:
                 return await inter.response.send_message(
                     embed=discord.Embed(
@@ -518,7 +518,7 @@ class Study(commands.Cog):
                     ephemeral=True,
                 )
 
-            learnerCollection.delete_one({"_id": str(inter.user.id)})
+            userCollection.delete_one({"_id": str(inter.user.id)})
             file = discord.File(
                 io.BytesIO(json.dumps(user_data, indent=4).encode()),
                 f"{inter.user.display_name}.json",
@@ -573,14 +573,14 @@ class Study(commands.Cog):
                 ephemeral=True,
             )
 
-
+    @app_commands.command(name='balance', description='Check the balance of your account')
+    async def balance(self, inter: discord.Interaction):
+        await inter.response.send_message(discord.Embed(
+            title='',
+            description="Command under construction",
+            color=config.msgColor
+        ))
 
 async def setup(bot):
     Study_cog = Study(bot)
     await bot.add_cog(Study_cog)
-
-    guild_ids = [1354101256662286397, 1218819398974963752]
-    for guild_id in guild_ids:
-        for command in Study_cog.__cog_app_commands__:
-            print(f"Adding {command.name} in server with ID {guild_id}.")
-            bot.tree.add_command(command, guild=discord.Object(id=guild_id))

@@ -51,7 +51,6 @@ class ConfirmTextView(ui.View):
         self.stop()
         await interaction.response.edit_message(content="❌ Cancelled.", embed=None, view=None)
 
-
 class ConfirmGifView(ui.View):
     def __init__(self, gif_url: str, author_id: int):
         super().__init__(timeout=60)
@@ -132,13 +131,17 @@ class Reminders(commands.Cog):
                     ephemeral=True,
                 )
                 return
-
+            
+            isUpdated = False
             if channel:
                 reminderDoc["channel"] = str(channel.id)
+                isUpdated = True
             if time:
                 reminderDoc["time"] = time
+                isUpdated = True
             if text:
                 reminderDoc["text"] = text
+                isUpdated = True
 
             # Update DB
             serverCollection.update_one(
@@ -150,18 +153,21 @@ class Reminders(commands.Cog):
             # Refresh cache immediately
             await self.refresh_reminders_cache()
 
+            title = "Reminder Config"
+            if isUpdated:
+                title = "Updated " + title
             embed = discord.Embed(
-                title="Reminder Config Updated", 
+                title=title, 
                 color=config.msgColor
             )
             embed.add_field(
                 name="Channel", 
                 value=f"<#{reminderDoc.get('channel', 'Not Set')}>",
-                inline=False
+                inline=True
             )
             embed.add_field(
                 name="Time", value=f"{reminderDoc.get('time', 'Not Set')} mins",
-                inline=False
+                inline=True
             )
             embed.add_field(
                 name="Text", 
@@ -244,6 +250,7 @@ class Reminders(commands.Cog):
                             {"_id": reminder["_id"]},
                             {"$set": {"reminders.last_sent": now}},
                         )
+                        data["last_sent"] = now
                     except Exception as e:
                         print(f"Failed to send reminder to {reminder['_id']}: {e}")
 
@@ -288,7 +295,6 @@ class Reminders(commands.Cog):
         view = ConfirmGifView(gif_url=gif_url, author_id=inter.user.id)
         await inter.response.send_message(embed=embed, view=view)
 
-
     async def add_text_context(
         self, inter: discord.Interaction, message: discord.Message
     ):
@@ -317,7 +323,7 @@ class Reminders(commands.Cog):
         await inter.response.send_message(embed=embed, view=view)
 
 async def setup(bot: commands.Bot):
-    cog = Reminders(bot)
+    Reminders_cog = Reminders(bot)
 
     gif_menu = app_commands.ContextMenu(
         name="Add GIF to Reminders", callback=cog.add_gif_context
@@ -326,12 +332,10 @@ async def setup(bot: commands.Bot):
         name="Add Text to Reminders", callback=cog.add_text_context
     )
 
-    await bot.add_cog(cog)
+    await bot.add_cog(Reminders_cog)
 
     guild_ids = config.availableIn.get("guilds", [])
     for g_id in guild_ids:
         guild_obj = discord.Object(id=g_id)
-        for cmd in cog.get_app_commands():
-            bot.tree.add_command(cmd, guild=guild_obj)
         bot.tree.add_command(gif_menu, guild=guild_obj)
         bot.tree.add_command(text_menu, guild=guild_obj)
