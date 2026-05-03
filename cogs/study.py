@@ -229,6 +229,13 @@ class Study(commands.Cog):
                         and not after.self_video
                     )
                 )
+                # While still being in study channel
+                and (
+                    # They didn't leave vc
+                    after.channel
+                    # And, they are in study vc
+                    and str(after.channel.id) == study_channel_id
+                )
             # And not among exceptions
             ) and not self.exceptions.isInside(member_id):
 
