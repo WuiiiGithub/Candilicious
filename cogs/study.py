@@ -1,8 +1,12 @@
-import discord, os, asyncio, pymongo, traceback, json, io, qrcode
+import discord, os, asyncio, pymongo, traceback, json, io, qrcode, random
 import config
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
-from discord.ext import commands
+from datetime import (
+    datetime, 
+    timedelta, 
+    timezone
+)
+from discord.ext import tasks, commands
 from discord import app_commands
 from library.templates import *
 from library.logging import *
@@ -37,7 +41,9 @@ class Study(commands.Cog):
     @app_commands.command(name="config", description="Configure your study channel")
     @app_commands.guild_only()
     @app_commands.describe(study="Please enter your study channel")
-    async def config(self, inter: discord.Interaction, study: discord.VoiceChannel):
+    @app_commands.describe(interval="Time in which 1 drop takes place")
+    @app_commands.describe(drop="Quantity of Gold drops")
+    async def config(self, inter: discord.Interaction, study: discord.VoiceChannel, interval: int, drop: int):
         """Save the study channel in the database."""
         try:
             server_id = str(inter.guild_id)
@@ -50,16 +56,32 @@ class Study(commands.Cog):
             )
             serverCollection.update_one(
                 {"_id": server_id},
-                {"$set": {"_id": server_id, "channel": study_channel_id}},
+                {"$set": {"_id": server_id, "channel": study_channel_id, "drop": drop, "interval": interval}},
                 upsert=True,
             )
+            embed=discord.Embed(
+                title="Study Configurations",
+                description=f"**Configuration Successful!** :tada:",
+                timestamp=datetime.now(),
+                color=config.msgColor,
+            )
+            embed.add_field(
+                name="Channel", 
+                value=study.mention,
+                inline=True
+            )
+            embed.add_field(
+                name="Interval", 
+                value=interval, 
+                inline=True
+            )
+            embed.add_field(
+                name="Drops",
+                value=drop,
+                inline=False
+            )
             await inter.response.send_message(
-                embed=discord.Embed(
-                    title="Study Configurations",
-                    description=f"**Configuration Successful!** :tada:\nNow the study channel is {study.mention}",
-                    timestamp=datetime.now(),
-                    color=0x3498DB,
-                ),
+                embed = embed,
                 delete_after=20,
             )
             isError = False
@@ -94,13 +116,13 @@ class Study(commands.Cog):
             server_id = str(member.guild.id)
             print(f"🔎 Checking study channel for Server: {server_id}")
             study_data = serverCollection.find_one({"_id": server_id})
-            
 
             if not study_data or "channel" not in study_data:
                 print("⚠️ No study channel configured for this server.")
                 return
 
             study_channel_id = str(study_data["channel"])
+
             print(f"📌 Study Channel ID Found: {study_channel_id}")
 
             # Case of joining
