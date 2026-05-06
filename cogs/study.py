@@ -6,11 +6,12 @@ from datetime import (
     timedelta, 
     timezone
 )
-from discord.ext import tasks, commands
+from discord.ext import commands
 from discord import app_commands
 from library.templates import *
 from library.logging import *
 from library.session import *
+from library.leaderboard import *
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
@@ -26,10 +27,17 @@ exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
 class Study(commands.Cog):
     def __init__(self, bot):
+        # general vars
         self.bot = bot
+
+        # study vc vars
         self.monitoringUsers = {}
         self.exceptions = tempDataHandler()
         self.learnings = sessionLearners()
+        self.droppings = {}
+
+        # dropper vars
+        self.dropConfigsCache = {}
         print("✅ Entered Study Cogs")
 
     @commands.Cog.listener()
@@ -110,6 +118,7 @@ class Study(commands.Cog):
     ):
         """Track users joining and activity changes in the study channel."""
         try:
+            isDroppingAvailable = 0
             if member.bot:
                 return
             member_id = str(member.id)
@@ -122,7 +131,6 @@ class Study(commands.Cog):
                 return
 
             study_channel_id = str(study_data["channel"])
-
             print(f"📌 Study Channel ID Found: {study_channel_id}")
 
             # Case of joining
@@ -215,6 +223,7 @@ class Study(commands.Cog):
                     )
                 )
             ):
+                
                 await after.channel.send(
                     embed=discord.Embed(
                         title="",
@@ -229,6 +238,13 @@ class Study(commands.Cog):
                 )
                 self.monitoringUsers[member_id].cancel()
                 del self.monitoringUsers[member_id]
+                
+                # Dropping tasks
+                if isDroppingAvailable == 0:
+                    self.droppings[after.channel.id] = asyncio.create_task(
+                        self.dropper_routine
+                    )
+                isDroppingAvailable += 1
 
             # Case: Non monitored/learning user stopped activity
             if (
@@ -261,6 +277,7 @@ class Study(commands.Cog):
             # And not among exceptions
             ) and not self.exceptions.isInside(member_id):
 
+                isDroppingAvailable -= 1
                 print(f"⚠️ {member.name} disabled cam/screen share. Restarting timer.")
 
                 embed = discord.Embed(
@@ -460,6 +477,9 @@ class Study(commands.Cog):
             )
             await inter.followup.send(content="10 Mins access granted!")
 
+    async def dropper_routine(self, channel: discord.VoiceChannel, wait: int, drop: int):
+        await asyncio.sleep(wait)
+
     @app_commands.guild_only()
     @app_commands.command(
         name="leaderboard", description="Check out your study leaderboard."
@@ -601,6 +621,36 @@ class Study(commands.Cog):
                 ),
                 ephemeral=True,
             )
+
+    @app_commands.command(name='plb', description='placeholder command for leaderboard')
+    async def plb(self, inter: discord.Interaction):
+        LEADERBOARD_DATA = {
+            "podium": [
+                {"rank": 1, "name": "Yuvi", "time": "76 hours", "avatar_url": "https://picsum.photos/seed/yuvi/200"},
+                {"rank": 2, "name": "Patrick Jane", "time": "21 hours", "avatar_url": "https://picsum.photos/seed/patrick/200"},
+                {"rank": 3, "name": "Mai", "time": "21 hours", "avatar_url": "https://picsum.photos/seed/mai/200"}
+            ],
+            "rows": [
+                {"rank": 4, "name": "Tanmay", "time": "21:15", "avatar_url": "https://picsum.photos/seed/tanmay/200"},
+                {"rank": 5, "name": "Kitty", "time": "1977:34", "avatar_url": "https://picsum.photos/seed/kitty/200"},
+                {"rank": 6, "name": "philia", "time": "18:22", "avatar_url": "https://picsum.photos/seed/philia/200"},
+                {"rank": 7, "name": "maysem^_^", "time": "15:18", "avatar_url": "https://picsum.photos/seed/maysem/200"},
+                {"rank": 8, "name": "Jawa", "time": "15:01", "avatar_url": "https://picsum.photos/seed/jawa/200"},
+                {"rank": 9, "name": "Cyrus", "time": "08:46", "avatar_url": "https://picsum.photos/seed/cyrus/200"},
+                {"rank": 10, "name": "Hades", "time": "08:18", "avatar_url": "https://picsum.photos/seed/hades/200"}
+            ]
+        }
+
+        # Defer since image processing takes a moment
+        await inter.response.defer()
+
+        image_data = await getNovaLeaderboard(LEADERBOARD_DATA)
+        
+        if image_data:
+            file = discord.File(fp=image_data, filename="leaderboard.webp")
+            await inter.followup.send(file=file)
+        else:
+            await inter.followup.send("Failed to generate the leaderboard image.")
 
     @app_commands.command(name='balance', description='Check the balance of your account')
     async def balance(self, inter: discord.Interaction):
