@@ -35,6 +35,8 @@ class Study(commands.Cog):
         self.exceptions = tempDataHandler()
         self.learnings = sessionLearners()
         self.droppings = {}
+        self.monitoringChannels = {}
+        self.dropChannelLocks = {}
 
         # dropper vars
         self.dropConfigsCache = {}
@@ -118,7 +120,6 @@ class Study(commands.Cog):
     ):
         """Track users joining and activity changes in the study channel."""
         try:
-            isDroppingAvailable = 0
             if member.bot:
                 return
             member_id = str(member.id)
@@ -223,7 +224,6 @@ class Study(commands.Cog):
                     )
                 )
             ):
-                
                 await after.channel.send(
                     embed=discord.Embed(
                         title="",
@@ -240,11 +240,25 @@ class Study(commands.Cog):
                 del self.monitoringUsers[member_id]
                 
                 # Dropping tasks
-                if isDroppingAvailable == 0:
-                    self.droppings[after.channel.id] = asyncio.create_task(
-                        self.dropper_routine
+                # Here, we know someone came up
+                # and there is someone learning
+                # We start rewarding
+
+                channel_id = after.channel.id
+                self.monitoringChannels[channel_id] = self.monitoringChannels.get(channel_id, 0) + 1
+
+                if self.monitoringChannels[channel_id] == 1:
+                    # only first active user starts dropper
+                    org_drop = study_data.get('drop', 10)
+                    org_interval = study_data.get("interval", 15)
+
+                    self.droppings[channel_id] = asyncio.create_task(
+                        self.dropper_routine(
+                            channel=after.channel,
+                            org_interval=org_interval,
+                            org_drop=org_drop
+                        )
                     )
-                isDroppingAvailable += 1
 
             # Case: Non monitored/learning user stopped activity
             if (
@@ -277,8 +291,9 @@ class Study(commands.Cog):
             # And not among exceptions
             ) and not self.exceptions.isInside(member_id):
 
-                isDroppingAvailable -= 1
                 print(f"⚠️ {member.name} disabled cam/screen share. Restarting timer.")
+
+                channel_id = before.channel.id
 
                 embed = discord.Embed(
                     title="⚠️ Attention Required!",
@@ -297,6 +312,19 @@ class Study(commands.Cog):
                     traceback.print_exc()
                 self.learnings.started(member_id)
                 self.monitoringUsers[member_id] = task
+                
+                # dropping tasks
+                channel_id = before.channel.id
+                if channel_id in self.monitoringChannels:
+                    self.monitoringChannels[channel_id] -= 1
+
+                    if self.monitoringChannels[channel_id] <= 0:
+                        self.monitoringChannels.pop(channel_id, None)
+
+                        task = self.droppings.get(channel_id)
+                        if task:
+                            task.cancel()
+                            self.droppings.pop(channel_id, None)
 
         except Exception as e:
             print("❌ Error in `on_voice_state_update`:", e)
@@ -477,8 +505,23 @@ class Study(commands.Cog):
             )
             await inter.followup.send(content="10 Mins access granted!")
 
-    async def dropper_routine(self, channel: discord.VoiceChannel, wait: int, drop: int):
-        await asyncio.sleep(wait)
+    async def dropper_routine(self, channel: discord.VoiceChannel, org_drop: int, org_interval: int):
+        try:
+            while True:
+                interval = random.randint(0, int(2 * org_interval))
+                await asyncio.sleep(interval * 60)
+
+                drop = random.randint(int(0.25 * org_drop), int(1.75 * org_drop))
+                await channel.send(
+                    embed=discord.Embed(
+                        description=f"You got {drop} :coin: gold coins",
+                        color=discord.Color.gold()
+                    ),
+                    delete_after=20
+                )
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
 
     @app_commands.guild_only()
     @app_commands.command(
