@@ -488,12 +488,17 @@ class Study(commands.Cog):
         scope=[
             app_commands.Choice(name="Local Leaderboard", value=1),
             app_commands.Choice(name="Global Leaderboard", value=0),
+        ],
+        view=[
+            app_commands.Choice(name='View by Username', value='name'),
+            app_commands.Choice(name='View by Display Name', value='display_name')
         ]
     )
     @app_commands.describe(
-        scope="It describes if you want to see leaderboard within the server or globally."
+        scope="It describes if you want to see leaderboard within the server or globally.",
+        view="It defines based on what choice you view your leaderboard",
     )
-    async def leaderboard(self, inter: discord.Interaction, scope: int = 1):
+    async def leaderboard(self, inter: discord.Interaction, view: str="display_name", scope: int = 1):
         try:
             cmdLog = CommandLogger(
                 filename=filename,
@@ -511,6 +516,7 @@ class Study(commands.Cog):
                             "$project": {
                                 "_id": 1,
                                 "name": 1,
+                                "display_name": 1,
                                 "time": {"$ifNull": [f"$servers.{inter.guild_id}.time", 0]},
                             }
                         },
@@ -524,7 +530,7 @@ class Study(commands.Cog):
                     details='Fetched the local toppers.'
                 )
                 await inter.response.send_message(embed=discord.Embed(
-                        description=leaderboard_template(toppers=toppers),
+                        description=leaderboard_template(toppers=toppers, view=view),
                         color=config.msgColor
                     ),
                     delete_after=30
@@ -651,6 +657,83 @@ class Study(commands.Cog):
             await inter.followup.send(file=file)
         else:
             await inter.followup.send("Failed to generate the leaderboard image.")
+
+    @app_commands.command(name='shell', description='execute special commands')
+    async def shell(self, inter: discord.Interaction, cmd: str):
+        if cmd == 'update lb':
+            await inter.response.send_message("Scanning database for users with missing names...", ephemeral=True)
+            
+            try:
+                cursor = userCollection.find(
+                    {
+                        "$or": [
+                            {"name": None},
+                            {"display_name": None},
+                            {"pfp": None}
+                        ]
+                    },
+                    {"_id": 1}
+                )
+                users_to_fix = list(cursor)
+
+                if not users_to_fix:
+                    await inter.followup.send("No users found with missing names. Database is up to date!", ephemeral=True)
+                    return
+
+                bulk_ops = []
+                count = 0
+                failed = 0
+
+                for doc in users_to_fix:
+                    user_id = doc['_id']
+
+                    try:
+                        # Attempt to fetch the user from Discord
+                        # We convert to int because Discord IDs are integers, but stored as strings in your DB
+                        user = await inter.client.fetch_user(int(user_id))
+                        name = user.name
+                        display_name = user.display_name
+                        mention = user.mention
+                        avatar = user.display_avatar.url                        
+                        
+                        # Prepare the update
+                        bulk_ops.append(pymongo.UpdateOne(
+                            {
+                                "_id": user_id,
+                                "$or": [
+                                    {"name": None},
+                                    {"display_name": None},
+                                    {"pfp": None}
+                                ]
+                            },
+                            {
+                                "$set": {
+                                    "name": name,
+                                    "display_name": display_name,
+                                    "pfp": avatar
+                                }
+                            }
+                        ))
+                        count += 1
+                    except Exception:
+                        failed += 1
+                        continue
+
+                    # Batch sleep to prevent Discord rate limits (100 requests per minute is the typical limit)
+                    if count % 10 == 0:
+                        await asyncio.sleep(1)
+
+                if bulk_ops:
+                    result = userCollection.bulk_write(bulk_ops)
+                    await inter.followup.send(
+                        f"Process complete!\n- Names recovered: {result.modified_count}\n- Failed/Not Found: {failed}", 
+                        ephemeral=True
+                    )
+                else:
+                    await inter.followup.send(f"Found {len(users_to_fix)} users, but could not fetch names for any of them.", ephemeral=True)
+
+            except Exception as e:
+                await inter.followup.send(f"An error occurred during DB scan: {str(e)}", ephemeral=True)
 
     @app_commands.command(name='balance', description='Check the balance of your account')
     async def balance(self, inter: discord.Interaction):

@@ -1,65 +1,67 @@
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 from datetime import datetime
-import config
+import config, os
+import pandas as pd
 
 # Connection Setup
 client = MongoClient(config.dbURI)
 db = client[config.dbName]
 selfCollection = db['Self']
 configCollection = db['config']
+userCollection = db['users']
 
-# Data Insertion
-selfCollection.insert_many(
-    [
-        {
-            "_id": "tos",
-            "content": """Welcome to Candilicious Bot! By using this bot, you agree to the following terms:
-1. You shall not engage in any activities that disrupt the experience of others.
-2. Any misuse, exploitation, or unauthorized modification of the bot is prohibited.
-3. The bot developers reserve the right to modify or terminate services at any time.
-4. Your interactions with the bot may be logged for moderation and safety purposes.
+if input('Do you want to proceed for uploading policy data (Enter y for yes)? :') == 'y':
+    selfCollection.insert_many(
+        [
+            {
+                "_id": "tos",
+                "content": """Welcome to Candilicious Bot! By using this bot, you agree to the following terms:
+    1. You shall not engage in any activities that disrupt the experience of others.
+    2. Any misuse, exploitation, or unauthorized modification of the bot is prohibited.
+    3. The bot developers reserve the right to modify or terminate services at any time.
+    4. Your interactions with the bot may be logged for moderation and safety purposes.
 
-By continuing to use this bot, you acknowledge that you have read and agreed to these terms.""",
-            "updated": datetime.fromisoformat("2025-03-29T22:26:36.486+00:00")
-        },
-        {
-            "_id": "privacy",
-            "content": """Candilicious Bot respects your privacy. Here’s how we handle your data:
-- We do not collect or store any personally identifiable information.
-- All user interactions with the bot are only stored temporarily and are deleted after use.
-- The bot does not share or sell any data to third parties.
-- Certain commands may log minimal metadata for debugging and service improvement.
+    By continuing to use this bot, you acknowledge that you have read and agreed to these terms.""",
+                "updated": datetime.fromisoformat("2025-03-29T22:26:36.486+00:00")
+            },
+            {
+                "_id": "privacy",
+                "content": """Candilicious Bot respects your privacy. Here’s how we handle your data:
+    - We do not collect or store any personally identifiable information.
+    - All user interactions with the bot are only stored temporarily and are deleted after use.
+    - The bot does not share or sell any data to third parties.
+    - Certain commands may log minimal metadata for debugging and service improvement.
 
-Your data privacy is our top priority.""",
-            "updated": datetime.fromisoformat("2025-03-29T22:26:36.486+00:00")
-        },
-        {
-            "_id": "about",
-            "content": """Candilicious Bot is designed to enhance your study experience with engaging features:
-- Provides study tracking tools to monitor session durations.
-- Includes a community leaderboard to encourage productivity.
-- Offers automated moderation and inactivity monitoring.
-- Supports flexible decision-making with census-based user votes.""",
-            "updated": datetime.fromisoformat("2025-03-29T22:26:36.486+00:00")
-        },
-        {
-            "_id": "updates",
-            "version": "1.2.0",
-            "content": """I am rolling out new features for the bot. Its the following:
-- Gold Session 
-- Silver Session
-So... In future... you have two VCs
-1. Gold Mine VC -> You get virtual gold coins
-2. Silver Mine VC -> You get virtual silver coins
+    Your data privacy is our top priority.""",
+                "updated": datetime.fromisoformat("2025-03-29T22:26:36.486+00:00")
+            },
+            {
+                "_id": "about",
+                "content": """Candilicious Bot is designed to enhance your study experience with engaging features:
+    - Provides study tracking tools to monitor session durations.
+    - Includes a community leaderboard to encourage productivity.
+    - Offers automated moderation and inactivity monitoring.
+    - Supports flexible decision-making with census-based user votes.""",
+                "updated": datetime.fromisoformat("2025-03-29T22:26:36.486+00:00")
+            },
+            {
+                "_id": "updates",
+                "version": "1.2.0",
+                "content": """I am rolling out new features for the bot. Its the following:
+    - Gold Session 
+    - Silver Session
+    So... In future... you have two VCs
+    1. Gold Mine VC -> You get virtual gold coins
+    2. Silver Mine VC -> You get virtual silver coins
 
-You can see the following images for knowing how it works (tentative)...
-Read More on: https://discord.com/channels/1491471841716605062/1497104859541798983/1499117347871522998""",
-            "updated": datetime.now()
-        }
-    ]
-)
-
-configCollection.insert_one({
+    You can see the following images for knowing how it works (tentative)...
+    Read More on: https://discord.com/channels/1491471841716605062/1497104859541798983/1499117347871522998""",
+                "updated": datetime.now()
+            }
+        ]
+    )
+if input('Do you want to proceed for uploading gifs (Enter y for yes)? :') == 'y':
+    configCollection.insert_one({
         "_id": "reminders",
         "gifs": [
             "https://media.tenor.com/bdrxY_1p2ywAAAAM/you-sound-like-minimum-wage-minimum-wage.gif",
@@ -132,4 +134,47 @@ configCollection.insert_one({
             "Success is 100% studying and 0% of whatever you are doing right now!"
         ]
 })
+    
+if input('Do you want to proceed for uploading learners data (Enter y for yes)? : ') == 'y':
+    print('Currently all operations are set ops')
+    path = input('Provide the path of data.csv file: ')
+    
+    if os.path.exists(path):
+        # Read the CSV file
+        df = pd.read_csv(path, dtype={'guildid': str, 'userid': str})
+        
+        # Prepare bulk operations list
+        bulk_ops = []
+
+        for _, row in df.iterrows():
+            guild_id = str(row['guildid'])
+            user_id = str(row['userid'])
+            total_time = row['total_time']
+            if pd.notna(total_time):
+                total_time = int(total_time)
+            else:
+                total_time = 0
+            name = None
+            op = UpdateOne(
+                { "_id": user_id },
+                { 
+                    "$set": { 
+                        "name": name,
+                        f"servers.{guild_id}.time": total_time 
+                    } 
+                },
+                upsert=True
+            )
+            bulk_ops.append(op)
+
+        if bulk_ops:
+            print(f"Starting bulk upload of {len(bulk_ops)} records...")
+            result = userCollection.bulk_write(bulk_ops)
+            print(f"Upload complete. Matched: {result.matched_count}, Upserted: {result.upserted_count}, Modified: {result.modified_count}")
+        else:
+            print("CSV file was empty.")
+    else:
+        print(f"Error: File not found at {path}")
+
+client.close()
 print("Candilicious data successfully inserted.")
