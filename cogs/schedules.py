@@ -4,31 +4,47 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime, timedelta
 import os, pymongo, traceback, asyncio
-from library import logging
+from library.logging import CogLogger, CommandLogger, ListenerLogger, TaskLogger
+
+filename = __name__.title()
+cogLog = CogLogger(filename=filename)
 
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
-#dlog = logging.Logger("Schedules", style="default")
 
 class Schedules(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.activeMembers = set()
+        cogLog.log_cog(action="starting", status_code=0, details="Schedules Cog has been initialized and is monitoring for task requests.")
 
     @commands.Cog.listener()
     async def on_ready(self):
+        log = ListenerLogger(filename=filename, event_name="on_ready")
         try:
+            log.process(status_code=0, message="Tree Sync", details="Trying to sync the application command tree...")
             await self.bot.tree.sync()
-        except:
-            traceback.print_exc()
+            log.complete(status_code=100, message="Sync Success", details="Bot Tree has been successfully synced for the Schedules cog.")
+        except Exception:
+            log.error(status_code=-100, message="Sync Fail", details=traceback.format_exc())
+        finally:
+            log.send()
 
     @app_commands.guild_only()
     @app_commands.command(name='tasks', description='Manage tasks using this command.')
     async def tasks(self, inter: discord.Interaction):
-        await inter.response.send_message(
-            embed=discord.Embed(
-                description=f"The command is still under construction."
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            cmdLog.process(status_code=50, name="Task Status", details="Handling request to manage tasks...")
+            await inter.response.send_message(
+                embed=discord.Embed(
+                    description=f"The command is still under construction."
+                )
             )
-        )
+            cmdLog.process(status_code=100, name="Status Sent", details="Member notified that the task system is under construction.")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
 
     @app_commands.command(
         name="remainder",
@@ -51,7 +67,9 @@ class Schedules(commands.Cog):
         text: str = "Times up! 🔔"
     ):
         """Set a remainder for the user."""
+        cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
+            cmdLog.process(status_code=50, name="Input Calc", details="Calculating total wait time for the remainder...")
             total_seconds = secs + (mins * 60) + (hrs * 3600) + (days * 86400)
 
             if total_seconds <= 0:
@@ -66,27 +84,24 @@ class Schedules(commands.Cog):
                 ephemeral=True
             )
 
+            cmdLog.process(status_code=100, name="Task Set", details=f"Remainder successfully scheduled for {total_seconds} seconds from now.")
             # Schedule the remainder
             asyncio.create_task(self.remainder_runner(inter.user, total_seconds, text))
-
-        except Exception as e:
-            print(f"❌ Error in `remainder` command: {e}")
-            traceback.print_exc()
-            await inter.response.send_message(
-                embed=discord.Embed(
-                    title="Error",
-                    description="An error occurred while setting the remainder. Please try again later.",
-                    color=discord.Color.red()
-                ),
-                ephemeral=True
-            )
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
 
 
     async def remainder_runner(self, user: discord.User, time: int, text: str):
         """Send a remainder message to the user after the specified time."""
+        taskLog = TaskLogger(filename=filename, task_name="remainder_runner")
         try:
-            print(f"⏳ Waiting {time} seconds to send a remainder to {user.name}...")
+            taskLog.before(status_code=50, message="Delaying", details=f"Beginning {time}s wait before delivering remainder to {user.name}")
+            taskLog.send()
             await asyncio.sleep(time)  # Wait for the specified time
+            
+            resLog = TaskLogger(filename=filename, task_name="remainder_runner")
             await user.send(
                 embed=discord.Embed(
                     title="⏰ Remainder",
@@ -95,12 +110,14 @@ class Schedules(commands.Cog):
                     timestamp=datetime.now()
                 )
             )
-            print(f"✅ Remainder sent to {user.name}.")
+            resLog.after(status_code=100, message="DM Send", details=f"Remainder successfully delivered to {user.name}.")
+            resLog.send()
         except discord.Forbidden:
-            print(f"⚠️ Unable to send DM to {user.name}. DMs might be disabled.")
+            resLog.after(status_code=-25, message="DM Blocked", details=f"Unable to send remainder DM to {user.name}; they may have DMs disabled.")
+            resLog.send()
         except Exception as e:
-            print(f"❌ Error in `remainder_runner`: {e}")
-            traceback.print_exc()
+            resLog.after(status_code=-100, message="Error", details=str(e))
+            resLog.send()
     
 
 async def setup(bot):

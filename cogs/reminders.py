@@ -97,7 +97,7 @@ class Reminders(commands.Cog):
         cogLog.log_cog(
             action="starting", 
             status_code=0, 
-            details="Entered the Cog!"
+            details="Reminders Cog Initialized"
         )
 
         # Start the background task
@@ -121,7 +121,9 @@ class Reminders(commands.Cog):
         time: int = None,
         text: str = None,
     ):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
+            cmdLog.process(status_code=0, name="Waiting", details="Fetching current reminder configuration...")
             serverDoc = serverCollection.find_one({"_id": str(inter.guild_id)}) or {}
             reminderDoc = serverDoc.get("reminders", {})
 
@@ -130,6 +132,7 @@ class Reminders(commands.Cog):
                     "Reminders not configured! Provide parameters to setup.",
                     ephemeral=True,
                 )
+                cmdLog.process(status_code=-25, name="Aborted", details="No parameters provided for setup.")
                 return
             
             isUpdated = False
@@ -143,6 +146,7 @@ class Reminders(commands.Cog):
                 reminderDoc["text"] = text
                 isUpdated = True
 
+            cmdLog.process(status_code=75, name="DB Update", details="Updating reminder settings in database...")
             # Update DB
             serverCollection.update_one(
                 {"_id": str(inter.guild_id)},
@@ -175,8 +179,11 @@ class Reminders(commands.Cog):
                 inline=False
             )
             await inter.response.send_message(embed=embed)
+            cmdLog.process(status_code=100, name="Executed", details="Reminder configuration successfully updated and response sent.")
         except Exception:
-            traceback.print_exc()
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
 
     async def refresh_reminders_cache(self):
         """
@@ -196,7 +203,7 @@ class Reminders(commands.Cog):
                     ],
                 )
         except Exception:
-            traceback.print_exc()
+            cogLog.log_cog(action="error", status_code=-100, details=f"Failed to refresh reminders cache:\n{traceback.format_exc()}")
 
     @tasks.loop(minutes=1)
     async def study_reminder(self):
@@ -205,6 +212,8 @@ class Reminders(commands.Cog):
             return
 
         now = datetime.now(timezone.utc)
+        taskLog = TaskLogger(filename=filename, task_name="study_reminder")
+        sent_any = False
 
         for reminder in self.reminders_cache:
             data = reminder.get("reminders", {})
@@ -251,76 +260,110 @@ class Reminders(commands.Cog):
                             {"$set": {"reminders.last_sent": now}},
                         )
                         data["last_sent"] = now
+                        taskLog.during(status_code=75, message="Success", details=f"Reminder successfully sent to channel {channel_id}")
+                        sent_any = True
                     except Exception as e:
-                        print(f"Failed to send reminder to {reminder['_id']}: {e}")
+                        taskLog.during(status_code=-75, message="Fail", details=f"Failed to send reminder to {reminder['_id']}: {e}")
+                        sent_any = True
+        
+        if sent_any:
+            taskLog.send()
 
     @study_reminder.before_loop
     async def before_study_reminder(self):
+        taskLog = TaskLogger(filename=filename, task_name="study_reminder")
+        taskLog.before(status_code=0, message="Waiting", details="Waiting for bot to be ready...")
         await self.bot.wait_until_ready()
+        taskLog.before(status_code=75, message="Ready", details="Bot is ready; refreshing reminders cache from database.")
         await self.refresh_reminders_cache()
+        taskLog.send()
 
     async def add_gif_context(self, inter: discord.Interaction, message: discord.Message):
-        if inter.user.id != config.owner_id:
-            return await inter.response.send_message(
-                "You are not allowed to use this command.", ephemeral=True
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            if inter.user.id != config.owner_id:
+                await inter.response.send_message(
+                    "You are not allowed to use this command.", ephemeral=True
+                )
+                cmdLog.process(status_code=-100, name="Denied", details="Unauthorized user attempted to add a GIF.")
+                return
+
+            cmdLog.process(status_code=50, name="Processing", details="Searching for a valid GIF in the message...")
+            gif_url = None
+            tenor_pattern = r'https?://[^\s<>]*tenor\.com[^\s<>]*'
+            match = re.search(tenor_pattern, message.content)
+            if match:
+                gif_url = match.group(0)
+
+            if not gif_url and message.attachments:
+                gif_url = message.attachments[0].url
+            elif not gif_url and message.embeds:
+                for emb in message.embeds:
+                    if emb.image:
+                        gif_url = emb.image.url
+                        break
+
+            if not gif_url:
+                await inter.response.send_message(
+                    "No valid GIF found in this message.", 
+                    ephemeral=True
+                )
+                cmdLog.process(status_code=-25, name="Missing", details="No GIF URL could be extracted from the message.")
+                return
+
+            # Show confirmation
+            embed = discord.Embed(
+                title="Confirm Adding this GIF?",
+                color=discord.Color.yellow()
             )
+            embed.set_image(url=gif_url)
 
-        gif_url = None
-        tenor_pattern = r'https?://[^\s<>]*tenor\.com[^\s<>]*'
-        match = re.search(tenor_pattern, message.content)
-        if match:
-            gif_url = match.group(0)
-
-        if not gif_url and message.attachments:
-            gif_url = message.attachments[0].url
-        elif not gif_url and message.embeds:
-            for emb in message.embeds:
-                if emb.image:
-                    gif_url = emb.image.url
-                    break
-
-        if not gif_url:
-            return await inter.response.send_message(
-                "No valid GIF found in this message.", 
-                ephemeral=True
-            )
-
-        # Show confirmation
-        embed = discord.Embed(
-            title="Confirm Adding this GIF?",
-            color=discord.Color.yellow()
-        )
-        embed.set_image(url=gif_url)
-
-        view = ConfirmGifView(gif_url=gif_url, author_id=inter.user.id)
-        await inter.response.send_message(embed=embed, view=view)
+            view = ConfirmGifView(gif_url=gif_url, author_id=inter.user.id)
+            await inter.response.send_message(embed=embed, view=view)
+            cmdLog.process(status_code=100, name="Executed", details="Confirmation prompt for GIF addition has been sent.")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
 
     async def add_text_context(
         self, inter: discord.Interaction, message: discord.Message
     ):
-        if inter.user.id != config.owner_id:
-            return await inter.response.send_message(
-                "You are not allowed to use this command.", ephemeral=True
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            if inter.user.id != config.owner_id:
+                await inter.response.send_message(
+                    "You are not allowed to use this command.", ephemeral=True
+                )
+                cmdLog.process(status_code=-100, name="Denied", details="Unauthorized user attempted to add reminder text.")
+                return
+
+            cmdLog.process(status_code=50, name="Processing", details="Cleaning and validating the message content...")
+            content = message.content.strip()
+            if len(content) < 15:
+                await inter.response.send_message(
+                    "Message too short to add (min 15 characters).", ephemeral=True
+                )
+                cmdLog.process(status_code=-25, name="Warning", details="The message provided is too short for a reminder.")
+                return
+
+            content = re.sub(r"\s+", " ", content)
+
+            # Show confirmation
+            embed = discord.Embed(
+                title="Confirm Adding this Text?",
+                description=content[:1024],
+                color=config.msgColor
             )
+            embed.set_footer(text="This will be used in study reminders.")
 
-        content = message.content.strip()
-        if len(content) < 15:
-            return await inter.response.send_message(
-                "Message too short to add (min 15 characters).", ephemeral=True
-            )
-
-        content = re.sub(r"\s+", " ", content)
-
-        # Show confirmation
-        embed = discord.Embed(
-            title="Confirm Adding this Text?",
-            description=content[:1024],
-            color=config.msgColor
-        )
-        embed.set_footer(text="This will be used in study reminders.")
-
-        view = ConfirmTextView(content=content, author_id=inter.user.id)
-        await inter.response.send_message(embed=embed, view=view)
+            view = ConfirmTextView(content=content, author_id=inter.user.id)
+            await inter.response.send_message(embed=embed, view=view)
+            cmdLog.process(status_code=100, name="Executed", details="Confirmation prompt for text addition has been sent.")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
 
 async def setup(bot: commands.Bot):
     Reminders_cog = Reminders(bot)
