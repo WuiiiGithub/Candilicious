@@ -24,7 +24,6 @@ userCollection = db["users"]
 exceptionCollection = db["exception"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
-
 class Study(commands.Cog):
     def __init__(self, bot):
         # general vars
@@ -462,9 +461,14 @@ class Study(commands.Cog):
             await asyncio.sleep(1)
 
         if details==None:
-            await inter.followup.send(embed=discord.Embed(
-                description="An error occured. Please try again!"
-            ))
+            await inter.followup.send(
+                embed=discord.Embed(
+                    name='Timeout',
+                    description="Verification polling timed out after 90 seconds.",
+                    color=config.msgColor
+                ), 
+                ephemeral=True
+            )
             cmdLog.process(status_code=-50, name="Timeout", details="Verification polling timed out after 90 seconds.")
             return
         
@@ -478,7 +482,8 @@ class Study(commands.Cog):
                 name='Rejected',
                 details="Network speed is sufficient; the user's exception request was denied."
             )
-            await inter.followup.send(content="You have good internet speed lol!")
+            await inter.followup.send(content="You have good internet speed lol!", ephemeral=True)
+            return 
         else:
             self.exceptions.add(inter.user.id)
             cmdLog.process(
@@ -486,7 +491,8 @@ class Study(commands.Cog):
                 name='Verified',
                 details="Poor network connection confirmed; exception granted for 10 minutes."
             )
-            await inter.followup.send(content="10 Mins access granted!")
+            await inter.followup.send(content="10 Mins access granted!", ephemeral=True)
+            return 
 
     async def dropper_routine(self, channel: discord.VoiceChannel, org_drop: int, org_interval: int):
         taskLog = TaskLogger(filename=filename, task_name="dropper_routine")
