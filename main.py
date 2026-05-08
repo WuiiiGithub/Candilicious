@@ -23,7 +23,6 @@ flask_url = os.getenv('FLASK_DOMAIN')
 if flask_url == None or flask_url == '' or '://localhost:' in str(flask_url):
     os.environ['FLASK_DOMAIN'] = public_url
     flask_url = public_url
-
 try:
     sysLog.process(status_code=0, message="Waiting", details="Initiating connection to MongoDB...")
     client = pymongo.MongoClient(host=MONGODB_URI, serverSelectionTimeoutMS=5000)
@@ -105,12 +104,18 @@ def exception(token):
     data = tm.verifyToken(token=token)['data']    
     if len(data["_id"])==24:
         tokenData = exceptionCollection.find_one({"_id": bson.ObjectId(data["_id"])})
+        print(tokenData)
     else:
         tokenData = None
 
     if tokenData:
-        st = speedtest.Speedtest()
-        st.get_best_server()
+        try:
+            st = speedtest.Speedtest()
+            st.get_best_server()
+        except Exception as e:
+            exceptionCollection.delete_one({"user_id": str(data['user_id'])})
+            log.error(status_code=-75, message="Internal Server Error", details="Token verification failed because of internal server error.")
+
 
         downloadSpeed = st.download(threads=1) / 10**6
         uploadSpeed = st.upload(threads=1) / 10**6
@@ -163,7 +168,7 @@ async def load():
     log.send("Loader")
 
 async def main():
-    sysLog.process(status_code=0, message="Waiting", details="Starting Flask frontend in a background thread...")
+    sysLog.process(status_code=50, message="Frontend", details="Starting Flask frontend in a background thread...")
     frontend = threading.Thread(target=run_flask, daemon=True)
     frontend.start()
 
@@ -175,6 +180,7 @@ try:
     asyncio.run(main())
 except KeyboardInterrupt:
     print('...',"="*50, sep='\n')
+    ngrok.kill()
     stopLog = CogLogger(filename=filename)
     stopLog.log_important("Shutdown", status_code=0, details="The application has been stopped by KeyboardInterrupt.")
     print("-"*50, sep='\n')

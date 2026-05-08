@@ -136,6 +136,7 @@ class Study(commands.Cog):
                 return
 
             study_channel_id = str(study_data["channel"])
+            print(self.exceptions.data)
 
             # Case of joining
             if (
@@ -161,8 +162,7 @@ class Study(commands.Cog):
                     color=0x3498DB,
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
-
-                if not self.exceptions.isInside(member_id):
+                if self.exceptions.isNotInside(str(member_id)):
                     embed.add_field(
                         name="Request",
                         value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
@@ -295,8 +295,7 @@ class Study(commands.Cog):
                     and str(after.channel.id) == study_channel_id
                 )
             # And not among exceptions
-            ) and not self.exceptions.isInside(member_id):
-
+            ) and self.exceptions.isNotInside(str(member_id)):
                 log.process(status_code=-75, message="Media Stop", details=f"{member.name} disabled camera or screen share. Re-initiating the watch timer.")
 
                 channel_id = before.channel.id
@@ -397,9 +396,9 @@ class Study(commands.Cog):
                 details="Initiating the secure token generation process for a study exception..."
             )
             token = exceptionCollection.find_one_and_update(
-                    {"user_id": inter.user.id},
+                    {"user_id": str(inter.user.id)},
                     {
-                        "$setOnInsert": { "user_id": inter.user.id },
+                        "$setOnInsert": { "user_id": str(inter.user.id) },
                         "$set": {"expiresAt": datetime.now(timezone.utc) + timedelta(minutes=10)}
                     },
                     upsert=True,
@@ -457,13 +456,13 @@ class Study(commands.Cog):
             name='Waiting',
             details="Starting the background verification process for the study exception..."
         )
-        while (details:=self.bot.userNetworkConnection.get(inter.user.id, None))==None and (datetime.now() - t).total_seconds() <= 90:
+        while (details:=self.bot.userNetworkConnection.get(str(inter.user.id), None))==None and (datetime.now() - t).total_seconds() <= 90:
             await asyncio.sleep(1)
 
         if details==None:
             await inter.followup.send(
                 embed=discord.Embed(
-                    name='Timeout',
+                    title='Timeout',
                     description="Verification polling timed out after 90 seconds.",
                     color=config.msgColor
                 ), 
@@ -482,10 +481,11 @@ class Study(commands.Cog):
                 name='Rejected',
                 details="Network speed is sufficient; the user's exception request was denied."
             )
+            exceptionCollection.delete_one({"user_id": str(inter.user.id)})
             await inter.followup.send(content="You have good internet speed lol!", ephemeral=True)
             return 
         else:
-            self.exceptions.add(inter.user.id)
+            self.exceptions.add(str(inter.user.id))
             cmdLog.process(
                 status_code=100,
                 name='Verified',
