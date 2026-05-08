@@ -666,7 +666,7 @@ class Study(commands.Cog):
             cmdLog.send()
 
     @app_commands.command(name='plb', description='placeholder command for leaderboard')
-    async def plb(self, inter: discord.Interaction):
+    async def plb(self, inter: discord.Interaction, style: Literal['gold', 'silver', 'bronze', 'wood']):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
             cmdLog.process(status_code=0, name="Waiting", details="Trying to generate the placeholder leaderboard image...")
@@ -690,7 +690,7 @@ class Study(commands.Cog):
             # Defer since image processing takes a moment
             await inter.response.defer()
 
-            image_data = await getNovaLeaderboard(LEADERBOARD_DATA)
+            image_data = await getNovaLeaderboard(LEADERBOARD_DATA, style)
             
             if image_data:
                 file = discord.File(fp=image_data, filename="leaderboard.webp")
