@@ -28,6 +28,17 @@ class General(commands.Cog):
         finally:
             log.send()
 
+    @app_commands.command(name='site', description='Shows the site of the bot')
+    async def site(self, inter: discord.Interaction):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        await inter.response.send_message(
+            embed=discord.Embed(
+                description=f"Bot is live on the [website]({os.getenv('FLASK_DOMAIN')})",
+                color=config.msgColor
+            ),
+            ephemeral=True
+        )        
+
     @app_commands.command(name="tos", description="Shows terms of service")
     async def tos(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)

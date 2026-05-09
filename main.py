@@ -10,6 +10,9 @@ from library.logging import SystemLogger, CogLogger
 import uvicorn, config, traceback
 from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure, OperationFailure
 
+# setups
+import setup_vpn
+
 filename = __name__.title()
 sysLog = SystemLogger(filename=filename)
 
