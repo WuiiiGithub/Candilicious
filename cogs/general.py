@@ -31,13 +31,39 @@ class General(commands.Cog):
     @app_commands.command(name='site', description='Shows the site of the bot')
     async def site(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
-        await inter.response.send_message(
-            embed=discord.Embed(
-                description=f"Bot is live on the [website]({os.getenv('FLASK_DOMAIN')})",
-                color=config.msgColor
-            ),
-            ephemeral=True
-        )        
+        site_url = str(os.getenv('FLASK_DOMAIN'))
+        try:
+            if site_url == '' or site_url == None:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=f"Bot is not live.",
+                        color=config.msgColor
+                    ),
+                    ephemeral=True
+                )   
+                cmdLog.process(
+                    status_code=-75,
+                    name="Site Down",
+                    details="The site is not available"
+                )
+
+            elif site_url.startswith('http'):
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=f"Bot is live on the [website]({site_url})",
+                        color=config.msgColor
+                    ),
+                    ephemeral=True
+                )     
+                cmdLog.process(
+                    status_code=100,
+                    name="Site Up",
+                    details="The site is running at " + site_url
+                )
+        except Exception as e:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
 
     @app_commands.command(name="tos", description="Shows terms of service")
     async def tos(self, inter: discord.Interaction):
