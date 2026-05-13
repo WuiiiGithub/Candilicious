@@ -100,7 +100,7 @@
         <div class="max-w-7xl mx-auto px-4 md:px-8 h-16 md:h-20 flex justify-between items-center">
             <div class="flex items-center space-x-2">
 
-                <img src="./assets/favicon/android-chrome-192x192.png"
+                <img src="/assets/favicon/android-chrome-192x192.png"
                     alt="Candilicious Icon"
                     class="w-10 h-10 rounded-full shadow-md">
                 <h1
@@ -198,14 +198,29 @@
         // SINGLE DATA SOURCE STRUCTURE
         // [{ id, name, description, image, boards: [{ id, name, image, progress: { todo, cooking, done } }] }]
         let projects = {{ projects | tojson }};
+        const token = "{{ token }}";
 
         let currentView = 'projects';
         let activeProjectId = null;
         let currentEditingId = null;
 
-        function saveToStorage() {
-            localStorage.setItem('candilicious_master_data', JSON.stringify(projects));
+        async function saveToStorage() {
+            // Update UI first
             currentView === 'projects' ? renderProjects() : renderBoards(activeProjectId);
+            
+            // Sync with backend
+            try {
+                const response = await fetch(`/api/save/projects/${token}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ projects })
+                });
+                if (!response.ok) {
+                    console.error('Failed to sync projects with backend');
+                }
+            } catch (error) {
+                console.error('Error syncing projects:', error);
+            }
         }
 
         function showProjectsView() {
@@ -280,7 +295,7 @@
 
                 const card = document.createElement('div');
                 card.className = "group cursor-pointer flex flex-col glass-card rounded-[2.5rem] overflow-hidden p-3 md:p-4";
-                card.onclick = () => window.location.href = 'boards.html?id=' + b.id;
+                card.onclick = () => window.location.href = `/boards/${token}/` + b.id;
                 
                 card.innerHTML = `
                     <div class="aspect-square w-full rounded-3xl overflow-hidden relative mb-4">
@@ -376,7 +391,7 @@
 
         function handleSave() {
             const name = document.getElementById('nameInput').value;
-            const image = document.getElementById('imageInput').value || './assets/candiliciousBoard.webp';
+            const image = document.getElementById('imageInput').value || '/assets/candiliciousBoard.webp';
             if (!name) return;
 
             if (currentView === 'projects') {

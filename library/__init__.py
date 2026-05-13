@@ -8,4 +8,5 @@ db = pymongo.MongoClient(os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
 
 serverCollection = db["servers"]
 userCollection = db["users"]
+boardsCollection = db["boards"]
 exceptionCollection = db['exception']

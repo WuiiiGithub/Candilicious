@@ -52,6 +52,7 @@
         }
 
         .is-mobile-view .kanban-col-wrapper {
+            width: calc(100vw - 48px);
             min-width: calc(100vw - 48px); 
             scroll-snap-align: center;
             flex-shrink: 0;
@@ -103,15 +104,20 @@
             backdrop-filter: blur(15px);
             border-bottom: 1px solid rgba(255, 255, 255, 0.3);
         }
+
+        .overflow-wrap-anywhere {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
     </style>
 </head>
 <body class="bg-pink-50 font-sans text-gray-800 min-h-screen flex flex-col overflow-x-hidden">
     <header class="nav-glass sticky top-0 z-[100] w-full">
         <div class="max-w-7xl mx-auto px-4 md:px-6 h-16 md:h-20 flex justify-between items-center">
             <!-- Brand -->
-           <div class="flex items-center space-x-2">
+           <a href="/projects/{{ token }}" class="flex items-center space-x-2">
 
-                <img src="./assets/favicon/android-chrome-192x192.png"
+                <img src="/assets/favicon/android-chrome-192x192.png"
                     alt="Candilicious Icon"
                     class="w-10 h-10 rounded-full shadow-md">
                 <h1
@@ -119,7 +125,7 @@
                     style="text-shadow: 1px 1px 2px rgba(236, 72, 153, 0.3);">
                     Candilicious
                 </h1>
-            </div>
+            </a>
 
             <!-- Progress Bar Integrated into Nav -->
             <div class="hidden sm:flex items-center gap-4 w-64 md:w-80">
@@ -170,7 +176,7 @@
                 <h2 class="font-display text-xl md:text-2xl font-bold text-pink-700 px-4 flex justify-between items-center">
                     To-Do <span class="text-xs md:text-sm bg-pink-200 text-pink-800 px-3 py-1 rounded-full font-sans font-bold" id="todo-count">0</span>
                 </h2>
-                <div id="todo" class="kanban-column flex flex-col gap-4 p-5 md:p-6 glass rounded-[2.5rem] min-h-[400px] md:h-[60vh] overflow-y-auto border-pink-100 shadow-sm" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
+                <div id="todo" class="kanban-column flex flex-col gap-4 p-5 md:p-6 glass rounded-[2.5rem] min-h-[400px] md:h-[60vh] overflow-y-auto border-pink-100 shadow-sm flex-shrink-0" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
             </div>
 
             <!-- Column: Cooking -->
@@ -178,7 +184,7 @@
                 <h2 class="font-display text-xl md:text-2xl font-bold text-purple-600 px-4 flex justify-between items-center">
                     Cooking <span class="text-xs md:text-sm bg-purple-200 text-purple-800 px-3 py-1 rounded-full font-sans font-bold" id="cooking-count">0</span>
                 </h2>
-                <div id="cooking" class="kanban-column flex flex-col gap-4 p-5 md:p-6 glass rounded-[2.5rem] min-h-[400px] md:h-[60vh] overflow-y-auto border-purple-100 shadow-sm" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
+                <div id="cooking" class="kanban-column flex flex-col gap-4 p-5 md:p-6 glass rounded-[2.5rem] min-h-[400px] md:h-[60vh] overflow-y-auto border-purple-100 shadow-sm flex-shrink-0" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
             </div>
 
             <!-- Column: Done -->
@@ -186,7 +192,7 @@
                 <h2 class="font-display text-xl md:text-2xl font-bold text-green-600 px-4 flex justify-between items-center">
                     Done <span class="text-xs md:text-sm bg-green-200 text-green-800 px-3 py-1 rounded-full font-sans font-bold" id="done-count">0</span>
                 </h2>
-                <div id="done" class="kanban-column flex flex-col gap-4 p-5 md:p-6 glass rounded-[2.5rem] min-h-[400px] md:h-[60vh] overflow-y-auto border-green-100 shadow-sm" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
+                <div id="done" class="kanban-column flex flex-col gap-4 p-5 md:p-6 glass rounded-[2.5rem] min-h-[400px] md:h-[60vh] overflow-y-auto border-green-100 shadow-sm flex-shrink-0" ondrop="drop(event)" ondragover="allowDrop(event)" ondragleave="dragLeave(event)"></div>
             </div>
 
         </main>
@@ -194,6 +200,8 @@
 
     <script>
         let tasks = {{ data | tojson }};
+        const token = "{{ token }}";
+        const board_id = "{{ board_id }}";
 
         const columns = ['todo', 'cooking', 'done'];
         const scrollContainer = document.getElementById('kanbanScroll');
@@ -246,9 +254,23 @@
             });
         });
 
-        function saveTasks() {
-            localStorage.setItem('candilicious_tasks', JSON.stringify(tasks));
+        async function saveTasks() {
+            // Update UI first
             updateUI();
+            
+            // Sync with backend
+            try {
+                const response = await fetch(`/api/save/board/${token}/${board_id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tasks })
+                });
+                if (!response.ok) {
+                    console.error('Failed to sync board tasks with backend');
+                }
+            } catch (error) {
+                console.error('Error syncing board tasks:', error);
+            }
         }
 
         function updateUI() {
@@ -291,7 +313,7 @@
 
         function createTaskElement(task) {
             const div = document.createElement('div');
-            div.className = 'task-card bg-white rounded-3xl shadow-sm border border-pink-50 cursor-grab active:cursor-grabbing relative overflow-hidden group mb-1 hover:shadow-lg transition-all duration-300';
+            div.className = 'task-card flex-shrink-0 bg-white rounded-3xl shadow-sm border border-pink-50 cursor-grab active:cursor-grabbing relative overflow-hidden group mb-1 hover:shadow-lg transition-all duration-300';
             div.draggable = true;
             div.id = `task-${task.id}`;
             
@@ -301,7 +323,7 @@
                 <div class="absolute left-0 top-0 bottom-0 w-1.5 ${pColor}"></div>
                 <div class="p-4 md:p-5 pr-14 relative">
                     <div class="mb-4 md:mb-5">
-                        <p id="text-${task.id}" class="text-sm md:text-[16px] font-semibold text-gray-800 leading-snug break-words">${task.text}</p>
+                        <p id="text-${task.id}" class="text-sm md:text-[16px] font-semibold text-gray-800 leading-snug break-words whitespace-pre-wrap overflow-wrap-anywhere">${task.text}</p>
                         <textarea id="edit-input-${task.id}" class="hidden w-full px-3 py-2 border-2 border-pink-200 outline-none text-sm md:text-[16px] font-semibold bg-pink-50 rounded-xl resize-none" rows="2">${task.text}</textarea>
                     </div>
                     

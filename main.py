@@ -4,7 +4,7 @@ import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
 from discord.ext import commands
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 from asgiref.wsgi import WsgiToAsgi
 from library.logging import SystemLogger, CogLogger
 import uvicorn, config, traceback
@@ -44,6 +44,8 @@ try:
     )
     client = pymongo.MongoClient(host=MONGODB_URI, serverSelectionTimeoutMS=5000)
     db = client[config.dbName]
+    userCollection = db["users"]
+    boardsCollection = db["boards"]
     exceptionCollection = db["exception"]
     db.command("ping")
     sysLog.complete(
@@ -133,62 +135,89 @@ def home():
     return render_template("index.html", favicons=favicons)
 
 
-@app.route("/projects")
-def projects():
-    title = "Candilicious Projects"
-    projects = [
-        {
-            "id": "p1",
-            "name": "Brand Identity",
-            "description": "Visual assets and guidelines",
-            "image": "https://images.unsplash.com/photo-1558961363-fa8fdf82db35?w=500",
-            "boards": [
-                {
-                    "id": "b1",
-                    "name": "Logo Concepts",
-                    "image": "https://images.unsplash.com/photo-1626785774573-4b799315345d?w=500",
-                    "progress": {"todo": 5, "cooking": 2, "done": 3},
-                },
-                {
-                    "id": "b2",
-                    "name": "Social Media",
-                    "image": "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=500",
-                    "progress": {"todo": 10, "cooking": 5, "done": 15},
-                },
-            ],
-        },
-        {
-            "id": "p2",
-            "name": "Summer Release",
-            "description": "Campaign for the 2024 season",
-            "image": "https://images.unsplash.com/photo-1517354454710-20786307ecbc?w=500",
-            "boards": [
-                {
-                    "id": "b3",
-                    "name": "Sprint 1",
-                    "image": "https://images.unsplash.com/photo-1512314889357-e157c22f938d?w=500",
-                    "progress": {"todo": 2, "cooking": 1, "done": 0},
+@app.route("/projects/<token>")
+def projects(token):
+    user_data = userCollection.find_one({"webToken": token})
+    if not user_data:
+        return render_template("403.html"), 403
+    
+    title = f"{user_data.get('display_name', 'User')}'s Projects"
+    projects_list = user_data.get("projects", [])
+    
+    # Calculate progress for each board in projects
+    for project in projects_list:
+        for board in project.get("boards", []):
+            board_doc = boardsCollection.find_one({"_id": board["id"]})
+            if board_doc:
+                tasks = board_doc.get("tasks", [])
+                progress = {
+                    "todo": len([t for t in tasks if t["status"] == "todo"]),
+                    "cooking": len([t for t in tasks if t["status"] == "cooking"]),
+                    "done": len([t for t in tasks if t["status"] == "done"])
                 }
-            ],
-        },
-    ]
-    return render_template("projects.html", projects=projects, title=title)
+                board["progress"] = progress
+            else:
+                board["progress"] = {"todo": 0, "cooking": 0, "done": 0}
+
+    return render_template("projects.html", projects=projects_list, title=title, token=token)
 
 
-@app.route("/boards")
-def boards():
+@app.route("/boards/<token>/<board_id>")
+def boards(token, board_id):
+    user_data = userCollection.find_one({"webToken": token})
+    if not user_data:
+        return render_template("403.html"), 403
+    
+    board_doc = boardsCollection.find_one({"_id": board_id})
+    if not board_doc:
+        # Create empty board if it doesn't exist
+        board_doc = {"_id": board_id, "user_id": user_data["_id"], "tasks": []}
+        boardsCollection.insert_one(board_doc)
+    
+    # Find board name from user projects
     title = "Candilicious Board"
-    todos = [
-        {"id": "1", "text": "Mix the butter", "status": "todo", "priority": "green"},
-        {
-            "id": "2",
-            "text": "Baking cupcakes",
-            "status": "cooking",
-            "priority": "yellow",
-        },
-        {"id": "3", "text": "Sprinkled sugar", "status": "done", "priority": "red"},
-    ]
-    return render_template("boards.html", data=todos, title=title)
+    for p in user_data.get("projects", []):
+        for b in p.get("boards", []):
+            if b["id"] == board_id:
+                title = b["name"]
+                break
+
+    return render_template("boards.html", data=board_doc.get("tasks", []), title=title, token=token, board_id=board_id)
+
+
+@app.route("/api/save/projects/<token>", methods=["POST"])
+def save_projects(token):
+    user_data = userCollection.find_one({"webToken": token})
+    if not user_data:
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    new_projects = request.json.get("projects")
+    if new_projects is None:
+        return jsonify({"error": "Invalid data"}), 400
+    
+    userCollection.update_one(
+        {"_id": user_data["_id"]},
+        {"$set": {"projects": new_projects}}
+    )
+    return jsonify({"status": "success"})
+
+
+@app.route("/api/save/board/<token>/<board_id>", methods=["POST"])
+def save_board(token, board_id):
+    user_data = userCollection.find_one({"webToken": token})
+    if not user_data:
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    new_tasks = request.json.get("tasks")
+    if new_tasks is None:
+        return jsonify({"error": "Invalid data"}), 400
+    
+    boardsCollection.update_one(
+        {"_id": board_id},
+        {"$set": {"tasks": new_tasks, "user_id": user_data["_id"]}},
+        upsert=True
+    )
+    return jsonify({"status": "success"})
 
 
 @app.route("/tos")

@@ -1,4 +1,4 @@
-import discord, os, asyncio, pymongo, traceback, json, io, qrcode, random
+import discord, os, asyncio, pymongo, traceback, json, io, qrcode, random, secrets
 import config
 from dotenv import load_dotenv
 from datetime import (
@@ -21,6 +21,7 @@ load_dotenv()
 db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
 serverCollection = db["servers"]
 userCollection = db["users"]
+boardsCollection = db["boards"]
 exceptionCollection = db["exception"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
@@ -154,6 +155,37 @@ class Study(commands.Cog):
                 log.process(status_code=0, message="Join", details=f"Handling {member.name} entering the study zone: {after.channel.name}")
                 self.learnings.started(id=member_id)
 
+                # Project Access Logic
+                web_token = secrets.token_urlsafe(32)
+                userCollection.update_one(
+                    {"_id": member_id},
+                    {"$set": {"webToken": web_token}},
+                    upsert=True
+                )
+
+                domain = os.getenv("FLASK_DOMAIN")
+                if domain and not domain.endswith('/'):
+                    domain = domain + "/"
+                link = f"{domain}projects/{web_token}"
+
+                qr = qrcode.QRCode(box_size=10, border=8)
+                qr.add_data(link)
+                qr.make(fit=True)
+                img = qr.make_image(fill="black", back_color="white")
+                
+                dm_status = False
+                try:
+                    with io.BytesIO() as image_binary:
+                        img.save(image_binary, format="WEBP")
+                        image_binary.seek(0)
+                        await member.send(
+                            content=f"# **[__Productivity Access!__](<{link}>)**\nThis link is only valid while you are in the study voice channel.",
+                            file=discord.File(image_binary, "qrcode.png")
+                        )
+                    dm_status = True
+                except discord.Forbidden:
+                    dm_status = False
+
                 embed = discord.Embed(
                     title=f"🎉 {member.display_name} is back! 🎉",
                     description=f"Welcome back {member.mention}!\nStudy time resumes!",
@@ -161,10 +193,25 @@ class Study(commands.Cog):
                     color=0x3498DB,
                 )
                 embed.set_thumbnail(url=member.display_avatar.url)
+
+                if dm_status:
+                    embed.add_field(
+                        name="Project Access",
+                        value="Secret access link has been sent to your DMs! :ninja:",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="Project Access",
+                        value="❌ I couldn't DM you the access link. Please open your DMs and rejoin!",
+                        inline=False
+                    )
+
                 if self.exceptions.isNotInside(str(member_id)):
                     embed.add_field(
                         name="Request",
                         value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
+                        inline=False
                     )
                 await after.channel.send(content=member.mention, embed=embed, delete_after=20)
 
@@ -190,6 +237,12 @@ class Study(commands.Cog):
                 )
             ):
                 log.process(status_code=0, message="Leave", details=f"{member.name} is leaving the study zone: {before.channel.name}")
+
+                # Revoke Project Access
+                userCollection.update_one(
+                    {"_id": member_id},
+                    {"$unset": {"webToken": ""}}
+                )
 
                 if member_id in self.monitoringUsers:
                     log.process(status_code=75, message="Stopping", details=f"Stopping the activity monitor for {member.name} as they left.")
