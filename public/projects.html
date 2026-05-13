@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title> {{title}} </title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['"Coming Soon"', 'cursive'],
+                    },
+                    colors: {
+                        pink: {
+                            50: '#FDF2F8', 100: '#FCE7F3', 200: '#FBCFEA', 300: '#F9A8D4', 400: '#F472B6',
+                            500: '#EC4899', 600: '#DB2777', 700: '#BE185D', 800: '#9D174D', 900: '#831843',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon/favicon-16x16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="48x48" href="/assets/favicon/favicon-48x48.png">
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon/favicon-64x64.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon/apple-touch-icon.png">
+    
+    <style>
+        .nav-glass {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(15px);
+            -webkit-backdrop-filter: blur(15px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .glass-card {
+            background: #ffffff;
+            border: 1px solid #F3F4F6;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .glass-card:hover {
+            transform: translateY(-6px);
+            border-color: #F9A8D4;
+            box-shadow: 0 20px 25px -5px rgba(236, 72, 153, 0.1);
+        }
+
+        .fab-button {
+            box-shadow: 0 10px 25px -5px rgba(236, 72, 153, 0.5);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .fab-button:hover {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        .breadcrumb-item:not(:last-child)::after {
+            content: '›';
+            margin: 0 10px;
+            color: #F9A8D4;
+            font-size: 1.2rem;
+            line-height: 1;
+        }
+
+        body { background-color: #FEF9FB; }
+
+        .modal-bg {
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(6px);
+        }
+
+        .dropdown-menu {
+            display: none;
+            transform-origin: top right;
+        }
+        .dropdown-menu.show {
+            display: block;
+            animation: pop 0.2s ease-out;
+        }
+        @keyframes pop {
+            0% { transform: scale(0.95); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        .animate-pop {
+            animation: pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+    </style>
+</head>
+<body class="font-sans text-gray-800 min-h-screen pb-20">
+
+    <header class="nav-glass sticky top-0 z-[100] w-full">
+        <div class="max-w-7xl mx-auto px-4 md:px-8 h-16 md:h-20 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+
+                <img src="./assets/favicon/android-chrome-192x192.png"
+                    alt="Candilicious Icon"
+                    class="w-10 h-10 rounded-full shadow-md">
+                <h1
+                    class="font-display text-2xl md:text-3xl font-black text-pink-600"
+                    style="text-shadow: 1px 1px 2px rgba(236, 72, 153, 0.3);">
+                    Candilicious
+                </h1>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 md:px-8 pt-8">
+        <nav class="flex items-center text-sm font-semibold mb-10 overflow-x-auto whitespace-nowrap">
+            <button onclick="showProjectsView()" class="breadcrumb-item text-gray-400 hover:text-pink-500 transition-colors uppercase tracking-widest text-[10px]">Projects</button>
+            <span id="breadcrumb-current" class="text-pink-600 font-bold uppercase tracking-widest text-[10px]">Dashboard</span>
+        </nav>
+
+        <!-- View 1: List of Projects -->
+        <section id="project-view" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 md:gap-8"></section>
+
+        <!-- View 2: List of Boards within a Project -->
+        <section id="board-view" class="hidden">
+            <div class="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-4">
+                <div>
+                    <h2 id="active-project-title" class="text-3xl font-display font-bold text-gray-800">Project Name</h2>
+                    <p id="active-project-desc" class="text-gray-400 mt-2 text-sm max-w-xl">Project description goes here...</p>
+                </div>
+            </div>
+            <div id="board-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 md:gap-8"></div>
+        </section>
+    </main>
+
+    <!-- Floating Action Button (FAB) -->
+    <button id="main-fab" onclick="handleFabClick()" class="fab-button fixed bottom-8 right-8 z-[200] w-16 h-16 bg-pink-500 hover:bg-pink-600 text-white rounded-full flex items-center justify-center active:scale-95 transition-all">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 4v16m8-8H4" />
+        </svg>
+    </button>
+
+    <!-- Config/Settings Modal -->
+    <div id="configModal" class="fixed inset-0 z-[300] hidden flex items-center justify-center px-4">
+        <div class="modal-bg absolute inset-0" onclick="closeModal()"></div>
+        <div class="glass-card relative w-full max-w-md rounded-[2.5rem] p-6 md:p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div class="flex justify-between items-start mb-6">
+                <h2 id="modalTitle" class="text-xl font-bold text-gray-800 font-display">New Item</h2>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-pink-500 transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+            <div class="space-y-5">
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Title</label>
+                    <input type="text" id="nameInput" class="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 outline-none focus:border-pink-200 transition-colors font-semibold" placeholder="Enter name">
+                </div>
+                <div id="descContainer">
+                    <label class="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Description</label>
+                    <textarea id="descInput" class="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 outline-none focus:border-pink-200 transition-colors font-semibold resize-none" rows="2" placeholder="Brief summary..."></textarea>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Cover Image Link</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="imageInput" class="flex-1 bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 outline-none focus:border-pink-200 transition-colors font-semibold text-xs" placeholder="https://images.unsplash.com/...">
+                        <button onclick="previewImageFromInput()" class="w-12 h-12 flex items-center justify-center bg-gray-50 hover:bg-pink-50 text-gray-400 hover:text-pink-500 border border-gray-100 rounded-xl transition-all" title="Preview Image">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex gap-3 pt-4">
+                    <button onclick="handleSave()" class="flex-1 bg-pink-500 hover:bg-pink-600 text-white font-bold py-3 rounded-xl transition-all shadow-lg shadow-pink-100">Save Changes</button>
+                    <button onclick="closeModal()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-500 font-bold py-3 rounded-xl transition-all">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 1:1 Image Preview Modal -->
+    <div id="imagePreviewModal" class="fixed inset-0 z-[400] hidden flex items-center justify-center px-4">
+        <div class="modal-bg absolute inset-0" onclick="closePreview()"></div>
+        <div class="relative max-w-sm w-full animate-pop">
+            <button onclick="closePreview()" class="absolute -top-4 -right-4 w-10 h-10 bg-white shadow-xl rounded-full flex items-center justify-center text-gray-800 hover:text-pink-600 z-10 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+            <div class="aspect-square w-full rounded-[2.5rem] overflow-hidden bg-white shadow-2xl border-4 border-white">
+                <img id="previewModalImage" src="" alt="Preview" class="w-full h-full object-cover">
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // SINGLE DATA SOURCE STRUCTURE
+        // [{ id, name, description, image, boards: [{ id, name, image, progress: { todo, cooking, done } }] }]
+        let projects = {{ projects | tojson }};
+
+        let currentView = 'projects';
+        let activeProjectId = null;
+        let currentEditingId = null;
+
+        function saveToStorage() {
+            localStorage.setItem('candilicious_master_data', JSON.stringify(projects));
+            currentView === 'projects' ? renderProjects() : renderBoards(activeProjectId);
+        }
+
+        function showProjectsView() {
+            currentView = 'projects';
+            activeProjectId = null;
+            document.getElementById('project-view').classList.remove('hidden');
+            document.getElementById('board-view').classList.add('hidden');
+            document.getElementById('breadcrumb-current').innerText = "Dashboard";
+            renderProjects();
+        }
+
+        function showBoardsView(projectId) {
+            currentView = 'boards';
+            activeProjectId = projectId;
+            const project = projects.find(p => p.id === projectId);
+            if (!project) return;
+            
+            document.getElementById('project-view').classList.add('hidden');
+            document.getElementById('board-view').classList.remove('hidden');
+            document.getElementById('breadcrumb-current').innerText = project.name;
+            document.getElementById('active-project-title').innerText = project.name;
+            document.getElementById('active-project-desc').innerText = project.description || 'No description provided.';
+            
+            renderBoards(projectId);
+        }
+
+        function renderProjects() {
+            const container = document.getElementById('project-view');
+            container.innerHTML = '';
+            projects.forEach(p => {
+                const card = document.createElement('div');
+                card.className = "group cursor-pointer flex flex-col glass-card rounded-[2.5rem] overflow-hidden p-3 md:p-4";
+                card.onclick = () => showBoardsView(p.id);
+                card.innerHTML = `
+                    <div class="aspect-square w-full rounded-3xl overflow-hidden relative mb-4">
+                        <img src="${p.image}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        <button onclick="toggleMenu(event, 'p-${p.id}')" class="absolute top-3 right-3 w-8 h-8 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-white hover:text-pink-500 transition-all z-10">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="currentColor" viewBox="0 0 16 16"><path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>
+                        </button>
+                        <div id="menu-p-${p.id}" class="dropdown-menu absolute top-12 right-2 w-44 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-20">
+                            <button onclick="event.stopPropagation(); openModal('project', '${p.id}')" class="w-full px-4 py-3 text-left text-xs font-bold text-gray-600 hover:bg-gray-50 flex justify-between items-center transition-colors">
+                                Settings
+                                <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                            </button>
+                            <button onclick="event.stopPropagation(); deleteItem('project', '${p.id}')" class="w-full px-4 py-3 text-left text-xs font-bold text-red-500 hover:bg-red-50 flex justify-between items-center transition-colors">
+                                Delete
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2.001-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="px-1">
+                        <h3 class="font-bold text-gray-800 text-sm truncate">${p.name}</h3>
+                        <p class="text-[10px] text-gray-400 mt-1 line-clamp-1">${p.description || ''}</p>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function renderBoards(projectId) {
+            const container = document.getElementById('board-grid');
+            container.innerHTML = '';
+            const project = projects.find(p => p.id === projectId);
+            if (!project) return;
+            
+            project.boards.forEach(b => {
+                const todo = b.progress?.todo || 0;
+                const cooking = b.progress?.cooking || 0;
+                const done = b.progress?.done || 0;
+                const total = todo + cooking + done;
+                const progressValue = total === 0 ? 0 : Math.round((done / total) * 100);
+
+                const card = document.createElement('div');
+                card.className = "group cursor-pointer flex flex-col glass-card rounded-[2.5rem] overflow-hidden p-3 md:p-4";
+                card.onclick = () => window.location.href = 'boards.html?id=' + b.id;
+                
+                card.innerHTML = `
+                    <div class="aspect-square w-full rounded-3xl overflow-hidden relative mb-4">
+                        <img src="${b.image || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500'}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                        <div class="absolute inset-0 bg-black/10 group-hover:bg-black/20 transition-all"></div>
+                        
+                        <button onclick="toggleMenu(event, 'b-${b.id}')" class="absolute top-3 right-3 w-8 h-8 bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-white hover:text-pink-500 transition-all z-10">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="currentColor" viewBox="0 0 16 16"><path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>
+                        </button>
+                        
+                        <div id="menu-b-${b.id}" class="dropdown-menu absolute top-12 right-2 w-44 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-20">
+                            <button onclick="event.stopPropagation(); openModal('board', '${b.id}')" class="w-full px-4 py-3 text-left text-xs font-bold text-gray-600 hover:bg-gray-50 flex justify-between items-center transition-colors">
+                                Settings
+                                <svg class="w-4 h-4 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                            </button>
+                            <button onclick="event.stopPropagation(); deleteItem('board', '${b.id}')" class="w-full px-4 py-3 text-left text-xs font-bold text-red-500 hover:bg-red-50 flex justify-between items-center transition-colors">
+                                Delete
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2.001-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            </button>
+                        </div>
+                        
+                        <div class="absolute bottom-3 left-3 px-3 py-1 bg-white/80 backdrop-blur-md rounded-full text-[10px] font-black text-pink-600">
+                            ${progressValue}%
+                        </div>
+                    </div>
+                    
+                    <div class="px-1">
+                        <h3 class="font-bold text-gray-800 text-sm truncate mb-3">${b.name}</h3>
+                        <div class="h-1 w-full bg-gray-100 rounded-full overflow-hidden mb-4">
+                            <div class="h-full bg-pink-500 transition-all duration-500" style="width: ${progressValue}%"></div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div class="bg-gray-50 rounded-xl p-1.5 flex flex-col items-center">
+                                <span class="text-[8px] font-bold text-gray-400 uppercase tracking-tighter">Todo</span>
+                                <span class="text-[10px] font-black text-gray-700">${todo}</span>
+                            </div>
+                            <div class="bg-purple-50 rounded-xl p-1.5 flex flex-col items-center">
+                                <span class="text-[8px] font-bold text-purple-400 uppercase tracking-tighter">Progress</span>
+                                <span class="text-[10px] font-black text-purple-700">${cooking}</span>
+                            </div>
+                            <div class="bg-green-50 rounded-xl p-1.5 flex flex-col items-center">
+                                <span class="text-[8px] font-bold text-green-400 uppercase tracking-tighter">Done</span>
+                                <span class="text-[10px] font-black text-green-700">${done}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function previewImageFromInput() {
+            const url = document.getElementById('imageInput').value;
+            if (!url) return;
+            document.getElementById('previewModalImage').src = url;
+            document.getElementById('imagePreviewModal').classList.remove('hidden');
+        }
+
+        function closePreview() {
+            document.getElementById('imagePreviewModal').classList.add('hidden');
+        }
+
+        function handleFabClick() {
+            openModal(currentView === 'projects' ? 'project' : 'board');
+        }
+
+        function openModal(type, id = null) {
+            currentEditingId = id;
+            const modal = document.getElementById('configModal');
+            document.getElementById('modalTitle').innerText = (id ? "Settings: " : "New ") + (type === 'project' ? "Project" : "Board");
+            
+            document.getElementById('descContainer').style.display = type === 'project' ? 'block' : 'none';
+
+            if (type === 'project') {
+                const p = id ? projects.find(x => x.id === id) : { name: '', description: '', image: '' };
+                document.getElementById('nameInput').value = p.name;
+                document.getElementById('descInput').value = p.description;
+                document.getElementById('imageInput').value = p.image;
+            } else {
+                const project = projects.find(p => p.id === activeProjectId);
+                const b = id ? project.boards.find(x => x.id === id) : { name: '', image: '' };
+                document.getElementById('nameInput').value = b.name;
+                document.getElementById('imageInput').value = b.image;
+            }
+
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() { 
+            document.getElementById('configModal').classList.add('hidden'); 
+            currentEditingId = null;
+        }
+
+        function handleSave() {
+            const name = document.getElementById('nameInput').value;
+            const image = document.getElementById('imageInput').value || './assets/candiliciousBoard.webp';
+            if (!name) return;
+
+            if (currentView === 'projects') {
+                const description = document.getElementById('descInput').value;
+                if (currentEditingId) {
+                    const p = projects.find(x => x.id === currentEditingId);
+                    p.name = name; p.description = description; p.image = image;
+                } else {
+                    projects.push({ id: 'p' + Date.now(), name, description, image, boards: [] });
+                }
+            } else {
+                const project = projects.find(p => p.id === activeProjectId);
+                if (!project) return;
+                
+                if (currentEditingId) {
+                    const b = project.boards.find(x => x.id === currentEditingId);
+                    b.name = name; b.image = image;
+                } else {
+                    project.boards.push({ 
+                        id: 'b' + Date.now(), 
+                        name, 
+                        image, 
+                        progress: { todo: 0, cooking: 0, done: 0 } 
+                    });
+                }
+            }
+            saveToStorage(); closeModal();
+        }
+
+        function deleteItem(type, id) {
+            if (type === 'project') {
+                projects = projects.filter(x => x.id !== id);
+            } else {
+                const project = projects.find(p => p.id === activeProjectId);
+                if (project) {
+                    project.boards = project.boards.filter(x => x.id !== id);
+                }
+            }
+            saveToStorage();
+        }
+
+        function toggleMenu(e, menuId) {
+            e.stopPropagation();
+            const menu = document.getElementById(`menu-${menuId}`);
+            const isShown = menu.classList.contains('show');
+            document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show'));
+            if(!isShown) menu.classList.add('show');
+        }
+
+        window.addEventListener('click', () => { document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show')); });
+        window.onload = renderProjects;
+    </script>
+</body>
+</html>

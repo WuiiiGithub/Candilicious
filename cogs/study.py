@@ -136,7 +136,6 @@ class Study(commands.Cog):
                 return
 
             study_channel_id = str(study_data["channel"])
-            print(self.exceptions.data)
 
             # Case of joining
             if (
