@@ -10,8 +10,16 @@ from library.logging import SystemLogger, CogLogger
 import uvicorn, config, traceback
 from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure, OperationFailure
 
+argLen = len(sys.argv)
+
+# Flags 
+## Setup Flags
+isVpnSetup = False
+
 # setups
-import setup_vpn
+if argLen > 1 and sys.argv[1] == 'vpn':
+    isVpnSetup = True
+    import setup_vpn
 
 filename = __name__.title()
 sysLog = SystemLogger(filename=filename)
@@ -184,6 +192,8 @@ try:
 except KeyboardInterrupt:
     print('...',"="*50, sep='\n')
     ngrok.kill()
+    if isVpnSetup:
+        setup_vpn.shut_vpn()
     stopLog = CogLogger(filename=filename)
     stopLog.log_important("Shutdown", status_code=0, details="The application has been stopped by KeyboardInterrupt.")
     print("-"*50, sep='\n')
