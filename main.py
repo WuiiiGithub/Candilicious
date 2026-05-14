@@ -134,6 +134,30 @@ def home():
     favicons = os.listdir(os.path.join(app.static_folder, "favicon"))
     return render_template("index.html", favicons=favicons)
 
+@app.route("/servers")
+def servers():
+    guilds_list = bot.guilds
+    for guild in guilds_list:
+        try:
+            print(guild.description)
+            print(guild.id)
+            print(guild.icon.url)
+            print(guild.banner)
+            print(guild.created_at) # The exact timestamp the server was born. You can format this using Discord's timestamp markdown
+            print(guild.features)
+            
+            print(guild.owner.display_avatar.url)
+            print(guild.owner.id)
+            print(guild.owner.display_name)
+            print(guild.owner.name)
+            print(guild.owner.banner)
+            print(guild.owner.created_at)
+            print(guild.name)
+            print(guild.member_count)
+        except Exception as e:
+            print(e)
+    
+    return render_template("servers.html", guilds=guilds_list)
 
 @app.route("/projects/<token>")
 def projects(token):

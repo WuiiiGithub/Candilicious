@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Candilicious Reach</title>
+    
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon/favicon-32x32.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Coming+Soon&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['"Coming Soon"', 'cursive'],
+                    },
+                    colors: {
+                        pink: {
+                            50: '#FDF2F8', 100: '#FCE7F3', 200: '#FBCFEA',
+                            300: '#F9A8D4', 400: '#F472B6', 500: '#EC4899',
+                            600: '#DB2777', 700: '#BE185D', 800: '#9D174D', 900: '#831843',
+                        }
+                    },
+                    animation: {
+                        'float-slow': 'float-slow 8s ease-in-out infinite',
+                        'slide-up': 'slide-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+                    },
+                    keyframes: {
+                        'float-slow': {
+                            '0%, 100%': { transform: 'translateY(0) scale(1)' },
+                            '50%': { transform: 'translateY(-20px) scale(1.05)' },
+                        },
+                        'slide-up': {
+                            '0%': { transform: 'translateY(30px)', opacity: '0' },
+                            '100%': { transform: 'translateY(0)', opacity: '1' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { 
+            background-color: #FDF2F8;
+            color: #1e293b;
+            overflow-x: hidden;
+        }
+
+        .bubble {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(60px);
+            z-index: -1;
+            opacity: 0.5;
+        }
+
+        .gallery-card {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(251, 207, 234, 0.5);
+            transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .gallery-card:hover {
+            background: #ffffff;
+            transform: translateY(-8px);
+            border-color: #EC4899;
+            box-shadow: 0 25px 50px -12px rgba(236, 72, 153, 0.2);
+        }
+
+        .icon-frame {
+            transition: all 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .glass-modal {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 1);
+        }
+
+        .owner-header-bg {
+            background: linear-gradient(135deg, #F9A8D4 0%, #EC4899 100%);
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #FDF2F8; }
+        ::-webkit-scrollbar-thumb { background: #FBCFEA; border-radius: 10px; }
+
+        @media (max-width: 640px) {
+            .gallery-card { border-radius: 2rem; padding: 1.5rem; }
+        }
+    </style>
+</head>
+<body class="font-sans antialiased min-h-screen">
+
+    <div class="bubble w-96 h-96 bg-pink-200 top-[-10%] left-[-5%] animate-float-slow"></div>
+    <div class="bubble w-80 h-80 bg-purple-200 bottom-[5%] right-[-5%] animate-float-slow" style="animation-delay: -2s;"></div>
+
+    <header class="bg-white/70 backdrop-blur-md border-b border-pink-100 sticky top-0 z-[100] w-full">
+        <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+            <a href="/" class="flex items-center space-x-3 group">
+                <div class="p-1 bg-pink-100 rounded-full group-hover:rotate-12 transition-transform duration-300">
+                    <img src="./assets/favicon/android-chrome-192x192.png" alt="Icon" class="w-10 h-10 rounded-full shadow-md">
+                </div>
+                <h1 class="font-display text-2xl font-black text-pink-600 tracking-tight">Candilicious</h1>
+            </a>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-12 md:py-16">
+        <div class="mb-12 md:mb-16 text-center animate-slide-up">
+            <h2 class="text-4xl md:text-6xl font-display font-black text-slate-800 mb-4 tracking-tight">Servers Reach</h2>
+            <p class="text-slate-500 text-base md:text-lg max-w-lg mx-auto font-medium px-4">Explore the vibrant guilds thriving in our community network.</p>
+        </div>
+
+        <!-- Gallery Grid -->
+        <div id="server-gallery" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8 px-2 md:px-0">
+            <!-- JINJA DATA INGESTION -->
+            {% for guild in guilds|sort(attribute='member_count', reverse=True) %}
+            <div class="gallery-card rounded-[2.5rem] p-6 md:p-8 flex flex-col items-center text-center group cursor-pointer animate-slide-up" 
+                 style="animation-delay: {{ loop.index0 * 0.1 }}s"
+                 onclick="openModal({
+                    name: '{{ guild.name|escape }}',
+                    id: '{{ guild.id }}',
+                    members: '{{ guild.member_count }}',
+                    icon: '{{ guild.icon.url if guild.icon else "" }}',
+                    owner: {
+                        display_name: '{{ guild.owner.display_name|escape if guild.owner else "Unknown" }}',
+                        username: '{{ guild.owner.name|escape if guild.owner else "Unknown" }}',
+                        id: '{{ guild.owner.id if guild.owner else "0" }}',
+                        avatar: '{{ guild.owner.display_avatar.url if guild.owner and guild.owner.display_avatar else "" }}',
+                        created_at: '{{ guild.owner.created_at.strftime('%B %d, %Y') if guild.owner else "N/A" }}'
+                    },
+                    created: '{{ guild.created_at.strftime('%B %d, %Y') }}'
+                 })">
+                
+                <div class="relative mb-6">
+                    <div class="icon-frame w-24 h-24 md:w-28 md:h-28 rounded-[2.2rem] overflow-hidden border-4 border-white shadow-xl relative bg-pink-50">
+                        {% if guild.icon %}
+                            <img src="{{ guild.icon.url }}" alt="" class="w-full h-full object-cover">
+                        {% else %}
+                            <div class="w-full h-full flex items-center justify-center text-pink-400 font-black text-3xl">{{ guild.name[0] }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <h3 class="font-black text-lg md:text-xl text-slate-800 mb-2 truncate w-full px-2">{{ guild.name }}</h3>
+                <p class="text-[10px] text-pink-500 font-black uppercase tracking-widest mb-6 px-4 py-1.5 bg-pink-100/50 rounded-full inline-block">{{ guild.member_count }} Members</p>
+                
+                <div class="w-full pt-6 border-t border-pink-100/50 flex items-center justify-between mt-auto">
+                    <div class="text-left">
+                        <p class="text-[9px] font-black text-slate-400 tracking-wider">Server ID</p>
+                        <p class="text-xs font-mono font-bold text-pink-500">{{ guild.id }}</p>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </main>
+
+    <!-- IMMERSIVE OVERLAY MODAL -->
+    <div id="detailModal" class="fixed inset-0 z-[200] hidden flex items-center justify-center px-4 py-6 md:p-6 overflow-y-auto">
+        <div class="fixed inset-0 bg-pink-900/10 backdrop-blur-md" onclick="closeModal()"></div>
+        
+        <div class="glass-modal w-full max-w-lg rounded-[2.5rem] md:rounded-[3.5rem] overflow-hidden relative z-10 shadow-[0_32px_80px_-12px_rgba(236,72,153,0.3)] transition-all scale-95 opacity-0 duration-500 my-auto" id="modalContent">
+            
+            <button onclick="closeModal()" class="absolute top-6 right-6 md:top-10 md:right-10 z-30 bg-white/80 hover:bg-white text-pink-600 p-2 md:p-3 rounded-2xl transition-all shadow-sm">
+                <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+
+            <div class="owner-header-bg h-32 md:h-44 relative"></div>
+
+            <div class="px-6 md:px-10 pb-8 md:pb-12 -mt-16 md:-mt-20 relative z-20">
+                <div id="modalIconContainer" class="w-28 h-28 md:w-36 md:h-36 rounded-[2rem] md:rounded-[3rem] overflow-hidden ring-[10px] md:ring-[14px] ring-white shadow-2xl mb-6 md:mb-8 bg-pink-50">
+                    <!-- Injected -->
+                </div>
+
+                <div class="mb-8">
+                    <h2 id="modalName" class="text-3xl md:text-4xl font-black text-slate-800 mb-2 tracking-tight">Server Name</h2>
+                    <p id="modalID" class="text-[10px] md:text-[11px] text-pink-500 font-bold uppercase tracking-[0.2em] bg-pink-50 px-3 py-1 rounded-lg inline-block">ID: 00000000</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 md:gap-5 mb-8 md:mb-12">
+                    <div class="bg-pink-50/70 rounded-2xl md:rounded-3xl p-4 md:p-6 border border-pink-100">
+                        <p class="text-[9px] md:text-[10px] uppercase font-black text-pink-400 tracking-wider mb-1 text-center">Community</p>
+                        <p id="modalMembers" class="text-xl md:text-2xl font-black text-slate-800 text-center">0</p>
+                    </div>
+                    <div class="bg-pink-50/70 rounded-2xl md:rounded-3xl p-4 md:p-6 border border-pink-100">
+                        <p class="text-[9px] md:text-[10px] uppercase font-black text-pink-400 tracking-wider mb-1 text-center">Established</p>
+                        <p id="modalCreated" class="text-xs md:text-sm font-black text-slate-800 text-center truncate">Date</p>
+                    </div>
+                </div>
+
+                <!-- Owner Section -->
+                <div class="relative p-6 md:p-8 rounded-[2rem] md:rounded-[3rem] bg-white border border-pink-100 shadow-xl">
+                    <div class="absolute top-0 right-0 p-4 md:p-6">
+                        <span class="bg-pink-500 text-white text-[8px] md:text-[9px] font-black px-3 py-1 md:px-4 md:py-1.5 rounded-full uppercase tracking-widest shadow-md">Ownership</span>
+                    </div>
+                    <div class="flex items-center space-x-4 md:space-x-6">
+                        <div id="ownerAvatarContainer" class="w-16 h-16 md:w-20 md:h-20 rounded-[1.2rem] md:rounded-[1.8rem] ring-4 ring-pink-50 overflow-hidden bg-slate-50 shadow-inner shrink-0">
+                            <!-- Avatar -->
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p id="ownerDisplayName" class="text-xl md:text-2xl font-black text-slate-800 leading-tight truncate">Name</p>
+                            <p id="ownerUsername" class="text-xs md:text-sm text-pink-500 font-bold mt-1 truncate">@username</p>
+                        </div>
+                    </div>
+                    <div class="mt-6 md:mt-8 pt-6 border-t border-slate-50 flex items-center justify-between">
+                        <div class="flex flex-col min-w-0 pr-2">
+                            <span class="text-[9px] md:text-[10px] uppercase font-black text-slate-300 tracking-widest">Master ID</span>
+                            <span id="ownerID" class="text-[10px] md:text-xs font-mono font-bold text-slate-400 truncate">0000000</span>
+                        </div>
+                        <div class="text-right flex flex-col shrink-0">
+                            <span class="text-[9px] md:text-[10px] uppercase font-black text-slate-300 tracking-widest">Joined</span>
+                            <span id="ownerCreated" class="text-[10px] md:text-xs font-bold text-slate-600">Month Day, Year</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const modal = document.getElementById('detailModal');
+        const modalContent = document.getElementById('modalContent');
+
+        function openModal(data) {
+            document.getElementById('modalName').textContent = data.name;
+            document.getElementById('modalID').textContent = `ID: ${data.id}`;
+            document.getElementById('modalMembers').textContent = (data.members || 0).toLocaleString();
+            document.getElementById('modalCreated').textContent = data.created || 'N/A';
+            
+            const iconContainer = document.getElementById('modalIconContainer');
+            iconContainer.innerHTML = data.icon 
+                ? `<img src="${data.icon}" class="w-full h-full object-cover">`
+                : `<div class="w-full h-full flex items-center justify-center text-4xl font-black text-pink-500 bg-pink-100">${data.name[0]}</div>`;
+
+            const owner = data.owner || {};
+            document.getElementById('ownerDisplayName').textContent = owner.display_name || 'Anonymous';
+            document.getElementById('ownerUsername').textContent = `@${owner.username || 'unknown'}`;
+            document.getElementById('ownerID').textContent = owner.id || '0';
+            document.getElementById('ownerCreated').textContent = owner.created_at || 'N/A';
+            
+            const avatarContainer = document.getElementById('ownerAvatarContainer');
+            avatarContainer.innerHTML = owner.avatar
+                ? `<img src="${owner.avatar}" class="w-full h-full object-cover">`
+                : `<div class="w-full h-full flex items-center justify-center bg-slate-100 text-pink-300 text-2xl font-bold">${(owner.display_name || '?')[0]}</div>`;
+
+            modal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            setTimeout(() => {
+                modalContent.classList.replace('scale-95', 'scale-100');
+                modalContent.classList.replace('opacity-0', 'opacity-100');
+            }, 10);
+        }
+
+        function closeModal() {
+            modalContent.classList.replace('scale-100', 'scale-95');
+            modalContent.classList.replace('opacity-100', 'opacity-0');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+                document.body.style.overflow = '';
+            }, 500);
+        }
+    </script>
+
+</body>
+</html>
