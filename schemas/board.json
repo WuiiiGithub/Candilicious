@@ -1,0 +1,12 @@
+{
+    "_id": "<str:board_id>",
+    "user_id": "<str:user_id>",
+    "tasks": [
+        {
+            "id": "<str:task_id>",
+            "text": "<str:task_content>",
+            "status": "<str:todo|cooking|done>",
+            "priority": "<str:red|yellow|green>"
+        }
+    ]
+}

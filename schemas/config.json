@@ -1,10 +1,9 @@
 {
-    "reminders" : {
-        "gifs": [
-            "<str:reminder_gifs"
-        ],
-        "texts": [
-            "<str:reminder_texts"
-        ]
-    }
+    "_id": "reminders",
+    "gifs": [
+        "<str:reminder_gif_url>"
+    ],
+    "texts": [
+        "<str:reminder_text>"
+    ]
 }

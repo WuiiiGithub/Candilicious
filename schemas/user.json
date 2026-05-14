@@ -1,0 +1,28 @@
+{
+    "_id": "<str:user_id>",
+    "name": "<str:username>",
+    "display_name": "<str:display_name>",
+    "pfp": "<str:avatar_url>",
+    "webToken": "<str:web_token>",
+    "projects": [
+        {
+            "name": "<str:project_name>",
+            "boards": [
+                {
+                    "id": "<str:board_id>",
+                    "name": "<str:board_name>",
+                    "progress": {
+                        "todo": "<int:how many started>",
+                        "cooking": "<int:how many in progress>",
+                        "done": "<int:how many completed in studying>"
+                    }
+                }
+            ]
+        }
+    ],
+    "servers": {
+        "<str:server_id>": {
+            "time": "<float:total_study_time_seconds>"
+        }
+    }
+}

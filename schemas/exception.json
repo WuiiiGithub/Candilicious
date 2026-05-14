@@ -1,0 +1,5 @@
+{
+    "_id": "<ObjectId:exception_id>",
+    "user_id": "<str:user_id>",
+    "expiresAt": "<datetime:expiration_time>"
+}

@@ -1,10 +1,12 @@
 {
-    "_id": "<str:server_id",
-    "channel": "<study_channel_id>",
+    "_id": "<str:server_id>",
+    "channel": "<str:study_channel_id>",
+    "drop": "<int:gold_drop_quantity>",
+    "interval": "<int:drop_interval_minutes>",
     "reminders": {
-        "text": "<str:reminder_text>",
-        "time": "<datetime:interval_time>",
-        "channel": "<discord.Channel:reminder_channel>",
-        "last_sent": "<datetime:reminder_sent_last_time"
+        "text": "<str:footer_text>",
+        "time": "<int:reminder_interval_minutes>",
+        "channel": "<str:reminder_channel_id>",
+        "last_sent": "<datetime:last_reminder_sent_time>"
     }
 }
