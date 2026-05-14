@@ -138,7 +138,6 @@ class CommandLogger:
     def flush(self):
         self._logs = []
 
-
 class TaskLogger:
     def __init__(self, filename: str, task_name: str):
         self.filename = filename.replace('_', ' ').title()
@@ -164,6 +163,14 @@ class TaskLogger:
         self._add_step(status_code, f"After: {message}", details)
 
     def step(self, status_code: int, message: str, details: str = None):
+        self._add_step(status_code, message, details)
+
+    def process(self, status_code: int, message: str, details: str = None):
+        self._add_step(status_code, message, details)
+
+    def send(self):
+
+    def process(self, status_code: int, message: str, details: str = None):
         self._add_step(status_code, message, details)
 
     def send(self):
