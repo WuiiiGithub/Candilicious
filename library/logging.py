@@ -168,8 +168,6 @@ class TaskLogger:
     def process(self, status_code: int, message: str, details: str = None):
         self._add_step(status_code, message, details)
 
-    def send(self):
-
     def process(self, status_code: int, message: str, details: str = None):
         self._add_step(status_code, message, details)
 
