@@ -18,7 +18,7 @@ cogLog = CogLogger(filename=filename)
 
 load_dotenv()
 
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
+db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious"]
 serverCollection = db["servers"]
 userCollection = db["users"]
 boardsCollection = db["boards"]

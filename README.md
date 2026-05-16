@@ -33,7 +33,7 @@ After installing the docker, you can go into the docker shell and just run the f
 
 ### Run
 ```bash
-docker run --env-file .env -p 10000:10000 wuiiidocker/candilicious
+docker run --env-file .env -p 10301:10301 wuiiidocker/candilicious
 ```
 Here `.env` is your environment secret file. Please keep that in the same folder from where this command is being run.
 
@@ -56,10 +56,10 @@ Here `.env` is your environment secret file. Please keep that in the same folder
      - Create a `.env` file in the root directory.  
      - Add the following variables:  
          ```env  
-         DB_NAME=Candilicious[Beta]  
+         DB_NAME=Candilicious  
          TOKEN=YOUR_DISCORD_BOT_TOKEN  
          MONGODB_URI=YOUR_MONGODB_CONNECTION_STRING  
-         FLASK_DOMAIN=http://localhost:10000  
+         FLASK_DOMAIN=http://localhost:10301  
          SECRET_KEY=YOUR_SECRET_KEY  
          ```  
 

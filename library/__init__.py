@@ -4,7 +4,7 @@ UTC = timezone.utc
 import pymongo, os, discord
 from asyncio import tasks, sleep
 
-db = pymongo.MongoClient(os.getenv("MONGODB_URI"))["Candilicious[Beta]"]
+db = pymongo.MongoClient(os.getenv("MONGODB_URI"))["Candilicious"]
 
 serverCollection = db["servers"]
 userCollection = db["users"]

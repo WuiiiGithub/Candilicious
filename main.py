@@ -1,5 +1,5 @@
 import os, sys  # , cloud_setup
-from pyngrok import ngrok
+from pyngrok import ngrok, conf
 import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
@@ -7,7 +7,7 @@ from discord.ext import commands
 from flask import Flask, render_template, request, jsonify
 from asgiref.wsgi import WsgiToAsgi
 from library.logging import SystemLogger, CogLogger
-import uvicorn, config, traceback
+import uvicorn, config
 from pymongo.errors import (
     ServerSelectionTimeoutError,
     ConnectionFailure,
@@ -30,10 +30,11 @@ sysLog = SystemLogger(filename=filename)
 
 load_dotenv()
 MONGODB_URI = os.getenv("MONGODB_URI")
-NGROK_AUTH_TOKEN = os.getenv("NGROK_AUTH_TOKEN")
+NGROK_AUTH_TOKEN = str(os.getenv("NGROK_AUTH_TOKEN"))
 APPLICATION_ID = os.getenv("APPLICATION_ID")
 
-public_url = ngrok.connect(10000).public_url
+ngrok.set_auth_token(NGROK_AUTH_TOKEN)
+public_url = ngrok.connect(config.port).public_url
 flask_url = os.getenv("FLASK_DOMAIN")
 if flask_url == None or flask_url == "" or "://localhost:" in str(flask_url):
     os.environ["FLASK_DOMAIN"] = public_url
