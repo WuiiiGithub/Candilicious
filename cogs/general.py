@@ -12,9 +12,32 @@ db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
 selfCollection = db["Self"]
 
 class General(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
         cogLog.log_cog(action="starting", status_code=0, details="General Cog has been initialized and is monitoring for public commands.")
+
+    @app_commands.command(name="ping", description="Tells whats the ping")
+    async def ping(self, inter: discord.Interaction):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            latency = self.bot.latency
+            await inter.response.send_message(
+                embed=discord.Embed(
+                    name="Pong :party:",
+                    description=f"Latency is {latency}",
+                    color=config.msgColor
+                ),
+                ephemeral=True
+            )
+            cmdLog.process(
+                status_code=100,
+                name="Latency Checked",
+                details=f"The latency of the bot is {latency}"
+            )
+        except Exception as e:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
 
     @commands.Cog.listener()
     async def on_ready(self):
