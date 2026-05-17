@@ -23,8 +23,8 @@ class General(commands.Cog):
             latency = self.bot.latency
             await inter.response.send_message(
                 embed=discord.Embed(
-                    name="Pong :party:",
-                    description=f"Latency is {latency}",
+                    title="Pong 🎉",
+                    description=f"Latency is `{latency*1000:.2f}`",
                     color=config.msgColor
                 ),
                 ephemeral=True
