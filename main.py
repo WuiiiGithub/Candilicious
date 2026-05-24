@@ -1,5 +1,4 @@
 import os, sys  # , cloud_setup
-from pyngrok import ngrok, conf
 import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
@@ -19,26 +18,36 @@ argLen = len(sys.argv)
 # Flags
 ## Setup Flags
 isVpnSetup = False
+isNgrokSetup = False
 
 # setups
-if argLen > 1 and sys.argv[1] == "vpn":
-    isVpnSetup = True
-    import setup_vpn
+if argLen > 1:
+    cmdLineArgs = sys.args[1:]
+    if "vpn" in cmdLineArgs:
+        isVpnSetup = True
+        import setup_vpn
+    if "ngrok" in cmdLineArgs:
+        isNgrokSetup = True
+
 
 filename = __name__.title()
 sysLog = SystemLogger(filename=filename)
 
 load_dotenv()
 MONGODB_URI = os.getenv("MONGODB_URI")
-NGROK_AUTH_TOKEN = str(os.getenv("NGROK_AUTH_TOKEN"))
 APPLICATION_ID = os.getenv("APPLICATION_ID")
 
-ngrok.set_auth_token(NGROK_AUTH_TOKEN)
-public_url = ngrok.connect(config.port).public_url
-flask_url = os.getenv("FLASK_DOMAIN")
-if flask_url == None or flask_url == "" or "://localhost:" in str(flask_url):
-    os.environ["FLASK_DOMAIN"] = public_url
-    flask_url = public_url
+if isNgrokSetup:
+    from pyngrok import ngrok, conf
+    
+    NGROK_AUTH_TOKEN = str(os.getenv("NGROK_AUTH_TOKEN"))
+    ngrok.set_auth_token(NGROK_AUTH_TOKEN)
+    public_url = ngrok.connect(config.port).public_url
+    flask_url = os.getenv("FLASK_DOMAIN")
+    if flask_url == None or flask_url == "" or "://localhost:" in str(flask_url):
+        os.environ["FLASK_DOMAIN"] = public_url
+        flask_url = public_url
+
 try:
     sysLog.process(
         status_code=0, message="Waiting", details="Initiating connection to MongoDB..."

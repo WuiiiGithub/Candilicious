@@ -249,7 +249,7 @@ class Reminders(commands.Cog):
                         embed.set_image(url=random.choice(self.gifs))
 
                         await channel.send(
-                            content="YOOO WAKEUP @everyone",
+                            content="YOOO WAKEUP everyone",
                             embed=embed,
                             delete_after=3600,
                         )
