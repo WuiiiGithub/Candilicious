@@ -247,9 +247,9 @@ class Reminders(commands.Cog):
                         )
                         embed.set_footer(text=data.get("text", "Focus!"))
                         embed.set_image(url=random.choice(self.gifs))
-
+                        selected_member = random.choice(channel.guild.members)
                         await channel.send(
-                            content="YOOO WAKEUP everyone",
+                            content=f"**YOOO WAKEUP {selected_member.mention}**",
                             embed=embed,
                             delete_after=3600,
                         )

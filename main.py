@@ -1,4 +1,4 @@
-import os, sys  # , cloud_setup
+import os, sys, datetime, json # , cloud_setup
 import discord, asyncio, threading, pymongo, speedtest, bson
 from dotenv import load_dotenv
 from library.session import TokenManager
@@ -22,7 +22,7 @@ isNgrokSetup = False
 
 # setups
 if argLen > 1:
-    cmdLineArgs = sys.args[1:]
+    cmdLineArgs = sys.argv[1:]
     if "vpn" in cmdLineArgs:
         isVpnSetup = True
         import setup_vpn
@@ -57,6 +57,7 @@ try:
     userCollection = db["users"]
     boardsCollection = db["boards"]
     exceptionCollection = db["exception"]
+    boardsLogCollection = db["boards.log"]
     db.command("ping")
     sysLog.complete(
         status_code=100,
@@ -126,6 +127,7 @@ async def on_ready():
 
 # My Vars
 bot.userNetworkConnection = {}
+log_lock = threading.Lock()
 
 app = Flask(__name__, template_folder="public", static_folder="./public/assets")
 
@@ -147,26 +149,6 @@ def home():
 @app.route("/servers")
 def servers():
     guilds_list = bot.guilds
-    for guild in guilds_list:
-        try:
-            print(guild.description)
-            print(guild.id)
-            print(guild.icon.url)
-            print(guild.banner)
-            print(guild.created_at) # The exact timestamp the server was born. You can format this using Discord's timestamp markdown
-            print(guild.features)
-            
-            print(guild.owner.display_avatar.url)
-            print(guild.owner.id)
-            print(guild.owner.display_name)
-            print(guild.owner.name)
-            print(guild.owner.banner)
-            print(guild.owner.created_at)
-            print(guild.name)
-            print(guild.member_count)
-        except Exception as e:
-            print(e)
-    
     return render_template("servers.html", guilds=guilds_list)
 
 @app.route("/projects/<token>")
@@ -251,6 +233,92 @@ def save_board(token, board_id):
         {"$set": {"tasks": new_tasks, "user_id": user_data["_id"]}},
         upsert=True
     )
+    return jsonify({"status": "success"})
+
+@app.route("/api/log/board/<token>/<board_id>", methods=["POST"])
+def log_board_activity(token, board_id):
+    user_data = userCollection.find_one({"webToken": token})
+    if not user_data:
+        print(f"[ActivityLog] Auth failed. Token not found in 'users' collection: {token}")
+        return jsonify({"error": "Unauthorized"}), 403
+
+    # Handle both application/json and text/plain (common with sendBeacon)
+    if request.is_json:
+        logs = request.json.get("logs")
+    else:
+        try:
+            data = json.loads(request.data.decode('utf-8'))
+            logs = data.get("logs")
+        except Exception:
+            return jsonify({"error": "Invalid payload format"}), 400
+
+    if not logs or not isinstance(logs, list):
+        return jsonify({"error": "Invalid data"}), 400
+
+    LOG_FILE = "logs/boards.log"
+    BATCH_SIZE = 5 # Lowered for more frequent feedback
+
+    # Enrich logs
+    force_sync = False
+    for log_entry in logs:
+        log_entry["user_id"] = user_data["_id"]
+        log_entry["board_id"] = board_id
+        log_entry["ip"] = request.remote_addr
+        log_entry["mac_id"] = None 
+        log_entry["created_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if log_entry.get("action_type") == "page_close":
+            force_sync = True
+
+    with log_lock:
+        try:
+            # 1. Append to local buffer file immediately
+            with open(LOG_FILE, "a") as f:
+                for entry in logs:
+                    f.write(json.dumps(entry) + "\n")
+
+            # 2. Read all lines to check BATCH_SIZE
+            with open(LOG_FILE, "r") as f:
+                lines = f.readlines()
+            
+            print(f"[ActivityLog] Buffered {len(logs)} new logs. Local buffer now at {len(lines)}/{BATCH_SIZE} lines.")
+
+            if len(lines) >= BATCH_SIZE or force_sync:
+                if force_sync:
+                    print(f"[ActivityLog] 'page_close' detected. Forcing immediate sync...")
+                else:
+                    print(f"[ActivityLog] Batch threshold reached. Attempting sync to MongoDB...")
+                
+                all_logs = []
+                for line in lines:
+                    if line.strip():
+                        try:
+                            entry = json.loads(line)
+                            # Convert ISO string back to datetime for MongoDB
+                            entry["created_at"] = datetime.datetime.fromisoformat(entry["created_at"])
+                            all_logs.append(entry)
+                        except Exception as e:
+                            print(f"[ActivityLog] Skipping malformed line: {e}")
+                            continue
+                
+                if all_logs:
+                    # 3. Synchronous DB sync
+                    result = boardsLogCollection.insert_many(all_logs)
+                    print(f"[ActivityLog] Successfully synced {len(result.inserted_ids)} logs to MongoDB.")
+                
+                    # 4. Success! Clear the file.
+                    with open(LOG_FILE, "w") as f:
+                        pass 
+                    print(f"[ActivityLog] Local buffer cleared.")
+                else:
+                    print(f"[ActivityLog] No valid logs to sync.")
+
+        except Exception as e:
+            # If any step fails (especially DB sync), we don't clear the file
+            # The next request will retry syncing everything.
+            print(f"[ActivityLog] CRITICAL ERROR during sync: {e}")
+            import traceback
+            traceback.print_exc()
+
     return jsonify({"status": "success"})
 
 

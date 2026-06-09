@@ -180,7 +180,7 @@ class Study(commands.Cog):
                         image_binary.seek(0)
                         await member.send(
                             content=f"# **[__Productivity Access!__](<{link}>)**\nThis link is only valid while you are in the study voice channel.",
-                            file=discord.File(image_binary, "qrcode.png")
+                            file=discord.File(image_binary, "qrcode.webp")
                         )
                     dm_status = True
                 except discord.Forbidden:
@@ -397,7 +397,7 @@ class Study(commands.Cog):
         taskLog.before(status_code=0, message="Watching", details=f"Starting the 5-minute inactivity watch for {member.name}...")
         taskLog.send()
         
-        await asyncio.sleep(300)  # Wait for 5 minutes
+        await asyncio.sleep(60*60)  # Wait for 5 minutes
         
         resLog = TaskLogger(filename=filename, task_name="activity_monitor")
         # Ensure user is still in the correct voice channel

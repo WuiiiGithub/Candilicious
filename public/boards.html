@@ -207,16 +207,152 @@
         let tasks = {{ data | tojson }};
         const token = "{{ token }}";
         const board_id = "{{ board_id }}";
+        
+        let totalPointerDist = 0;
+        let lastLogTime = Date.now();
+        let lastPointerPos = null;
+        
+        // Typing Metrics State
+        let typingMetrics = {
+            startTime: null,
+            forwardChars: 0,
+            backspaces: 0
+        };
+
+        function resetTypingMetrics() {
+            typingMetrics = { startTime: null, forwardChars: 0, backspaces: 0 };
+        }
+
+        function handleTyping(e) {
+            if (!typingMetrics.startTime) typingMetrics.startTime = Date.now();
+            if (e.key === 'Backspace') {
+                typingMetrics.backspaces++;
+            } else if (e.key.length === 1) { 
+                typingMetrics.forwardChars++;
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.target.id === 'taskInput' || e.target.id.startsWith('edit-input-')) {
+                handleTyping(e);
+            }
+        });
+
+        const trackMove = (x, y) => {
+            if (lastPointerPos) {
+                totalPointerDist += Math.sqrt(Math.pow(x - lastPointerPos.x, 2) + Math.pow(y - lastPointerPos.y, 2));
+            }
+            lastPointerPos = { x, y };
+        };
+        window.addEventListener('mousemove', (e) => trackMove(e.clientX, e.clientY));
+        window.addEventListener('touchmove', (e) => trackMove(e.touches[0].clientX, e.touches[0].clientY), { passive: true });
+
+        window.addEventListener('resize', () => {
+            logActivity('viewport_resize', {});
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            const state = document.visibilityState;
+            logActivity(state === 'visible' ? 'tab_active' : 'tab_background', { 
+                visibility_state: state 
+            });
+        });
+
+        async function logActivity(action, details = {}) {
+            const now = Date.now();
+            const timeDiff = (now - lastLogTime) / 1000;
+            const avgPointerSpeed = timeDiff > 0 ? (totalPointerDist / timeDiff) : 0;
+            
+            totalPointerDist = 0;
+            lastLogTime = now;
+
+            const counts = {
+                todo: tasks.filter(t => t.status === 'todo').length,
+                cooking: tasks.filter(t => t.status === 'cooking').length,
+                done: tasks.filter(t => t.status === 'done').length
+            };
+
+            const progressLvl = document.getElementById('progress-percent')?.innerText || '0%';
+
+            const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            const network = connection ? {
+                type: connection.effectiveType || connection.type || 'unknown',
+                downlink: connection.downlink || 0,
+                rtt: connection.rtt || 0
+            } : 'unknown';
+
+            const deviceDetails = {
+                platform: navigator.platform,
+                vendor: navigator.vendor,
+                language: navigator.language,
+                cores: navigator.hardwareConcurrency || 'unknown',
+                memory: navigator.deviceMemory || 'unknown'
+            };
+
+            const logEntry = {
+                action_type: action,
+                webToken: token,
+                action_time: new Date().toISOString(),
+                task_name: details.task_name || '',
+                details: details,
+                screen_size: `${window.screen.width}x${window.screen.height}`,
+                viewport_size: `${window.innerWidth}x${window.innerHeight}`,
+                device: /Mobi|Android/i.test(navigator.userAgent) ? 'Mobile' : 'Desktop',
+                device_details: deviceDetails,
+                user_agent: navigator.userAgent,
+                is_tab_active: document.visibilityState === 'visible',
+                theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+                network_details: network,
+                progress_lvl: progressLvl,
+                remaining: counts,
+                avg_pointer_speed: parseFloat(avgPointerSpeed.toFixed(2)),
+                task_entering_speed: details.task_entering_speed || 0,
+                back_space_speed: details.back_space_speed || 0
+            };
+
+            console.log(`[ActivityLog] Syncing ${action} to server buffer...`, logEntry);
+            
+            try {
+                const response = await fetch(`/api/log/board/${token}/${board_id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ logs: [logEntry] }),
+                    keepalive: true
+                });
+                
+                if (response.ok) {
+                    console.log(`[ActivityLog] Successfully buffered ${action} on server`);
+                } else {
+                    console.error(`[ActivityLog] Failed to buffer ${action}: ${response.statusText}`);
+                }
+            } catch (error) {
+                console.error(`[ActivityLog] Network error during ${action} buffer sync:`, error);
+            }
+        }
+
+        window.addEventListener('beforeunload', () => {
+            const url = `/api/log/board/${token}/${board_id}`;
+            const logEntry = {
+                action_type: 'page_close',
+                webToken: token,
+                action_time: new Date().toISOString(),
+                is_tab_active: false
+            };
+            const blob = new Blob([JSON.stringify({ logs: [logEntry] })], { type: 'application/json' });
+            navigator.sendBeacon(url, blob);
+        });
 
         const columns = ['todo', 'cooking', 'done'];
         const scrollContainer = document.getElementById('kanbanScroll');
         const priorityMap = { 'red': 3, 'yellow': 2, 'green': 1 };
         const priorityColors = { 'red': 'bg-red-500', 'yellow': 'bg-yellow-400', 'green': 'bg-green-500' };
 
-        function updateTaskPriority(taskId, color) {
+        async function updateTaskPriority(taskId, color) {
             const task = tasks.find(t => t.id === taskId);
             if (task) {
+                const oldPriority = task.priority;
                 task.priority = color;
+                await logActivity('change_priority', { taskId, from: oldPriority, to: color, task_name: task.text });
                 saveTasks();
                 renderTasks();
             }
@@ -260,19 +396,13 @@
         });
 
         async function saveTasks() {
-            // Update UI first
             updateUI();
-            
-            // Sync with backend
             try {
-                const response = await fetch(`/api/save/board/${token}/${board_id}`, {
+                await fetch(`/api/save/board/${token}/${board_id}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ tasks })
                 });
-                if (!response.ok) {
-                    console.error('Failed to sync board tasks with backend');
-                }
             } catch (error) {
                 console.error('Error syncing board tasks:', error);
             }
@@ -353,7 +483,6 @@
                 </div>
             `;
 
-            // Drag for Desktop
             div.addEventListener('dragstart', (e) => {
                 if(e.target.tagName === 'TEXTAREA' || e.target.closest('button') || e.target.classList.contains('card-dot')) { e.preventDefault(); return; }
                 e.dataTransfer.setData('text/plain', task.id);
@@ -361,7 +490,6 @@
             });
             div.addEventListener('dragend', () => div.classList.remove('dragging'));
 
-            // Swipe for Mobile
             let touchStartX = 0;
             let touchStartY = 0;
             div.addEventListener('touchstart', (e) => {
@@ -379,10 +507,22 @@
                     const idx = columns.indexOf(task.status);
                     if (diffX < -50 && idx < 2) { 
                         div.classList.add('swipe-out-left');
-                        setTimeout(() => { task.status = columns[idx + 1]; saveTasks(); renderTasks(); }, 200);
+                        setTimeout(async () => { 
+                            const fromStatus = task.status;
+                            task.status = columns[idx + 1]; 
+                            await logActivity('move_task', { taskId: task.id, from: fromStatus, to: task.status, method: 'swipe', task_name: task.text });
+                            saveTasks(); 
+                            renderTasks(); 
+                        }, 200);
                     } else if (diffX > 50 && idx > 0) { 
                         div.classList.add('swipe-out-right');
-                        setTimeout(() => { task.status = columns[idx - 1]; saveTasks(); renderTasks(); }, 200);
+                        setTimeout(async () => { 
+                            const fromStatus = task.status;
+                            task.status = columns[idx - 1]; 
+                            await logActivity('move_task', { taskId: task.id, from: fromStatus, to: task.status, method: 'swipe', task_name: task.text });
+                            saveTasks(); 
+                            renderTasks(); 
+                        }, 200);
                     }
                 }
             }, { passive: true });
@@ -390,66 +530,123 @@
             return div;
         }
 
-        function toggleEdit(id) {
+        async function toggleEdit(id) {
             const textEl = document.getElementById(`text-${id}`);
             const inputEl = document.getElementById(`edit-input-${id}`);
             const btnEl = document.getElementById(`btn-edit-${id}`);
             const card = document.getElementById(`task-${id}`);
+            
             if (inputEl.classList.contains('hidden')) {
                 inputEl.classList.remove('hidden'); textEl.classList.add('hidden');
                 inputEl.focus(); btnEl.classList.add('text-pink-600', 'bg-pink-50', 'opacity-100');
                 card.draggable = false;
+                resetTypingMetrics(); 
             } else {
                 const newText = inputEl.value.trim();
                 if (newText) {
-                    tasks.find(t => t.id === id).text = newText;
-                    saveTasks();
+                    const task = tasks.find(t => t.id === id);
+                    if (task && task.text !== newText) {
+                        const oldText = task.text;
+                        task.text = newText;
+                        
+                        let enteringSpeed = 0;
+                        let backspaceSpeed = 0;
+                        if (typingMetrics.startTime) {
+                            const duration = (Date.now() - typingMetrics.startTime) / 1000;
+                            if (duration > 0) {
+                                enteringSpeed = typingMetrics.forwardChars / duration;
+                                backspaceSpeed = typingMetrics.backspaces / duration;
+                            }
+                        }
+
+                        await logActivity('rename_task', { 
+                            taskId: id, from: oldText, to: newText, 
+                            task_name: newText,
+                            task_entering_speed: parseFloat(enteringSpeed.toFixed(2)),
+                            back_space_speed: parseFloat(backspaceSpeed.toFixed(2))
+                        });
+                        saveTasks();
+                    }
                     textEl.innerText = newText;
                 }
                 inputEl.classList.add('hidden'); textEl.classList.remove('hidden');
                 btnEl.classList.remove('text-pink-600', 'bg-pink-50', 'opacity-100'); card.draggable = true;
+                resetTypingMetrics();
             }
         }
 
-        function deleteTask(id) {
+        async function deleteTask(id) {
+            const task = tasks.find(t => t.id === id);
+            const task_name = task ? task.text : '';
             tasks = tasks.filter(t => t.id !== id);
+            await logActivity('delete_task', { taskId: id, task_name: task_name });
             saveTasks();
             renderTasks();
         }
 
         function allowDrop(e) { e.preventDefault(); const col = e.target.closest('.kanban-column'); if (col) col.classList.add('drop-target'); }
         function dragLeave(e) { const col = e.target.closest('.kanban-column'); if (col) col.classList.remove('drop-target'); }
-        function drop(e) {
+        async function drop(e) {
             e.preventDefault();
             const colEl = e.target.closest('.kanban-column');
             if (!colEl) return;
             colEl.classList.remove('drop-target');
             const taskId = e.dataTransfer.getData('text/plain');
             const task = tasks.find(t => t.id === taskId);
-            if (task) { task.status = colEl.id; saveTasks(); renderTasks(); }
+            if (task) { 
+                const fromStatus = task.status;
+                task.status = colEl.id; 
+                await logActivity('move_task', { taskId, from: fromStatus, to: task.status, method: 'drag', task_name: task.text });
+                saveTasks(); 
+                renderTasks(); 
+            }
         }
 
-        function addTask() {
+        async function addTask() {
             const input = document.getElementById('taskInput');
             const text = input.value.trim();
             if (text) {
+                let enteringSpeed = 0;
+                let backspaceSpeed = 0;
+                if (typingMetrics.startTime) {
+                    const duration = (Date.now() - typingMetrics.startTime) / 1000;
+                    if (duration > 0) {
+                        enteringSpeed = typingMetrics.forwardChars / duration;
+                        backspaceSpeed = typingMetrics.backspaces / duration;
+                    }
+                }
+
                 let status = 'todo';
                 if (document.body.classList.contains('is-mobile-view')) {
                     const width = scrollContainer.offsetWidth;
                     const activeIdx = Math.round(scrollContainer.scrollLeft / width);
                     status = columns[activeIdx] || 'todo';
                 }
-                tasks.push({ id: Date.now().toString(), text, status, priority: 'green' });
+                const newTask = { id: Date.now().toString(), text, status, priority: 'green' };
+                tasks.push(newTask);
+                await logActivity('add_task', { 
+                    taskId: newTask.id, 
+                    task_name: text, 
+                    status, 
+                    task_entering_speed: parseFloat(enteringSpeed.toFixed(2)),
+                    back_space_speed: parseFloat(backspaceSpeed.toFixed(2))
+                });
                 saveTasks();
                 renderTasks();
                 input.value = '';
+                resetTypingMetrics();
             }
         }
 
         document.getElementById('addTaskBtn').addEventListener('click', addTask);
         document.getElementById('taskInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') addTask(); });
         window.addEventListener('resize', handleResponsiveLayout);
-        window.onload = () => { handleResponsiveLayout(); renderTasks(); };
+        window.onload = async () => { 
+            handleResponsiveLayout(); 
+            renderTasks(); 
+            await logActivity('view_board', { title: "{{ title }}" });
+            console.log("[ActivityLog] Hooks initialized and ready.");
+        };
     </script>
 </body>
 </html>
