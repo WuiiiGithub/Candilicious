@@ -8,7 +8,7 @@ from discord.ext import commands
 import uvicorn, config
 from library.logging import SystemLogger, CogLogger
 from motor.motor_asyncio import AsyncIOMotorClient
-from routes import api as api_routes  
+import routes 
 from pymongo.errors import (
     ServerSelectionTimeoutError,
     ConnectionFailure,
@@ -159,7 +159,35 @@ app.state.bot = bot
 app.state.bot.user_network_connection = {}
 
 # Include the modular routes
-app.include_router(api_routes.router)
+app.include_router(
+    router=routes.router,
+    prefix="/api"
+)
+app.include_router(
+    router=routes.boards.router,
+    prefix="/api/boards",
+    tags=["boards"]
+)
+app.include_router(
+    router=routes.projects.router,
+    prefix="/api/projects",
+    tags=["projects"]
+)
+app.include_router(
+    router=routes.users.router,
+    prefix="/api/users",
+    tags=["users"]
+)
+app.include_router(
+    router=routes.servers.router,
+    prefix="/api/servers",
+    tags=["servers"]
+)
+app.include_router(
+    router=routes.logs.router,
+    prefix="/api/logs",
+    tags=["logs"]
+)
 
 async def load():
     log = SystemLogger(filename=filename)

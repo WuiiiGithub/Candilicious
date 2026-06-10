@@ -2,7 +2,7 @@ FROM python:3.13.5-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    FLASK_APP_PORT=10301
+    WEBSITE_APP_PORT=10301
 
 WORKDIR /app
 
@@ -18,9 +18,9 @@ COPY --chown=candi:candi . .
 
 USER candi
 
-EXPOSE ${FLASK_APP_PORT}
+EXPOSE ${WEBSITE_APP_PORT}
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD curl --fail http://localhost:${FLASK_APP_PORT}/ping || exit 1
+    CMD curl --fail http://localhost:${WEBSITE_APP_PORT}/ping || exit 1
 
 CMD ["python3", "main.py"]

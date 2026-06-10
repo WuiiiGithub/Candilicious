@@ -43,9 +43,9 @@ if isNgrokSetup:
     NGROK_AUTH_TOKEN = str(os.getenv("NGROK_AUTH_TOKEN"))
     ngrok.set_auth_token(NGROK_AUTH_TOKEN)
     public_url = ngrok.connect(config.port).public_url
-    flask_url = os.getenv("FLASK_DOMAIN")
+    flask_url = os.getenv("WEBSITE_DOMAIN")
     if flask_url == None or flask_url == "" or "://localhost:" in str(flask_url):
-        os.environ["FLASK_DOMAIN"] = public_url
+        os.environ["WEBSITE_DOMAIN"] = public_url
         flask_url = public_url
 
 try:
@@ -320,8 +320,7 @@ def exception(token):
         log.send("Network Test")
         return "<img src='https://media.tenor.com/x8v1oNUOmg4AAAAM/rickroll-roll.gif' alt='Congrats! You are Rick Rolled!' width='100%' height='100%'>"
 
-app.errorhandler(403)
-
+@app.errorhandler(403)
 def forbidden_error(e):
     return render_template("403.html"), 403
 

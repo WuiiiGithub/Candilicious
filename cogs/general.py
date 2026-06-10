@@ -54,7 +54,7 @@ class General(commands.Cog):
     @app_commands.command(name='site', description='Shows the site of the bot')
     async def site(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
-        site_url = str(os.getenv('FLASK_DOMAIN'))
+        site_url = str(os.getenv('WEBSITE_DOMAIN'))
         try:
             if site_url == '' or site_url == None:
                 await inter.response.send_message(

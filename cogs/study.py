@@ -163,7 +163,7 @@ class Study(commands.Cog):
                     upsert=True
                 )
 
-                domain = os.getenv("FLASK_DOMAIN")
+                domain = os.getenv("WEBSITE_DOMAIN")
                 if domain and not domain.endswith('/'):
                     domain = domain + "/"
                 link = f"{domain}projects/{web_token}"
@@ -470,7 +470,7 @@ class Study(commands.Cog):
                 details="The verification token has been successfully generated."
             )
 
-            domain = os.getenv("FLASK_DOMAIN")
+            domain = os.getenv("WEBSITE_DOMAIN")
             if not domain.endswith('/'):
                 domain = domain + "/"
             link = domain + "except/" + token

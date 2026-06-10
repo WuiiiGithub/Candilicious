@@ -4,8 +4,8 @@ _load()
 
 owner_id = 1490291458119307304
 
-port = int(_getenv('FLASK_APP_PORT'))
-host = _getenv('FLASK_DOMAIN')
+port = int(_getenv('WEBSITE_APP_PORT'))
+host = _getenv('WEBSITE_DOMAIN')
 dbName = _getenv('DB_NAME')
 dbURI = _getenv("MONGODB_URI")
 availableIn = {
