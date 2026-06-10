@@ -9,6 +9,14 @@ import uvicorn, config
 from library.logging import SystemLogger, CogLogger
 from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
+from routes import (
+    boards,
+    logs,
+    projects,
+    servers,
+    users,
+    auth,
+)
 from pymongo.errors import (
     ServerSelectionTimeoutError,
     ConnectionFailure,
@@ -51,12 +59,12 @@ async def lifespan(app: FastAPI):
             MONGODB_URI, 
             serverSelectionTimeoutMS=5000
         )
-        app.db = app.mongodb_client[config.dbName]
+        app.db = app.mongodb_client[config.MONGODB_NAME]
         app.db.command("ping")
         sysLog.complete(
             status_code=100,
             message="Connected",
-            details=f"Successfully established connection to MongoDB database: {config.dbName}",
+            details=f"Successfully established connection to MongoDB database: {config.MONGODB_NAME}",
         )
         if isNgrokSetup:
             from pyngrok import ngrok, conf
@@ -164,29 +172,34 @@ app.include_router(
     prefix="/api"
 )
 app.include_router(
-    router=routes.boards.router,
+    router=boards.router,
     prefix="/api/boards",
     tags=["boards"]
 )
 app.include_router(
-    router=routes.projects.router,
+    router=projects.router,
     prefix="/api/projects",
     tags=["projects"]
 )
 app.include_router(
-    router=routes.users.router,
+    router=users.router,
     prefix="/api/users",
     tags=["users"]
 )
 app.include_router(
-    router=routes.servers.router,
+    router=servers.router,
     prefix="/api/servers",
     tags=["servers"]
 )
 app.include_router(
-    router=routes.logs.router,
+    router=logs.router,
     prefix="/api/logs",
     tags=["logs"]
+)
+app.include_router(
+    router=auth.router,
+    prefix="/api/auth",
+    tags=["auth"]
 )
 
 async def load():
@@ -215,7 +228,7 @@ async def load():
     log.send("Loader")
 
 async def backend():
-    config_uv = uvicorn.Config(app, host="0.0.0.0", port=config.port)
+    config_uv = uvicorn.Config(app, HOST ="0.0.0.0", PORT =config.port)
     await uvicorn.Server(config_uv).serve()
 
 async def main():

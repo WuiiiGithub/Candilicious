@@ -9,7 +9,7 @@ from library.logging import CogLogger, CommandLogger, ListenerLogger, TaskLogger
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.dbName]
+db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.MONGODB_NAME]
 
 class Schedules(commands.Cog):
     def __init__(self, bot):

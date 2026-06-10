@@ -2,12 +2,17 @@ from os import getenv as _getenv
 from dotenv import load_dotenv as _load
 _load()
 
-owner_id = 1490291458119307304
+OWNER_ID = 1490291458119307304
 
-port = int(_getenv('WEBSITE_APP_PORT'))
-host = _getenv('WEBSITE_DOMAIN')
-dbName = _getenv('DB_NAME')
-dbURI = _getenv("MONGODB_URI")
+PORT = int(_getenv('WEBSITE_APP_PORT'))
+HOST = _getenv('WEBSITE_DOMAIN')
+MONGODB_NAME = _getenv('DB_NAME')
+MONGODB_URI = _getenv("MONGODB_URI")
+DISCORD_CLIENT_ID = _getenv("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = _getenv("DISCORD_CLIENT_SECRET")
+REDIRECT_URI = _getenv("REDIRECT_URI")
+WEBSITE_DOMAIN=_getenv("WEBSITE_DOMAIN")
+
 availableIn = {
     "guilds": [
         1491471841716605062

@@ -52,8 +52,8 @@ try:
     sysLog.process(
         status_code=0, message="Waiting", details="Initiating connection to MongoDB..."
     )
-    client = pymongo.MongoClient(host=MONGODB_URI, serverSelectionTimeoutMS=5000)
-    db = client[config.dbName]
+    client = pymongo.MongoClient(HOST =MONGODB_URI, serverSelectionTimeoutMS=5000)
+    db = client[config.MONGODB_NAME]
     userCollection = db["users"]
     boardsCollection = db["boards"]
     exceptionCollection = db["exception"]
@@ -62,7 +62,7 @@ try:
     sysLog.complete(
         status_code=100,
         message="Connected",
-        details=f"Successfully established connection to MongoDB database: {config.dbName}",
+        details=f"Successfully established connection to MongoDB database: {config.MONGODB_NAME}",
     )
 
 except (ServerSelectionTimeoutError, ConnectionFailure, OperationFailure) as e:
@@ -339,7 +339,7 @@ def service_unavailable_error(e):
 
 def run_flask():
     asgi_app = WsgiToAsgi(app)
-    uvicorn.run(asgi_app, host="0.0.0.0", port=config.port)
+    uvicorn.run(asgi_app, HOST ="0.0.0.0", PORT =config.port)
 
 
 async def load():

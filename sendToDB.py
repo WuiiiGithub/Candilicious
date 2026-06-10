@@ -4,8 +4,8 @@ import config, os
 import pandas as pd
 
 # Connection Setup
-client = MongoClient(config.dbURI)
-db = client[config.dbName]
+client = MongoClient(config.MONGODB_URI)
+db = client[config.MONGODB_NAME]
 selfCollection = db['Self']
 configCollection = db['config']
 userCollection = db['users']

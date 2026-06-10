@@ -64,7 +64,7 @@ The repository includes several utility scripts to assist with deployment and da
    APPLICATION_ID=your_discord_app_id
    MONGODB_URI=your_mongodb_uri
    DB_NAME=Candilicious
-   WEBSITE_APP_PORT=10301
+   WEBSITE_APP_PORT =10301
    WEBSITE_DOMAIN=http://your-domain-or-ip:10301
    SECRET_KEY=your_random_secret_key
    NGROK_AUTH_TOKEN=your_ngrok_token

@@ -11,7 +11,7 @@ cogLog = CogLogger(filename=filename)
 
 load_dotenv()
 
-_db = pymongo.MongoClient(host=config.dbURI)[config.dbName]
+_db = pymongo.MongoClient(HOST =config.MONGODB_URI)[config.MONGODB_NAME]
 serverCollection = _db["servers"]
 configCollection = _db["config"]
 
@@ -281,7 +281,7 @@ class Reminders(commands.Cog):
     async def add_gif_context(self, inter: discord.Interaction, message: discord.Message):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            if inter.user.id != config.owner_id:
+            if inter.user.id != config.OWNER_ID:
                 await inter.response.send_message(
                     "You are not allowed to use this command.", ephemeral=True
                 )
@@ -331,7 +331,7 @@ class Reminders(commands.Cog):
     ):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            if inter.user.id != config.owner_id:
+            if inter.user.id != config.OWNER_ID:
                 await inter.response.send_message(
                     "You are not allowed to use this command.", ephemeral=True
                 )
