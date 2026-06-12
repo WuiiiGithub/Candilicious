@@ -9,7 +9,7 @@ from library.logging import CogLogger, CommandLogger, ListenerLogger
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-serverCollection = pymongo.MongoClient(HOST =config.MONGODB_URI)[config.MONGODB_NAME]['server']
+serverCollection = pymongo.MongoClient(host=config.MONGODB_URI)[config.MONGODB_NAME]['server']
 
 class Server(commands.Cog):
     def __init__(self, bot):

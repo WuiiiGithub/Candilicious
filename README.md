@@ -66,9 +66,10 @@ The repository includes several utility scripts to assist with deployment and da
    DB_NAME=Candilicious
    WEBSITE_APP_PORT =10301
    WEBSITE_DOMAIN=http://your-domain-or-ip:10301
-   SECRET_KEY=your_random_secret_key
+   SECRET_KEY=your_random_secret_key_at_least_32_chars
    NGROK_AUTH_TOKEN=your_ngrok_token
    ```
+   *Note: Ensure `SECRET_KEY` is at least 32 characters long to avoid security warnings.*
 4. **Initialize Database:**
    Run the utility script to upload necessary data:
    ```bash

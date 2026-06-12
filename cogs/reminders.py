@@ -11,7 +11,7 @@ cogLog = CogLogger(filename=filename)
 
 load_dotenv()
 
-_db = pymongo.MongoClient(HOST =config.MONGODB_URI)[config.MONGODB_NAME]
+_db = pymongo.MongoClient(host=config.MONGODB_URI)[config.MONGODB_NAME]
 serverCollection = _db["servers"]
 configCollection = _db["config"]
 

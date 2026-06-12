@@ -10,8 +10,15 @@ MONGODB_NAME = _getenv('DB_NAME')
 MONGODB_URI = _getenv("MONGODB_URI")
 DISCORD_CLIENT_ID = _getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = _getenv("DISCORD_CLIENT_SECRET")
-REDIRECT_URI = _getenv("REDIRECT_URI")
 WEBSITE_DOMAIN=_getenv("WEBSITE_DOMAIN")
+FRONTEND_DOMAIN=_getenv("FRONTEND_DOMAIN")
+SECRET_KEY=_getenv("SECRET_KEY")
+
+if SECRET_KEY and len(SECRET_KEY) < 32:
+    print("\033[93m" + "!" * 50 + "\033[0m")
+    print("\033[93mWARNING: SECRET_KEY is shorter than 32 characters!\033[0m")
+    print("\033[93mFor security, please use a key with at least 32 bytes (e.g., secrets.token_hex(32)).\033[0m")
+    print("\033[93m" + "!" * 50 + "\033[0m")
 
 availableIn = {
     "guilds": [

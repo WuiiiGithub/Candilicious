@@ -3,6 +3,7 @@ import asyncio
 import discord
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from discord.ext import commands
 import uvicorn, config
@@ -17,6 +18,10 @@ from routes import (
     users,
     auth,
 )
+from routes import limiter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from pymongo import ASCENDING
 from pymongo.errors import (
     ServerSelectionTimeoutError,
     ConnectionFailure,
@@ -81,6 +86,11 @@ async def lifespan(app: FastAPI):
                 os.environ["FASTAPI_DOMAIN"] = public_url
                 fast_api_url = public_url
 
+        await app.db["oauth_pending_states"].create_index(
+            [("createdAt", ASCENDING)], 
+            expireAfterSeconds=600
+        )
+
     except (
         ServerSelectionTimeoutError, 
         ConnectionFailure, 
@@ -120,7 +130,13 @@ async def lifespan(app: FastAPI):
     print("=" * 50)
 
 app = FastAPI(lifespan=lifespan)
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[config.FRONTEND_DOMAIN], 
+   allow_credentials=True,
+   allow_methods=["*"],  
+    allow_headers=["*"],  
+)
 # Bot Setup
 intents = discord.Intents.all()
 bot = commands.Bot(
@@ -164,6 +180,8 @@ async def on_ready():
     log.send("Bot Events")
 
 app.state.bot = bot
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.state.bot.user_network_connection = {}
 
 # Include the modular routes
@@ -228,7 +246,7 @@ async def load():
     log.send("Loader")
 
 async def backend():
-    config_uv = uvicorn.Config(app, HOST ="0.0.0.0", PORT =config.port)
+    config_uv = uvicorn.Config(app, host="0.0.0.0", port=config.PORT)
     await uvicorn.Server(config_uv).serve()
 
 async def main():
