@@ -1,13 +1,17 @@
-from fastapi import APIRouter
-import speedtest, jwt, config
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+import config
 
 router = APIRouter()
-
 limiter = Limiter(key_func=get_remote_address)
+security = HTTPBearer()
 
-def verify_token(token: str):
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
     try:
         payload = jwt.decode(
             token, 
@@ -15,21 +19,32 @@ def verify_token(token: str):
             algorithms=["HS256"]
         )
         return payload
-    except jwt.InvalidSignatureError:
-        raise Exception("Unauthorized: Tampered token detected")
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=f"Unauthorized: {str(e)}")
 
-@router.get("/except")
-def exception():
-    pass
+class ExceptionRequest(BaseModel):
+    type: str
+    download: float
+    upload: float
+    ping: float
 
-@router.get("/privacy")
-def privacy():
-    pass
-
-@router.get("/about")
-def about():
-    pass
-
-@router.get("/tos")
-def tos():
-    pass
+@router.post("/exception")
+async def exception(
+    data: ExceptionRequest,
+    request: Request,
+    payload: dict = Depends(verify_token)
+):
+    if data.type != "low_network":
+        raise HTTPException(status_code=400, detail="Invalid exception type")
+    
+    user_id = payload.get("sub")
+    if config.bot:
+        config.bot.userNetworkConnection[user_id] = {
+            "download": data.download,
+            "upload": data.upload,
+            "ping": data.ping,
+        }
+    return {
+        "ok": 1,
+        "detail": "Exception speed data recorded"
+    }

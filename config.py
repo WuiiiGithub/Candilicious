@@ -44,3 +44,6 @@ leaderboardLimit = 10
 msgDelAfter=10
 msgColor = 0x3498db
 
+bot = None
+
+

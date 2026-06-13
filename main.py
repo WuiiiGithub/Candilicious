@@ -182,7 +182,9 @@ async def on_ready():
 app.state.bot = bot
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-app.state.bot.user_network_connection = {}
+bot.userNetworkConnection = {}
+config.bot = bot
+
 
 # Include the modular routes
 app.include_router(
@@ -252,8 +254,10 @@ async def backend():
 async def main():
     await asyncio.gather(
         load(), 
+        bot.start(os.getenv("TOKEN")),
         backend()
     )
+
 
 if __name__ == "__main__":  
     asyncio.run(main())
