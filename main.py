@@ -183,8 +183,10 @@ app.state.bot = bot
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 bot.userNetworkConnection = {}
-config.bot = bot
 
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
 
 # Include the modular routes
 app.include_router(

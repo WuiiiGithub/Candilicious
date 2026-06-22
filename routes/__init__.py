@@ -38,12 +38,11 @@ async def exception(
         raise HTTPException(status_code=400, detail="Invalid exception type")
     
     user_id = payload.get("sub")
-    if config.bot:
-        config.bot.userNetworkConnection[user_id] = {
-            "download": data.download,
-            "upload": data.upload,
-            "ping": data.ping,
-        }
+    request.app.state.bot.userNetworkConnection[user_id] = {
+        "download": data.download,
+        "upload": data.upload,
+        "ping": data.ping,
+    }
     return {
         "ok": 1,
         "detail": "Exception speed data recorded"

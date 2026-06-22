@@ -3,12 +3,24 @@ import config
 
 router = APIRouter()
 
-@router.get("/servers")
-async def servers(request: Request):
+@router.get("")
+async def list_servers(request: Request, page: int = 1, limit: int = 50):
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 50
+    elif limit > 100:
+        limit = 100
+
     guilds = []
-    bot = config.bot
+    bot = request.app.state.bot
     if bot:
-        for g in bot.guilds:
+        sorted_guilds = sorted(bot.guilds, key=lambda g: g.member_count or 0, reverse=True)
+        start_idx = (page - 1) * limit
+        end_idx = start_idx + limit
+        paged_guilds = sorted_guilds[start_idx:end_idx]
+        
+        for g in paged_guilds:
             guilds.append({
                 "id": str(g.id),
                 "name": g.name,

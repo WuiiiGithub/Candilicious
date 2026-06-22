@@ -25,21 +25,21 @@ boardsCollection = db["boards"]
 exceptionCollection = db["exception"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
 
+from library import dseshpy
+dseshpy.initialize(
+    session_collection=db["sessions"],
+    user_collection=userCollection
+)
+
 class Study(commands.Cog):
     def __init__(self, bot):
         # general vars
         self.bot = bot
 
         # study vc vars
-        self.monitoringUsers = {}
         self.exceptions = tempDataHandler()
-        self.learnings = sessionLearners()
-        self.droppings = {}
-        self.monitoringChannels = {}
-        self.dropChannelLocks = {}
+        self.session_manager = dseshpy.session.SessionManager()
 
-        # dropper vars
-        self.dropConfigsCache = {}
         cogLog.log_cog(action="starting", status_code=0, details="Study Cog has been initialized and is ready for use.")
 
     @commands.Cog.listener()
@@ -56,25 +56,28 @@ class Study(commands.Cog):
 
     @app_commands.command(name="config", description="Configure your study channel")
     @app_commands.guild_only()
-    @app_commands.describe(study="Please enter your study channel")
+    @app_commands.describe(category="The category where study VCs will be created")
+    @app_commands.describe(create_vc="The channel users join to create a new study VC")
     @app_commands.describe(interval="Time in which 1 drop takes place")
     @app_commands.describe(drop="Quantity of Gold drops")
-    async def config(self, inter: discord.Interaction, study: discord.VoiceChannel, interval: int, drop: int):
-        """Save the study channel in the database."""
+    async def config(self, inter: discord.Interaction, category: discord.CategoryChannel, create_vc: discord.VoiceChannel, interval: int, drop: int):
+        """Save the study configuration in the database."""
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
             server_id = str(inter.guild_id)
-            study_channel_id = str(study.id)
+            category_id = str(category.id)
+            create_vc_id = str(create_vc.id)
             cmdLog.process(
                 status_code=0,
                 name='Waiting',
-                details=f"Trying to configure the study channel ({study_channel_id})."
+                details=f"Trying to configure the study category ({category_id}) and create_vc ({create_vc_id})."
             )
             serverCollection.update_one(
                 {"_id": server_id},
-                {"$set": {"_id": server_id, "channel": study_channel_id, "drop": drop, "interval": interval}},
+                {"$set": {"_id": server_id, "category": category_id, "create_vc": create_vc_id, "drop": drop, "interval": interval}},
                 upsert=True,
             )
+            
             embed=discord.Embed(
                 title="Study Configurations",
                 description=f"**Configuration Successful!** :tada:",
@@ -82,8 +85,13 @@ class Study(commands.Cog):
                 color=config.msgColor,
             )
             embed.add_field(
-                name="Channel", 
-                value=study.mention,
+                name="Category", 
+                value=category.mention,
+                inline=True
+            )
+            embed.add_field(
+                name="Create VC", 
+                value=create_vc.mention,
                 inline=True
             )
             embed.add_field(
@@ -126,313 +134,77 @@ class Study(commands.Cog):
         try:
             if member.bot:
                 return
-            member_id = str(member.id)
             server_id = str(member.guild.id)
             
             # Initial check
             study_data = serverCollection.find_one({"_id": server_id})
 
-            if not study_data or "channel" not in study_data:
+            if not study_data or "category" not in study_data or "create_vc" not in study_data:
                 # We don't log every voice update for non-configured servers to avoid spam
                 return
 
-            study_channel_id = str(study_data["channel"])
-
-            # Case of joining
-            if (
-                # if he joined later channel
-                after.channel
-                # And if that channel is a study channel
-                and str(after.channel.id) == study_channel_id
-                # He came from non study channel or no place to study channel
-                and (
-                    # Either no channel before
-                    before.channel is None 
-                    # Or either it was not study channel
-                    or str(before.channel.id) != study_channel_id
-                )
-            ):
-                log.process(status_code=0, message="Join", details=f"Handling {member.name} entering the study zone: {after.channel.name}")
-                self.learnings.started(id=member_id)
-
-                # Project Access Logic
-                web_token = secrets.token_urlsafe(32)
-                userCollection.update_one(
-                    {"_id": member_id},
-                    {"$set": {"webToken": web_token}},
-                    upsert=True
-                )
-
-                domain = os.getenv("WEBSITE_DOMAIN")
-                if domain and not domain.endswith('/'):
-                    domain = domain + "/"
-                link = f"{domain}projects/{web_token}"
-
-                qr = qrcode.QRCode(box_size=10, border=8)
-                qr.add_data(link)
-                qr.make(fit=True)
-                img = qr.make_image(fill="black", back_color="white")
-                
-                dm_status = False
-                try:
-                    with io.BytesIO() as image_binary:
-                        img.save(image_binary, format="WEBP")
-                        image_binary.seek(0)
-                        await member.send(
-                            content=f"# **[__Productivity Access!__](<{link}>)**\nThis link is only valid while you are in the study voice channel.",
-                            file=discord.File(image_binary, "qrcode.png")
-                        )
-                    dm_status = True
-                except discord.Forbidden:
-                    dm_status = False
-
-                embed = discord.Embed(
-                    title=f"🎉 {member.display_name} is back! 🎉",
-                    description=f"Welcome back {member.mention}!\nStudy time resumes!",
-                    timestamp=datetime.now(),
-                    color=0x3498DB,
-                )
-                embed.set_thumbnail(url=member.display_avatar.url)
-
-                if dm_status:
-                    embed.add_field(
-                        name="Project Access",
-                        value="Secret access link has been sent to your DMs! :ninja:",
-                        inline=False
-                    )
-                else:
-                    embed.add_field(
-                        name="Project Access",
-                        value="❌ I couldn't DM you the access link. Please open your DMs and rejoin!",
-                        inline=False
-                    )
-
-                if self.exceptions.isNotInside(str(member_id)):
-                    embed.add_field(
-                        name="Request",
-                        value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
-                        inline=False
-                    )
-                await after.channel.send(content=member.mention, embed=embed, delete_after=20)
-
-                task = asyncio.create_task(
-                    self.activityMonitor(member, study_channel_id)
-                )
-                self.monitoringUsers[member_id] = task
-                log.complete(status_code=100, message="Handled", details=f"Started activity monitor for {member.name}.")
-                log.send()
-
-            # Case of leaving
-            if (
-                # If they were in some channel before
-                before.channel
-                # And channel was a study channel
-                and str(before.channel.id) == study_channel_id
-                # And later they left study channel
-                and (
-                    # Either they left
-                    after.channel is None 
-                    # Or either they went to non study channel
-                    or str(after.channel.id) != study_channel_id
-                )
-            ):
-                log.process(status_code=0, message="Leave", details=f"{member.name} is leaving the study zone: {before.channel.name}")
-
-                # Revoke Project Access
-                userCollection.update_one(
-                    {"_id": member_id},
-                    {"$unset": {"webToken": ""}}
-                )
-
-                if member_id in self.monitoringUsers:
-                    log.process(status_code=75, message="Stopping", details=f"Stopping the activity monitor for {member.name} as they left.")
-                    self.monitoringUsers[member_id].cancel()
-                    del self.monitoringUsers[member_id]
-
-                self.learnings.ended(user_id=member_id, server_id=server_id, name=member.display_name)
-
-                await before.channel.send(
-                    embed=discord.Embed(
-                        description=f"{member.mention} might be on a break. ☕",
-                        color=0x3498DB,
-                    ),
-                    delete_after=90,
-                )
-                log.complete(status_code=100, message="Handled")
-                log.send()
+            category_id = str(study_data["category"])
+            create_vc_id = str(study_data["create_vc"])
             
-            # Case: Activity for already joined & not left
-            #       i.e. within vc activity
-            # --------------------------------------------
-            # This Case: Monitored user started activity
-            if (
-                # If user is among monitered users
-                member_id in self.monitoringUsers 
-                # and started activity
-                and (
-                    # Started screen share
-                    (
-                        not before.self_stream 
-                        and after.self_stream
-                    )
-                    # Or started video
-                    or (
-                        not before.self_video 
-                        and after.self_video
-                    )
-                )
-            ):
-                await after.channel.send(
-                    embed=discord.Embed(
-                        title="",
-                        description=f"{member.mention}'s Activity Detected! ✅",
-                        timestamp=datetime.now(),
-                        color=0x3498DB,
-                    ),
-                    delete_after=20,
-                )
-                log.process(status_code=75, message="Media Init", details=f"{member.name} enabled camera or screen share. Removing them from the kick timer.")
-                self.monitoringUsers[member_id].cancel()
-                del self.monitoringUsers[member_id]
+            # If user joins the Create VC channel
+            if after.channel and str(after.channel.id) == create_vc_id:
+                log.process(status_code=0, message="Create VC", details=f"Creating study VC for {member.name}.")
+                category = member.guild.get_channel(int(category_id))
+                if not category:
+                    category = discord.utils.get(member.guild.categories, id=int(category_id))
                 
-                # Dropping tasks
-                # Here, we know someone came up
-                # and there is someone learning
-                # We start rewarding
-
-                channel_id = after.channel.id
-                self.monitoringChannels[channel_id] = self.monitoringChannels.get(channel_id, 0) + 1
-
-                if self.monitoringChannels[channel_id] == 1:
-                    # only first active user starts dropper
-                    org_drop = study_data.get('drop', 10)
-                    org_interval = study_data.get("interval", 15)
-
-                    self.droppings[channel_id] = asyncio.create_task(
-                        self.dropper_routine(
-                            channel=after.channel,
-                            org_interval=org_interval,
-                            org_drop=org_drop
-                        )
-                    )
-                log.complete(status_code=100, message="Handled")
-                log.send()
-
-            # Case: Non monitored/learning user stopped activity
-            if (
-                # if they were in some channel before
-                before.channel
-                # And if that channel is study channel
-                and str(before.channel.id) == study_channel_id
-                # This user is not being monitored yet
-                and member_id not in self.monitoringUsers
-                # Stopped Activity
-                and (
-                    # Stopped Streaming
-                    (
-                        before.self_stream 
-                        and not after.self_stream
-                    )
-                    # Or stopped Video
-                    or (
-                        before.self_video 
-                        and not after.self_video
-                    )
-                )
-                # While still being in study channel
-                and (
-                    # They didn't leave vc
-                    after.channel
-                    # And, they are in study vc
-                    and str(after.channel.id) == study_channel_id
-                )
-            # And not among exceptions
-            ) and self.exceptions.isNotInside(str(member_id)):
-                log.process(status_code=-75, message="Media Stop", details=f"{member.name} disabled camera or screen share. Re-initiating the watch timer.")
-
-                channel_id = before.channel.id
-
-                embed = discord.Embed(
-                    title="⚠️ Attention Required!",
-                    description=f"{member.mention}, you turned off your camera or screen share.\n"
-                    "Please turn it back on within **5 minutes**, or you will be removed.",
-                    color=discord.Color.orange(),
-                )
-                await after.channel.send(embed=embed, delete_after=20)
-
-                task = asyncio.create_task(
-                    self.activityMonitor(member, study_channel_id)
-                )
-                try:
-                    self.learnings.ended(user_id=member_id, server_id=server_id, name=member.display_name)
-                except:
-                    pass # Silently handle if ending session fails
-                self.learnings.started(member_id)
-                self.monitoringUsers[member_id] = task
+                if category:
+                    try:
+                        new_vc = await category.create_voice_channel(name=f"{member.display_name}'s Study Room")
+                        await member.move_to(new_vc)
+                        log.complete(status_code=50, message="Moved", details=f"Moved {member.name} to new VC.")
+                    except discord.Forbidden:
+                        log.process(status_code=-100, message="Forbidden", details="Missing permissions to create VC or move member.")
+                    except Exception as e:
+                        log.process(status_code=-100, message="Error", details=f"Failed to create VC or move user: {e}")
+                else:
+                    log.process(status_code=-100, message="Error", details="Configured category not found.")
                 
-                # dropping tasks
-                channel_id = before.channel.id
-                if channel_id in self.monitoringChannels:
-                    self.monitoringChannels[channel_id] -= 1
-
-                    if self.monitoringChannels[channel_id] <= 0:
-                        self.monitoringChannels.pop(channel_id, None)
-
-                        task = self.droppings.get(channel_id)
-                        if task:
-                            task.cancel()
-                            self.droppings.pop(channel_id, None)
-                log.complete(status_code=100, message="Handled")
                 log.send()
+                return
+
+            # If user left a channel that is in the study category (and not create_vc)
+            if before.channel and str(getattr(before.channel, 'category_id', '')) == category_id and str(before.channel.id) != create_vc_id:
+                # Delete it if it's empty
+                if len(before.channel.members) == 0:
+                    try:
+                        await before.channel.delete()
+                        self.session_manager.active_sessions.pop(str(before.channel.id), None)
+                        db["sessions"].delete_one({"_id": str(before.channel.id)})
+                        log.process(status_code=75, message="Delete VC", details="Deleted empty study VC.")
+                    except discord.Forbidden:
+                        log.process(status_code=-100, message="Forbidden", details="Missing permissions to delete VC.")
+            
+            # Use dseshpy to manage
+            log.process(status_code=0, message="Processing", details=f"Delegating {member.name}'s state to dseshpy SessionManager.")
+            
+            org_drop = study_data.get('drop', 10)
+            org_interval = study_data.get("interval", 15)
+            
+            await self.session_manager.process(
+                member=member,
+                before=before,
+                after=after,
+                session_category_id=category_id,
+                ignore_channel_id=create_vc_id,
+                exceptions_handler=self.exceptions,
+                routine_drop_amount=org_drop,
+                routine_callback_mean_time=org_interval
+            )
+            
+            log.complete(status_code=100, message="Handled", details="State change handled by SessionManager.")
+            log.send()
 
         except Exception:
             log.error(status_code=-100, message="Error", details=traceback.format_exc())
             log.send()
 
-    async def activityMonitor(self, member: discord.Member, studyId: str):
-        """
-        Wait 5 minutes and disconnect user if they don't enable camera or screen share.
-        """
-        taskLog = TaskLogger(filename=filename, task_name="activity_monitor")
-        taskLog.before(status_code=0, message="Watching", details=f"Starting the 5-minute inactivity watch for {member.name}...")
-        taskLog.send()
-        
-        await asyncio.sleep(300)  # Wait for 5 minutes
-        
-        resLog = TaskLogger(filename=filename, task_name="activity_monitor")
-        # Ensure user is still in the correct voice channel
-        if (
-            member.voice
-            and member.voice.channel
-            and str(member.voice.channel.id) == studyId
-        ):
-            if not member.voice.self_stream and not member.voice.self_video:
-                resLog.process(status_code=-75, message="Inactive", details=f"{member.name} failed to enable media within time. Disconnecting them...")
-                try:
-                    await member.voice.channel.send(
-                        embed=discord.Embed(
-                            description=f"{member.mention} Inactivity Detected. 🚨",
-                            timestamp=datetime.now(),
-                            color=0x3498DB,
-                        ),
-                        delete_after=20,
-                    )
-                    await member.move_to(None)
 
-                    try:
-                        self.learnings.cancel(str(member.id))
-                    except Exception as e:
-                        resLog.step(status_code=-100, message="Session Error", details=f"Failed to cancel the learning session for {member.name}: {e}")
-
-                    resLog.after(status_code=100, message="Success", details=f"Successfully handled the removal of {member.name} for inactivity.")
-                except asyncio.CancelledError:
-                    resLog.after(status_code=0, message="Cancelled", details=f"The monitoring task for {member.name} was cancelled.")
-                except discord.Forbidden:
-                    resLog.after(status_code=-100, message="Forbidden", details=f"I don't have the permissions to move {member.name} or send the notification.")
-                except Exception as e:
-                    resLog.after(status_code=-100, message="Error", details=f"An unexpected error occurred while moving {member.name}: {e}")
-                finally:
-                    resLog.send()
 
     @app_commands.guild_only()
     @app_commands.command(
@@ -546,26 +318,7 @@ class Study(commands.Cog):
             await inter.followup.send(content="10 Mins access granted!", ephemeral=True)
             return 
 
-    async def dropper_routine(self, channel: discord.VoiceChannel, org_drop: int, org_interval: int):
-        taskLog = TaskLogger(filename=filename, task_name="dropper_routine")
-        try:
-            taskLog.before(status_code=0, message="Waiting", details=f"Initiating the gold dropper routine in {channel.name}...")
-            taskLog.send()
-            while True:
-                interval = random.randint(0, int(2 * org_interval))
-                await asyncio.sleep(interval * 60)
 
-                drop = random.randint(int(0.25 * org_drop), int(1.75 * org_drop))
-                await channel.send(
-                    embed=discord.Embed(
-                        description=f"You got {drop} :coin: gold coins",
-                        color=discord.Color.gold()
-                    ),
-                    delete_after=20
-                )
-        except Exception as e:
-            taskLog.after(status_code=-100, message="Error", details=f"Gold dropper routine encountered an issue: {e}")
-            taskLog.send()
 
     @app_commands.guild_only()
     @app_commands.command(
@@ -682,7 +435,7 @@ class Study(commands.Cog):
                         ),
                         ephemeral=True,
                     )
-
+                    
                 serverCollection.delete_one({"_id": str(inter.guild.id)})
                 cmdLog.process(status_code=75, name="Removed", details="Server configuration purged from the database.")
                 file = discord.File(

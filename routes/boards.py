@@ -1,124 +1,134 @@
-from fastapi import APIRouter, Depends, Request, HTTPException
-from . import verify_token
+from fastapi import APIRouter, Request, HTTPException
+import uuid
+from datetime import datetime, timezone
 
 router = APIRouter()
 
-@router.get("/check")
-async def check(request: Request):
-    return request.app.state.bot.__dict__
-
-# fetching all the boards
-@router.get("/boards")
-async def boards(request: Request, id: str, payload: dict = Depends(verify_token)):
-    if payload.get("sub") != id:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    user_data = await request.app.db["users"].find_one({"_id": id})
-    if not user_data:
-        raise HTTPException(status_code=404, detail="User not found")
+async def recalculate_project_counts(request: Request, project_id: str):
+    # Recalculate tasks counts across all boards in a project
+    boards = await request.app.db["boards.docs"].find({"project_id": project_id}).to_list(length=None)
     
-    board_ids = []
-    for project in user_data.get("projects", []):
-        for board in project.get("boards", []):
-            board_ids.append(board["id"])
-            
-    cursor = request.app.db["boards"].find({"_id": {"$in": board_ids}})
-    boards_list = await cursor.to_list(length=100)
-    return boards_list
-
-@router.get("/board")
-async def get_board(request: Request, id: str, payload: dict = Depends(verify_token)):
-    board_doc = await request.app.db["boards"].find_one({"_id": id})
-    if not board_doc:
-        raise HTTPException(status_code=404, detail="Board not found")
-    if board_doc.get("user_id") != payload.get("sub"):
-        raise HTTPException(status_code=403, detail="Forbidden")
-    return board_doc
-
-@router.post("/board")
-async def create_board(request: Request, id: str, project_name: str, payload: dict = Depends(verify_token)):
-    user_id = payload.get("sub")
-    user_data = await request.app.db["users"].find_one({"_id": user_id})
-    if not user_data:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    project = next((p for p in user_data.get("projects", []) if p.get("name") == project_name), None)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-        
-    if any(b.get("id") == id for b in project.get("boards", [])):
-        raise HTTPException(status_code=400, detail="Board already exists in project")
-        
-    board_doc = {
-        "_id": id,
-        "user_id": user_id,
-        "tasks": []
-    }
-    await request.app.db["boards"].insert_one(board_doc)
-    
-    new_board_ref = {"id": id, "name": id}
-    project["boards"].append(new_board_ref)
-    await request.app.db["users"].update_one(
-        {"_id": user_id},
-        {"$set": {"projects": user_data["projects"]}}
+    counts = {"todo": 0, "cooking": 0, "done": 0}
+    for board in boards:
+        tasks = board.get("tasks", {})
+        for task_id, task in tasks.items():
+            status = task.get("status", "todo")
+            if status in counts:
+                counts[status] += 1
+                
+    await request.app.db["projects.docs"].update_one(
+        {"project_id": project_id},
+        {"$set": {"boards": counts}}
     )
-    return {"status": "success", "board": board_doc}
 
-@router.put("/board")
-async def update_board(request: Request, id: str, payload: dict = Depends(verify_token)):
-    user_id = payload.get("sub")
-    body = await request.json()
-    new_tasks = body.get("tasks")
-    new_name = body.get("name")
-    
-    board_doc = await request.app.db["boards"].find_one({"_id": id})
-    if not board_doc:
-        raise HTTPException(status_code=404, detail="Board not found")
-    if board_doc.get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+@router.post("")
+async def create_board(request: Request, user_id: str, project_id: str):
+    project = await request.app.db["projects.docs"].find_one({"project_id": project_id, "user_id": user_id})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or unauthorized")
         
+    body = await request.json()
+    board_id = str(uuid.uuid4())
+    
+    new_board = {
+        "user_id": user_id,
+        "project_id": project_id,
+        "board_id": board_id,
+        "title": body.get("title", ""),
+        "description": body.get("description", ""),
+        "image_link": body.get("image_link", ""),
+        "tasks": {},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await request.app.db["boards.docs"].insert_one(new_board)
+    new_board.pop("_id", None)
+    
+    return {"status": "success", "board": new_board}
+
+from typing import Optional
+
+@router.get("")
+async def get_board(request: Request, user_id: str, board_id: Optional[str] = None, project_id: Optional[str] = None):
+    if board_id:
+        board = await request.app.db["boards.docs"].find_one({"board_id": board_id, "user_id": user_id})
+        if not board:
+            raise HTTPException(status_code=404, detail="Board not found or unauthorized")
+            
+        return {
+            "board_id": board.get("board_id"),
+            "project_id": board.get("project_id"),
+            "title": board.get("title"),
+            "image_link": board.get("image_link"),
+            "tasks": board.get("tasks", {}),
+            "created_at": board.get("created_at")
+        }
+    elif project_id:
+        cursor = request.app.db["boards.docs"].find({"project_id": project_id, "user_id": user_id})
+        boards_list = await cursor.to_list(length=None)
+        
+        response = []
+        for board in boards_list:
+            response.append({
+                "board_id": board.get("board_id"),
+                "project_id": board.get("project_id"),
+                "title": board.get("title"),
+                "image_link": board.get("image_link"),
+                "tasks": board.get("tasks", {}),
+                "created_at": board.get("created_at")
+            })
+        return response
+    else:
+        raise HTTPException(status_code=400, detail="Must provide board_id or project_id")
+
+@router.put("")
+async def update_board(request: Request, board_id: str, user_id: str):
+    board = await request.app.db["boards.docs"].find_one({"board_id": board_id, "user_id": user_id})
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found or unauthorized")
+        
+    body = await request.json()
     update_data = {}
-    if new_tasks is not None:
-        update_data["tasks"] = new_tasks
+    
+    if "title" in body: update_data["title"] = body["title"]
+    if "description" in body: update_data["description"] = body["description"]
+    if "image_link" in body: update_data["image_link"] = body["image_link"]
+    
+    recount_needed = False
+    
+    if "tasks" in body:
+        # Merge task updates
+        current_tasks = board.get("tasks", {})
+        for t_id, t_data in body["tasks"].items():
+            if t_id not in current_tasks:
+                current_tasks[t_id] = {}
+            # Update specific fields or delete if requested (could be None to delete, but for now just update)
+            if t_data is None:
+                current_tasks.pop(t_id, None)
+            else:
+                current_tasks[t_id].update(t_data)
+        update_data["tasks"] = current_tasks
+        recount_needed = True
         
     if update_data:
-        await request.app.db["boards"].update_one(
-            {"_id": id},
+        await request.app.db["boards.docs"].update_one(
+            {"board_id": board_id},
             {"$set": update_data}
         )
         
-    if new_name is not None:
-        user_data = await request.app.db["users"].find_one({"_id": user_id})
-        if user_data:
-            updated = False
-            for project in user_data.get("projects", []):
-                for board in project.get("boards", []):
-                    if board["id"] == id:
-                        board["name"] = new_name
-                        updated = True
-            if updated:
-                await request.app.db["users"].update_one(
-                    {"_id": user_id},
-                    {"$set": {"projects": user_data["projects"]}}
-                )
+    if recount_needed:
+        await recalculate_project_counts(request, board.get("project_id"))
+        
     return {"status": "success"}
 
-@router.delete("/board")
-async def delete_board(request: Request, id: str, payload: dict = Depends(verify_token)):
-    user_id = payload.get("sub")
-    board_doc = await request.app.db["boards"].find_one({"_id": id})
-    if not board_doc:
-        raise HTTPException(status_code=404, detail="Board not found")
-    if board_doc.get("user_id") != user_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+@router.delete("")
+async def delete_board(request: Request, board_id: str, user_id: str):
+    board = await request.app.db["boards.docs"].find_one({"board_id": board_id, "user_id": user_id})
+    if not board:
+        raise HTTPException(status_code=404, detail="Board not found or unauthorized")
         
-    await request.app.db["boards"].delete_one({"_id": id})
+    await request.app.db["boards.docs"].delete_one({"board_id": board_id})
     
-    user_data = await request.app.db["users"].find_one({"_id": user_id})
-    if user_data:
-        for project in user_data.get("projects", []):
-            project["boards"] = [b for b in project.get("boards", []) if b["id"] != id]
-        await request.app.db["users"].update_one(
-            {"_id": user_id},
-            {"$set": {"projects": user_data["projects"]}}
-        )
+    await recalculate_project_counts(request, board.get("project_id"))
+    
     return {"status": "success"}
