@@ -248,10 +248,14 @@ class Reminders(commands.Cog):
                         embed.set_footer(text=data.get("text", "Focus!"))
                         embed.set_image(url=random.choice(self.gifs))
 
+                        is_picked_member_bot = True
+                        while is_picked_member_bot:
+                            member = random.choice(channel.guild.members)
+                            is_picked_member_bot = member.bot
+
                         await channel.send(
-                            content="YOOO WAKEUP everyone",
-                            embed=embed,
-                            delete_after=3600,
+                            content=f"YOOO WAKEUP {member.mention}",
+                            embed=embed
                         )
 
                         # Update DB (Sync call)

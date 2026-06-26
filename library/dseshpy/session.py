@@ -312,13 +312,18 @@ class Session:
             if checks.is_session_activity(before):
                 self._handle_activity_stop()
                 
-            await channel.send(
-                embed=discord.Embed(
-                    description=f"{member.mention} might be on a break. ☕",
-                    color=0x3498DB,
-                ),
-                delete_after=90,
-            )
+            try:
+                await channel.send(
+                    embed=discord.Embed(
+                        description=f"{member.mention} might be on a break. ☕",
+                        color=0x3498DB,
+                    ),
+                    delete_after=90,
+                )
+            except discord.NotFound:
+                pass # The channel was probably just deleted
+            except Exception:
+                pass # Suppress other sending errors to prevent breaking the flow
             
         elif is_before_in_session and is_after_in_session:
             # STILL IN SESSION (Activity state changed)

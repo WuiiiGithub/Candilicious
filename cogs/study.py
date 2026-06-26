@@ -168,18 +168,6 @@ class Study(commands.Cog):
                 log.send()
                 return
 
-            # If user left a channel that is in the study category (and not create_vc)
-            if before.channel and str(getattr(before.channel, 'category_id', '')) == category_id and str(before.channel.id) != create_vc_id:
-                # Delete it if it's empty
-                if len(before.channel.members) == 0:
-                    try:
-                        await before.channel.delete()
-                        self.session_manager.active_sessions.pop(str(before.channel.id), None)
-                        db["sessions"].delete_one({"_id": str(before.channel.id)})
-                        log.process(status_code=75, message="Delete VC", details="Deleted empty study VC.")
-                    except discord.Forbidden:
-                        log.process(status_code=-100, message="Forbidden", details="Missing permissions to delete VC.")
-            
             # Use dseshpy to manage
             log.process(status_code=0, message="Processing", details=f"Delegating {member.name}'s state to dseshpy SessionManager.")
             
@@ -196,6 +184,20 @@ class Study(commands.Cog):
                 routine_drop_amount=org_drop,
                 routine_callback_mean_time=org_interval
             )
+
+            # If user left a channel that is in the study category (and not create_vc)
+            if before.channel and str(getattr(before.channel, 'category_id', '')) == category_id and str(before.channel.id) != create_vc_id:
+                # Delete it if it's empty
+                if len(before.channel.members) == 0:
+                    try:
+                        await before.channel.delete()
+                        self.session_manager.active_sessions.pop(str(before.channel.id), None)
+                        db["sessions"].delete_one({"_id": str(before.channel.id)})
+                        log.process(status_code=75, message="Delete VC", details="Deleted empty study VC.")
+                    except discord.Forbidden:
+                        log.process(status_code=-100, message="Forbidden", details="Missing permissions to delete VC.")
+                    except Exception as e:
+                        log.process(status_code=-100, message="Error", details=f"Failed to delete empty VC: {e}")
             
             log.complete(status_code=100, message="Handled", details="State change handled by SessionManager.")
             log.send()

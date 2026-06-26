@@ -12,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
 from routes import (
     boards,
+    tasks,
     logs,
     projects,
     servers,
@@ -195,8 +196,13 @@ app.include_router(
 )
 app.include_router(
     router=boards.router,
-    prefix="/api/boards",
+    prefix="/api/projects/boards",
     tags=["boards"]
+)
+app.include_router(
+    router=tasks.router,
+    prefix="/api/projects/boards/tasks",
+    tags=["tasks"]
 )
 app.include_router(
     router=projects.router,
