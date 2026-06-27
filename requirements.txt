@@ -12,7 +12,6 @@ Babel==2.10.3
 bcrypt==3.2.2
 beautifulsoup4==4.12.3
 blinker==1.7.0
-Brlapi==0.8.5
 certifi==2023.11.17
 chardet==5.2.0
 click==8.3.1
