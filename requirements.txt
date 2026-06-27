@@ -15,13 +15,11 @@ blinker==1.7.0
 certifi==2023.11.17
 chardet==5.2.0
 click==8.3.1
-cloud-init==25.3
 colorama==0.4.6
 comm==0.2.2
 configobj==5.0.8
 cryptography==41.0.7
 cssselect==1.2.0
-cupshelpers==1.0
 DateTime==6.0
 dbus-fast==2.44.1
 dbus-python==1.3.2
@@ -29,7 +27,6 @@ debugpy==1.8.14
 decorator==5.2.1
 defer==1.0.6
 distro==1.9.0
-distro-info==1.7+build1
 dnspython==2.8.0
 docutils==0.20.1
 duplicity==2.1.4
@@ -70,7 +67,6 @@ jsonschema-specifications==2023.12.1
 jupyter_client==8.6.3
 jupyter_core==5.7.2
 keyring==24.3.1
-language-selector==0.1
 launchpadlib==1.11.0
 lazr.restfulclient==0.14.6
 lazr.uri==1.0.6
@@ -130,9 +126,7 @@ pyRFC3339==1.1
 pyrsistent==0.20.0
 pyserial==3.5
 pytest==9.0.2
-python-apt==2.7.7+ubuntu5.2
 python-dateutil==2.9.0.post0
-python-debian==0.1.49+ubuntu2
 python-dotenv==1.2.1
 python-gnupg==0.5.2
 python-multipart==0.0.21
@@ -163,7 +157,6 @@ sphinx_inline_tabs==2023.4.21
 stack-data==0.6.3
 starlette==0.50.0
 sympy==1.12
-systemd-python==235
 tabulate==0.8.10
 terminado==0.17.1
 testpath==0.6.0
@@ -174,16 +167,11 @@ ttystatus==0.38
 typer==0.21.1
 typing-inspection==0.4.2
 typing_extensions==4.15.0
-ubuntu-drivers-common==0.0.0
-ubuntu-pro-client==8001
-ufw==0.36.2
-unattended-upgrades==0.1
 unicodedata2==15.1.0
 uritemplate==4.1.1
 urllib3==2.0.7
-usb-creator==0.3.16
 uvicorn==0.40.0
-uvloop==0.22.1
+uvloop==0.22.
 wadllib==1.3.6
 watchfiles==1.1.1
 wcwidth==0.2.5
@@ -191,7 +179,6 @@ webcolors==1.11.1
 webencodings==0.5.1
 websockets==16.0
 xdg==5
-xkit==0.0.0
 yarl==1.8.2
 zipp==1.0.0
 zope.interface==8.2
