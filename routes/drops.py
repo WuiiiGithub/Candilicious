@@ -1,4 +1,5 @@
 import jwt
+import math
 import random
 from fastapi import APIRouter, Request, HTTPException
 from datetime import datetime, timezone
@@ -28,20 +29,17 @@ def get_activity_tier(state):
         return ACTIVITY_TIERS[0]
 
 def calculate_reward(activity_mult: float, iron_chance: float, vc_level: int, vc_xp: int):
-    base_mean = 10 + vc_level * 2
+    wood_mean = 60 - 35 * math.exp(-0.1 * (vc_level - 1))
+    iron_mean = 20 - 12 * math.exp(-0.1 * (vc_level - 1))
+
     variance_factor = max(0.1, 1.0 - vc_xp * 0.001)
-    variance = base_mean * 0.3 * variance_factor
 
-    mean = base_mean * activity_mult
-    spread = variance * activity_mult
-
-    wood = max(1, int(random.uniform(mean - spread, mean + spread)))
-
+    wood = max(0, int(random.gauss(wood_mean * activity_mult, 10 * activity_mult * variance_factor)))
+    iron = 0
     if random.random() < iron_chance:
-        amount = max(1, int(wood * random.uniform(5, 10)))
-        return "iron", amount
+        iron = max(0, int(random.gauss(iron_mean * activity_mult, 5 * activity_mult * variance_factor)))
 
-    return "wood", wood
+    return wood, iron
 
 @router.post("/claim/{token}")
 async def claim_drop(request: Request, token: str, body: ClaimRequest):
@@ -84,22 +82,34 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest):
     vc_level = session.get("vc_level", 1) if session else 1
     vc_xp = session.get("vc_xp", 0) if session else 0
 
-    material, amount = calculate_reward(activity_mult, iron_chance, vc_level, vc_xp)
+    wood, iron = calculate_reward(activity_mult, iron_chance, vc_level, vc_xp)
 
     await request.app.db["drops.claims"].insert_one({
         "drop_token": token,
         "user_id": user_id,
-        "material": material,
-        "amount": amount,
+        "wood": wood,
+        "iron": iron,
         "activity_str": act_str,
         "claimed_at": datetime.now(timezone.utc),
     })
 
-    msg = f"You got {amount} 🪙 Wood!" if material == "wood" else f"✨ You got {amount} 🪙 **IRON**! Incredible!"
+    await request.app.db["users"].update_one(
+        {"_id": user_id},
+        {"$inc": {"economy.wood": wood, "economy.iron": iron}},
+        upsert=True,
+    )
+
+    parts = []
+    if wood > 0:
+        parts.append(f"\U0001FAB5 \U0001FAB5 Wood: **{wood}**")
+    if iron > 0:
+        parts.append(f"\U0001F529 \U0001F529 Iron: **{iron}**")
+    msg = " \u2022 ".join(parts) if parts else "Nothing this time..."
+
     return {
         "ok": 1,
-        "material": material,
-        "amount": amount,
+        "wood": wood,
+        "iron": iron,
         "activity": act_str,
         "message": msg,
     }

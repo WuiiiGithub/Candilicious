@@ -125,39 +125,43 @@ class Session:
     async def drop_routine(self, channel: discord.VoiceChannel):
         try:
             while True:
-                interval = random.uniform(0.5, 1.5) * self.routine_callback_mean_time
-                await asyncio.sleep(interval * 60)
+                try:
+                    interval = random.uniform(0.5, 1.5) * self.routine_callback_mean_time
+                    await asyncio.sleep(interval * 60)
 
-                if not channel.members:
-                    continue
+                    if not channel.members:
+                        continue
 
-                token = secrets.token_urlsafe(32)
-                d_col = collections.get("drops")
-                if d_col is not None:
-                    d_col.insert_one({
-                        "token": token,
-                        "guild_id": self.guild_id,
-                        "channel_id": self.channel_id,
-                        "created_at": datetime.now(timezone.utc),
-                    })
+                    token = secrets.token_urlsafe(32)
+                    d_col = collections.get("drops")
+                    if d_col is not None:
+                        d_col.insert_one({
+                            "token": token,
+                            "guild_id": self.guild_id,
+                            "channel_id": self.channel_id,
+                            "created_at": datetime.now(timezone.utc),
+                        })
 
-                domain = os.getenv("WEBSITE_DOMAIN", "")
-                if domain and not domain.endswith("/"):
-                    domain += "/"
-                link = f"{domain}drops?token={token}"
+                    domain = os.getenv("FRONTEND_DOMAIN", "")
+                    if domain and not domain.endswith("/"):
+                        domain += "/"
+                    link = f"{domain}drops?token={token}"
 
-                self.routines_fired_count += 1
-                embed = discord.Embed(
-                    title="🎁 Drops Have Landed!",
-                    description=f"Someone dropped goodies in the study VC!\n\n📦 **[Collect yours here!]({link})**\n\n*Hurry — everyone can claim once!*",
-                    color=discord.Color.gold(),
-                )
-                await channel.send(embed=embed, delete_after=120)
+                    self.routines_fired_count += 1
+                    embed = discord.Embed(
+                        title="🎁 Drops Have Landed!",
+                        description=f"Someone dropped goodies in the study VC!\n\n📦 **[Collect yours here!]({link})**\n\n*Hurry — everyone can claim once!*",
+                        color=discord.Color.gold(),
+                    )
+                    await channel.send(embed=embed, delete_after=120)
+
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    print(f"Drop routine iteration error: {e}")
 
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            print(f"Drop routine error: {e}")
 
     def update_settings(self, **kwargs):
         """Dynamically update session details like rent, vc_level, etc., ensuring DB sync."""
@@ -207,7 +211,7 @@ class Session:
             self.members[member_id] = {"joined_at": datetime.now().isoformat()}
             
             # Start drop task if first member joins
-            if len(self.members) == 1 and not self.drop_task:
+            if len(self.members) == 1 and (not self.drop_task or self.drop_task.done()):
                 self.drop_task = asyncio.create_task(self.drop_routine(channel))
             
             task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
