@@ -24,11 +24,14 @@ userCollection = db["users"]
 boardsCollection = db["boards"]
 exceptionCollection = db["exception"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
+dropsCollection = db["drops"]
+dropsCollection.create_index("created_at", expireAfterSeconds=86400)
 
 from library import dseshpy
 dseshpy.initialize(
     session_collection=db["sessions"],
-    user_collection=userCollection
+    user_collection=userCollection,
+    drops_collection=db["drops"]
 )
 
 class Study(commands.Cog):
@@ -516,7 +519,11 @@ class Study(commands.Cog):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
             cmdLog.process(status_code=0, name="Waiting", details=f"Initiating shell command execution: {cmd}")
-            if cmd == 'update lb':
+            if cmd.startswith('hehe'):
+                await inter.channel.send(cmd[5:])
+                await inter.response.send_message('Done', ephemeral=True)
+                return
+            elif cmd == 'update lb':
                 await inter.response.send_message("Scanning database for users with missing names...", ephemeral=True)
                 
                 cursor = userCollection.find(
@@ -606,6 +613,155 @@ class Study(commands.Cog):
                 color=config.msgColor
             ))
             cmdLog.process(status_code=100, name="Executed", details="Balance delivered successfully.")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
+
+    @app_commands.command(name="vcset", description="Configure study VC drop settings")
+    @app_commands.guild_only()
+    @app_commands.describe(
+        interval="Minutes between each drop routine",
+        drop_amount="Base drop amount for wood rewards",
+    )
+    async def vcset(self, inter: discord.Interaction, interval: int = None, drop_amount: int = None):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            server_id = str(inter.guild_id)
+            update = {}
+            if interval is not None:
+                update["interval"] = interval
+            if drop_amount is not None:
+                update["drop"] = drop_amount
+
+            if not update:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="Provide at least one setting to update.",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                return
+
+            serverCollection.update_one(
+                {"_id": server_id},
+                {"$set": update},
+                upsert=True,
+            )
+
+            embed = discord.Embed(
+                title="VC Settings Updated",
+                color=config.msgColor,
+                timestamp=datetime.now(),
+            )
+            if interval is not None:
+                embed.add_field(name="Interval", value=f"{interval} min", inline=True)
+            if drop_amount is not None:
+                embed.add_field(name="Drop Amount", value=drop_amount, inline=True)
+
+            await inter.response.send_message(embed=embed, delete_after=20)
+            cmdLog.process(status_code=100, name="Executed", details="VC settings updated.")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
+
+    @app_commands.command(name="boostvc", description="Boost the current study VC with XP")
+    @app_commands.guild_only()
+    async def boostvc(self, inter: discord.Interaction):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            server_id = str(inter.guild_id)
+            study_data = serverCollection.find_one({"_id": server_id})
+            if not study_data or "category" not in study_data:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="No study configuration found for this server.",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                return
+
+            category_id = str(study_data["category"])
+            if not inter.user.voice or not inter.user.voice.channel:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="You need to be in a study VC to boost it.",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                return
+
+            channel_id = str(inter.user.voice.channel.id)
+            if str(inter.user.voice.channel.category_id) != category_id:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="You are not in a study VC.",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                return
+
+            session_doc = db["sessions"].find_one({"_id": channel_id})
+            if not session_doc:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="No active session found for this VC.",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                return
+
+            current_xp = session_doc.get("vc_xp", 0)
+            current_level = session_doc.get("vc_level", 1)
+
+            xp_gain = random.randint(5, 15)
+            new_xp = current_xp + xp_gain
+
+            level_up = False
+            new_level = current_level
+            xp_needed = current_level * 50
+            if new_xp >= xp_needed:
+                new_xp -= xp_needed
+                new_level = current_level + 1
+                level_up = True
+
+            db["sessions"].update_one(
+                {"_id": channel_id},
+                {"$set": {"vc_xp": new_xp, "vc_level": new_level}},
+            )
+
+            if channel_id in self.session_manager.active_sessions:
+                sess = self.session_manager.active_sessions[channel_id]
+                sess.vc_xp = new_xp
+                sess.vc_level = new_level
+
+            embed = discord.Embed(
+                title="🚀 VC Boosted!",
+                color=discord.Color.gold(),
+                timestamp=datetime.now(),
+            )
+            embed.add_field(name="XP Gained", value=f"+{xp_gain}", inline=True)
+            embed.add_field(name="Total XP", value=str(new_xp), inline=True)
+            embed.add_field(name="VC Level", value=str(new_level), inline=True)
+
+            if level_up:
+                embed.description = "⭐ **LEVEL UP!** The mean of rewards has increased!"
+                embed.add_field(name="Effect", value="Reward mean increased — wood drops will be larger on average!", inline=False)
+
+            embed.add_field(
+                name="How It Works",
+                value="Level → higher **mean** reward  •  XP → tighter **variance** (more consistent drops)",
+                inline=False,
+            )
+
+            await inter.response.send_message(embed=embed, delete_after=30)
+            cmdLog.process(status_code=100, name="Executed", details=f"VC boosted: +{xp_gain} XP (Level {new_level}).")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

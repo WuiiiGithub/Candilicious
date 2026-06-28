@@ -1,5 +1,7 @@
 import asyncio
-from datetime import datetime
+import secrets
+import os
+from datetime import datetime, timezone
 from . import collections
 from . import checks
 from discord import VoiceState, Member
@@ -121,58 +123,37 @@ class Session:
                     pass
 
     async def drop_routine(self, channel: discord.VoiceChannel):
-        """Drops randomized rewards periodically for all members in the session based on their activity."""
         try:
             while True:
-                # Calculate randomized interval
                 interval = random.uniform(0.5, 1.5) * self.routine_callback_mean_time
                 await asyncio.sleep(interval * 60)
-                
+
                 if not channel.members:
                     continue
-                    
+
+                token = secrets.token_urlsafe(32)
+                d_col = collections.get("drops")
+                if d_col is not None:
+                    d_col.insert_one({
+                        "token": token,
+                        "guild_id": self.guild_id,
+                        "channel_id": self.channel_id,
+                        "created_at": datetime.now(timezone.utc),
+                    })
+
+                domain = os.getenv("WEBSITE_DOMAIN", "")
+                if domain and not domain.endswith("/"):
+                    domain += "/"
+                link = f"{domain}drops?token={token}"
+
+                self.routines_fired_count += 1
                 embed = discord.Embed(
-                    title="💰 Session Rewards Dropped! 💰",
-                    color=discord.Color.gold()
+                    title="🎁 Drops Have Landed!",
+                    description=f"Someone dropped goodies in the study VC!\n\n📦 **[Collect yours here!]({link})**\n\n*Hurry — everyone can claim once!*",
+                    color=discord.Color.gold(),
                 )
-                
-                base_drop = self.routine_drop_amount
-                # Renting, boosting, and VC level increase rewards
-                multiplier = 1.0 + (self.vc_level * 0.1) + (self.rent_amount * 0.05)
-                
-                drop_details = []
-                for member in channel.members:
-                    if member.bot: continue
-                    
-                    state = member.voice
-                    if not state: continue
-                    
-                    # Reward hierarchy
-                    if state.self_video and state.self_stream:
-                        activity_mult = 2.5
-                        act_str = "Cam + Stream"
-                    elif state.self_video:
-                        activity_mult = 2.0
-                        act_str = "Cam"
-                    elif state.self_stream:
-                        activity_mult = 1.5
-                        act_str = "Stream"
-                    else:
-                        activity_mult = 1.0
-                        act_str = "No Activity"
-                        
-                    mean_drop = base_drop * multiplier * activity_mult
-                    variance = mean_drop * 0.2  # 20% variance shift
-                    
-                    actual_drop = max(1, int(random.uniform(mean_drop - variance, mean_drop + variance)))
-                    
-                    drop_details.append(f"{member.mention}: **{actual_drop}** 🪙 *({act_str})*")
-                
-                if drop_details:
-                    embed.description = "\n".join(drop_details)
-                    self.routines_fired_count += 1
-                    await channel.send(embed=embed, delete_after=60)
-                    
+                await channel.send(embed=embed, delete_after=120)
+
         except asyncio.CancelledError:
             pass
         except Exception as e:

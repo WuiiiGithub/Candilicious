@@ -12,10 +12,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
 from routes import (
     boards,
-    tasks,
+    drops,
     logs,
     projects,
     servers,
+    tasks,
     users,
     auth,
 )
@@ -90,6 +91,11 @@ async def lifespan(app: FastAPI):
         await app.db["oauth_pending_states"].create_index(
             [("createdAt", ASCENDING)], 
             expireAfterSeconds=600
+        )
+
+        await app.db["drops"].create_index(
+            [("createdAt", ASCENDING)],
+            expireAfterSeconds=86400
         )
 
     except (
@@ -228,6 +234,11 @@ app.include_router(
     router=auth.router,
     prefix="/api/auth",
     tags=["auth"]
+)
+app.include_router(
+    router=drops.router,
+    prefix="/api/drops",
+    tags=["drops"]
 )
 
 async def load():
