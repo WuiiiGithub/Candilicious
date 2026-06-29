@@ -182,7 +182,7 @@ class Study(commands.Cog):
             
             org_drop = study_data.get('drop', 10)
             org_interval = study_data.get("interval", 15)
-            
+
             await self.session_manager.process(
                 member=member,
                 before=before,
@@ -191,7 +191,7 @@ class Study(commands.Cog):
                 ignore_channel_id=create_vc_id,
                 exceptions_handler=self.exceptions,
                 routine_drop_amount=org_drop,
-                routine_callback_mean_time=org_interval
+                routine_callback_mean_time=org_interval,
             )
 
             # If user left a channel that is in the study category (and not create_vc)
@@ -624,50 +624,140 @@ class Study(commands.Cog):
         finally:
             cmdLog.send()
 
-    @app_commands.command(name="vcset", description="Configure study VC drop settings")
+    @app_commands.command(name="vcset", description="Configure study VC settings")
     @app_commands.guild_only()
     @app_commands.describe(
-        interval="Minutes between each drop routine",
-        drop_amount="Base drop amount for wood rewards",
+        name="Rename the study voice channel",
+        status="Set the channel status message (small text under VC name)",
+        session_type="Restrict which activity types are allowed in the VC",
     )
-    async def vcset(self, inter: discord.Interaction, interval: int = None, drop_amount: int = None):
+    @app_commands.choices(session_type=[
+        app_commands.Choice(name="All Types Allowed", value="*"),
+        app_commands.Choice(name="CAM Only", value="cam"),
+        app_commands.Choice(name="Screen Share Only", value="ss"),
+        app_commands.Choice(name="CAM or Screen Share Allowed", value="cam+ss"),
+        app_commands.Choice(name="CAM & Screen Share Allowed", value="cam&ss"),
+        app_commands.Choice(name="CAM or No Activity Allowed", value="cam+noact"),
+        app_commands.Choice(name="Screen Share or No Activity Allowed", value="ss+noact"),
+    ])
+    async def vcset(self, inter: discord.Interaction, name: str = None, status: str = None, session_type: str = None):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
             server_id = str(inter.guild_id)
-            update = {}
-            if interval is not None:
-                update["interval"] = interval
-            if drop_amount is not None:
-                update["drop"] = drop_amount
 
-            if not update:
+            if name is None and status is None and session_type is None:
+                if inter.user.voice:
+                    for session in self.session_manager.active_sessions.values():
+                        if str(inter.user.voice.channel.id) == session.channel_id:
+                            channel = inter.user.voice.channel
+                            type_names = {
+                                "*": "All Types Allowed",
+                                "cam": "CAM Only",
+                                "ss": "Screen Share Only",
+                                "cam+ss": "CAM or Screen Share Allowed",
+                                "cam&ss": "CAM & Screen Share Allowed",
+                                "cam+noact": "CAM or No Activity Allowed",
+                                "ss+noact": "Screen Share or No Activity Allowed",
+                            }
+                            embed = discord.Embed(
+                                title="Current VC Configuration",
+                                color=config.msgColor,
+                                timestamp=datetime.now(),
+                            )
+                            embed.add_field(name="Name", value=channel.name, inline=True)
+                            embed.add_field(name="Status", value=channel.status or "\u200b", inline=True)
+                            embed.add_field(name="Session Type", value=type_names.get(session.session_type, session.session_type), inline=False)
+                            await inter.response.send_message(embed=embed, ephemeral=True, delete_after=30)
+                            return
+
                 await inter.response.send_message(
                     embed=discord.Embed(
-                        description="Provide at least one setting to update.",
+                        description="You are not in a study VC.",
                         color=config.msgColor,
                     ),
                     ephemeral=True, delete_after=10,
                 )
                 return
 
-            serverCollection.update_one(
-                {"_id": server_id},
-                {"$set": update},
-                upsert=True,
-            )
+            if inter.user.voice:
+                for session in self.session_manager.active_sessions.values():
+                    if str(inter.user.voice.channel.id) == session.channel_id:
+                        if str(inter.user.id) != session.owner_id:
+                            await inter.response.send_message(
+                                embed=discord.Embed(
+                                    description="You are not the session owner.",
+                                    color=config.msgColor,
+                                ),
+                                ephemeral=True, delete_after=10,
+                            )
+                            return
+                        break
 
             embed = discord.Embed(
                 title="VC Settings Updated",
                 color=config.msgColor,
                 timestamp=datetime.now(),
             )
-            if interval is not None:
-                embed.add_field(name="Interval", value=f"{interval} min", inline=True)
-            if drop_amount is not None:
-                embed.add_field(name="Drop Amount", value=drop_amount, inline=True)
+
+            if session_type is not None and inter.user.voice:
+                for session in self.session_manager.active_sessions.values():
+                    if str(inter.user.voice.channel.id) == session.channel_id:
+                        session.update_settings(session_type=session_type)
+                        self.session_manager.sync(session)
+
+                        channel = inter.user.voice.channel
+                        category_id = str(channel.category_id) if channel.category_id else None
+                        non_compliant = []
+                        for vc_member in channel.members:
+                            if vc_member.bot:
+                                continue
+                            act_type = dseshpy.session._get_activity_type(vc_member.voice)
+                            if not session._is_allowed(act_type):
+                                non_compliant.append(vc_member)
+                                if str(vc_member.id) not in session.monitor_tasks:
+                                    task = asyncio.create_task(
+                                        session.activity_monitor(
+                                            vc_member, self.exceptions,
+                                            category_id, None
+                                        )
+                                    )
+                                    session.monitor_tasks[str(vc_member.id)] = task
+
+                        if non_compliant:
+                            mentions = " ".join(m.mention for m in non_compliant)
+                            await channel.send(
+                                content=mentions,
+                                embed=discord.Embed(
+                                    description=f"\u26a0\ufe0f This VC now requires **{session._type_description()}**. "
+                                    f"Turn on the required devices within 5 minutes or you'll be removed.",
+                                    color=0x3498DB,
+                                ),
+                                delete_after=30,
+                            )
+
+                        type_names = {
+                            "*": "All Types Allowed",
+                            "cam": "CAM Only",
+                            "ss": "Screen Share Only",
+                            "cam+ss": "CAM or Screen Share Allowed",
+                            "cam&ss": "CAM & Screen Share Allowed",
+                            "cam+noact": "CAM or No Activity Allowed",
+                            "ss+noact": "Screen Share or No Activity Allowed",
+                        }
+                        embed.add_field(name="Session Type", value=type_names.get(session_type, session_type), inline=True)
+                        break
+
+            if inter.user.voice:
+                channel = inter.user.voice.channel
+                if name is not None:
+                    await channel.edit(name=name)
+                    embed.add_field(name="Name", value=name, inline=True)
+                if status is not None:
+                    await channel.edit(status=status)
+                    embed.add_field(name="Status", value=status, inline=True)
 
             await inter.response.send_message(embed=embed, delete_after=20)
-            cmdLog.process(status_code=100, name="Executed", details="VC settings updated.")
+            cmdLog.process(status_code=100, name="Executed", details="VC settings updated successfully.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

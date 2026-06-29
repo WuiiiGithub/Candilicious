@@ -44,11 +44,8 @@ class Session:
         routine_drop_amount: int = 10,
         routines_fired_count: int=0,
 
-        # session type
-        is_cam_session: bool = False,
-        is_screen_share_session: bool = False,
-        is_no_activity_session: bool = True,
-        is_type_restricted_session: bool = False,
+        # session type: "cam", "ss", "cam+ss", "cam&ss", "cam+noact", "ss+noact", "*"
+        session_type: str = "*",
         **kwargs
     ):
         self.owner_id = owner_id
@@ -66,10 +63,7 @@ class Session:
         self.vc_xp = vc_xp
         self.rent_type = rent_type
         self.rent_amount = rent_amount
-        self.is_cam_session = is_cam_session
-        self.is_screen_share_session = is_screen_share_session
-        self.is_no_activity_session = is_no_activity_session
-        self.is_type_restricted_session = is_type_restricted_session
+        self.session_type = session_type
         
         self.members = members or {}
         
@@ -95,10 +89,7 @@ class Session:
             "rent_amount": self.rent_amount,
             "routine_callback_mean_time": self.routine_callback_mean_time,
             "routines_fired_count": self.routines_fired_count,
-            "is_cam_session": self.is_cam_session,
-            "is_screen_share_session": self.is_screen_share_session,
-            "is_no_activity_session": self.is_no_activity_session,
-            "is_type_restricted_session": self.is_type_restricted_session,
+            "session_type": self.session_type,
         }
         return d
 
@@ -109,19 +100,18 @@ class Session:
         return cls(**data)
 
     async def activity_monitor(self, member: Member, exceptions_handler=None, session_category_id=None, ignore_channel_id=None):
-        """Wait 5 minutes and disconnect user if they don't enable camera or screen share."""
+        """Wait 5 minutes and disconnect user if they don't comply with session type or activity requirements."""
         await asyncio.sleep(300)
         
         if member.voice and checks.get_session_status(member.voice, session_category_id, ignore_channel_id) and str(member.voice.channel.id) == self.channel_id:
-            if not checks.is_session_activity(member.voice):
+            after_type = _get_activity_type(member.voice)
+            if not self._is_allowed(after_type):
                 try:
-                    await member.voice.channel.send(
-                        embed=discord.Embed(
-                            description=f"{member.mention} Inactivity Detected. \U0001f6a8",
-                            color=0x3498DB,
-                        ),
-                        delete_after=20,
+                    embed = discord.Embed(
+                        description=f"{member.mention} You do not meet the session type requirements ({self._type_description()}). \U0001f6a8",
+                        color=0x3498DB,
                     )
+                    await member.voice.channel.send(embed=embed, delete_after=20)
                     await member.move_to(None)
                 except:
                     pass
@@ -199,6 +189,35 @@ class Session:
 
     def _reset_seg(self, member_id: str):
         self.members[member_id]["_seg"] = datetime.now().isoformat()
+
+    def _is_allowed(self, activity_type: str) -> bool:
+        if self.session_type == "*":
+            return True
+        st = self.session_type
+        if st == "cam":
+            return activity_type in ("cam", "cam+ss")
+        if st == "ss":
+            return activity_type in ("ss", "cam+ss")
+        if st == "cam+ss":
+            return activity_type in ("cam", "ss", "cam+ss")
+        if st == "cam&ss":
+            return activity_type == "cam+ss"
+        if st == "cam+noact":
+            return activity_type in ("cam", "cam+ss", "noact")
+        if st == "ss+noact":
+            return activity_type in ("ss", "cam+ss", "noact")
+        return True
+
+    def _type_description(self) -> str:
+        descriptions = {
+            "cam": "camera on",
+            "ss": "screen sharing",
+            "cam+ss": "camera or screen share",
+            "cam&ss": "both camera and screen share",
+            "cam+noact": "camera on or no activity",
+            "ss+noact": "screen sharing or no activity",
+        }
+        return descriptions.get(self.session_type, "any activity type")
 
     def _accrue_time(self, member_id: str, activity_type: str, seconds: float):
         if member_id not in self.members:
@@ -378,8 +397,8 @@ class Session:
             
             task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
             self.monitor_tasks[member_id] = task
-            
-            if checks.is_session_activity(after):
+
+            if self._is_allowed(after_type) and checks.is_session_activity(after):
                 task.cancel()
                 self.monitor_tasks.pop(member_id, None)
 
@@ -427,10 +446,10 @@ class Session:
             else:
                 embed.add_field(name="Project Access", value="\u274c I couldn't DM you the access link. Please open your DMs and rejoin!", inline=False)
 
-            if not exceptions_handler or exceptions_handler.isNotInside(member_id):
+            if not self._is_allowed(after_type):
                 embed.add_field(
-                    name="Request",
-                    value="\U0001f534 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
+                    name="\u26a0\ufe0f Session Type Restriction",
+                    value=f"\U0001f534 This session requires **{self._type_description()}**.\nTurn on the required devices, or you'll be removed after 5 minutes!",
                     inline=False
                 )
             await channel.send(content=member.mention, embed=embed, delete_after=20)
@@ -444,6 +463,8 @@ class Session:
             leave_act_type = self.members.get(member_id, {}).get("last_activity", "noact") if member_id in self.members else "noact"
             self._close_sub_session(member_id, leave_act_type)
             self.members.pop(member_id, None)
+            if member_id == self.owner_id:
+                self.owner_id = next(iter(self.members)) if self.members else None
             self._update_members_count()
 
             u_col = collections.get('user')
@@ -475,11 +496,26 @@ class Session:
             if old_type != new_type:
                 self._track_activity_change(member_id, old_type, new_type)
 
-            if checks.is_activity_started(before, after):
-                if member_id in self.monitor_tasks:
+                if not self._is_allowed(new_type):
+                    if member_id not in self.monitor_tasks:
+                        task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
+                        self.monitor_tasks[member_id] = task
+                        await channel.send(
+                            embed=discord.Embed(
+                                description=f"{member.mention} Your activity doesn't match this session's requirements ({self._type_description()}). \u26a0\ufe0f",
+                                color=0x3498DB,
+                            ),
+                            delete_after=20,
+                        )
+                elif member_id in self.monitor_tasks:
                     self.monitor_tasks[member_id].cancel()
                     del self.monitor_tasks[member_id]
-                    
+
+            if checks.is_activity_started(before, after):
+                if self._is_allowed(new_type) and member_id in self.monitor_tasks:
+                    self.monitor_tasks[member_id].cancel()
+                    del self.monitor_tasks[member_id]
+
                 await channel.send(
                     embed=discord.Embed(
                         description=f"{member.mention}'s Activity Detected! \u2705",
