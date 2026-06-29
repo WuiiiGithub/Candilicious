@@ -8,6 +8,8 @@ from . import limiter
 import config
 from urllib.parse import urlencode
 
+GUILD_ID = "1491471841716605062"
+
 router = APIRouter()
 
 @router.get("/login")
@@ -52,11 +54,9 @@ async def callback(request: Request, code: str, state: str):
             raise HTTPException(status_code=400, detail=f"Invalid token exchange: {error_detail}")
 
         token_data = token_res.json()
+        headers = {"Authorization": f"Bearer {token_data['access_token']}"}
 
-        # User Info Fetch
-        user_res = await client.get("https://discord.com/api/users/@me", 
-            headers={"Authorization": f"Bearer {token_data['access_token']}"})
-
+        user_res = await client.get("https://discord.com/api/users/@me", headers=headers)
         if user_res.status_code != 200:
             try:
                 error_detail = user_res.json()
@@ -66,14 +66,40 @@ async def callback(request: Request, code: str, state: str):
             raise HTTPException(status_code=400, detail=f"Could not fetch user info: {error_detail}")
 
         user_info = user_res.json()
-        print(f"DEBUG USER INFO: {user_info}")
+
+        guilds_res = await client.get("https://discord.com/api/users/@me/guilds", headers=headers)
+        in_guild = False
+        if guilds_res.status_code == 200:
+            guilds = guilds_res.json()
+            in_guild = any(g["id"] == GUILD_ID for g in guilds)
+
+    user_id = user_info["id"]
+    avatar_hash = user_info.get("avatar")
+    if avatar_hash:
+        ext = "gif" if avatar_hash.startswith("a_") else "png"
+        avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.{ext}"
+    else:
+        avatar_url = f"https://cdn.discordapp.com/embed/avatars/0.png"
+
+    await request.app.db["users"].update_one(
+        {"_id": user_id},
+        {"$set": {
+            "name": user_info.get("username"),
+            "display_name": user_info.get("global_name") or user_info.get("username"),
+            "pfp": avatar_url,
+            "email": user_info.get("email"),
+            "last_login": datetime.now(timezone.utc),
+        }},
+        upsert=True,
+    )
 
     payload = {
-        "sub": user_info["id"],
+        "sub": user_id,
         "username": user_info.get("username"),
         "avatar": user_info.get("avatar"),
+        "in_guild": in_guild,
         "iat": datetime.now(timezone.utc),
-        "exp": datetime.now(timezone.utc) + timedelta(days=7)
+        "exp": datetime.now(timezone.utc) + timedelta(days=7),
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
