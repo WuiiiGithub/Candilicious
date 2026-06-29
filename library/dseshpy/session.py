@@ -123,7 +123,6 @@ class Session:
                         delete_after=20,
                     )
                     await member.move_to(None)
-                    self.members.pop(str(member.id), None)
                 except:
                     pass
 
@@ -204,18 +203,6 @@ class Session:
     def _accrue_time(self, member_id: str, activity_type: str, seconds: float):
         if member_id not in self.members:
             return
-        sessions = self.members[member_id].get("sessions", [])
-        if not sessions:
-            return
-        cur = sessions[-1]
-        joined = cur.get("joined_at", {})
-        joined["total"] = joined.get("total", 0) + seconds
-        if activity_type == "cam+ss":
-            joined["cam"] = joined.get("cam", 0) + seconds
-            joined["ss"] = joined.get("ss", 0) + seconds
-        elif activity_type in ("cam", "ss", "noact"):
-            joined[activity_type] = joined.get(activity_type, 0) + seconds
-
         net = self.members[member_id].setdefault("net_time", {"cam": 0, "ss": 0, "noact": 0, "total": 0})
         net["total"] = net.get("total", 0) + seconds
         if activity_type == "cam+ss":
@@ -224,68 +211,84 @@ class Session:
         elif activity_type in ("cam", "ss", "noact"):
             net[activity_type] = net.get(activity_type, 0) + seconds
 
+        log_id = self.members[member_id].get("log_id")
+        if log_id:
+            act_col = collections.get("session.logs")
+            if act_col is not None:
+                inc = {"joined_at.total": seconds}
+                if activity_type == "cam+ss":
+                    inc["joined_at.cam"] = seconds
+                    inc["joined_at.ss"] = seconds
+                elif activity_type in ("cam", "ss", "noact"):
+                    inc[f"joined_at.{activity_type}"] = seconds
+                act_col.update_one(
+                    {"_id": log_id},
+                    {"$inc": inc}
+                )
+
     def _close_sub_session(self, member_id: str, activity_type: str):
         if member_id not in self.members:
-            return
-        sessions = self.members[member_id].get("sessions", [])
-        if not sessions:
-            return
-        cur = sessions[-1]
-        if cur.get("left_at") is not None:
             return
 
         secs = self._seg_elapsed(member_id)
         if secs > 0:
             self._accrue_time(member_id, activity_type, secs)
 
-        now = datetime.now()
-        cur["left_at"] = now.isoformat()
-
-        joined = cur.get("joined_at", {})
-        act_col = collections.get("activity.session")
-        if act_col is not None:
-            act_col.insert_one({
-                "user_id": member_id,
-                "session_id": self.channel_id,
-                "joined_at": joined.get("time"),
-                "left_at": cur["left_at"],
-                "time_breakdown": {
-                    "ss": joined.get("ss", 0),
-                    "noact": joined.get("noact", 0),
-                    "cam": joined.get("cam", 0),
-                    "total": joined.get("total", 0),
-                }
-            })
+        now = datetime.now(timezone.utc)
+        log_id = self.members[member_id].get("log_id")
+        if log_id:
+            act_col = collections.get("session.logs")
+            if act_col is not None:
+                act_col.update_one(
+                    {"_id": log_id},
+                    {"$set": {"left_at": now.isoformat()}}
+                )
 
     def _start_sub_session(self, member_id: str):
-        now = datetime.now()
-        if member_id in self.members:
-            sessions = self.members[member_id].get("sessions", [])
-            if sessions:
-                last_session = sessions[-1]
-                if last_session.get("left_at"):
-                    left_time = datetime.fromisoformat(last_session["left_at"]) if isinstance(last_session["left_at"], str) else last_session["left_at"]
-                    if (now - left_time).total_seconds() <= 60:
-                        last_session["left_at"] = None
-                        last_session["joined_at"]["time"] = now.isoformat()
-                        self._reset_seg(member_id)
-                        return
-        else:
+        now = datetime.now(timezone.utc)
+        if member_id not in self.members:
             self.members[member_id] = {
-                "sessions": [],
-                "net_time": {"cam": 0, "ss": 0, "noact": 0, "total": 0}
+                "net_time": {"cam": 0, "ss": 0, "noact": 0, "total": 0},
+                "last_activity": "noact",
             }
 
-        self.members[member_id]["sessions"].append({
+        act_col = collections.get("session.logs")
+        if act_col is not None:
+            latest = act_col.find_one(
+                {"user_id": member_id, "session_id": self.channel_id},
+                sort=[("_id", -1)]
+            )
+            if latest and latest.get("left_at"):
+                left_time = latest["left_at"]
+                if isinstance(left_time, str):
+                    left_time = datetime.fromisoformat(left_time)
+                if (now - left_time).total_seconds() <= 60:
+                    act_col.update_one(
+                        {"_id": latest["_id"]},
+                        {"$set": {
+                            "left_at": None,
+                            "joined_at.time": now.isoformat(),
+                        }}
+                    )
+                    self.members[member_id]["log_id"] = latest["_id"]
+                    self._reset_seg(member_id)
+                    return
+
+        result = act_col.insert_one({
+            "user_id": member_id,
+            "session_id": self.channel_id,
+            "guild_id": self.guild_id,
             "joined_at": {
                 "time": now.isoformat(),
                 "ss": 0,
                 "noact": 0,
                 "cam": 0,
-                "total": 0
+                "total": 0,
             },
             "left_at": None,
-        })
+        }) if act_col is not None else None
+        if result:
+            self.members[member_id]["log_id"] = result.inserted_id
         self._reset_seg(member_id)
 
     def _update_members_count(self):

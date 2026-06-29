@@ -30,7 +30,7 @@ try:
 except pymongo.errors.OperationFailure:
     pass
 dropsCollection.create_index("created_at", expireAfterSeconds=3600)
-activitySessionCollection = db["activity.session"]
+activitySessionCollection = db["session.logs"]
 
 from library import dseshpy
 dseshpy.initialize(

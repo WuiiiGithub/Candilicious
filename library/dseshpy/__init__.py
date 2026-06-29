@@ -29,4 +29,4 @@ def initialize(
     if drops_collection is not None:
         collections['drop.offers'] = drops_collection
     if activity_session_collection is not None:
-        collections['activity.session'] = activity_session_collection
+        collections['session.logs'] = activity_session_collection
