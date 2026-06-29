@@ -7,10 +7,19 @@ from . import checks
 from discord import VoiceState, Member
 import discord
 import random
+import config
 
-# the below import and assigning is just for keyboard auto complete help
 import pymongo
 session_collection = lambda: collections.get('session')
+
+def _get_activity_type(state: VoiceState) -> str:
+    if state.self_video and state.self_stream:
+        return "cam+ss"
+    elif state.self_video:
+        return "cam"
+    elif state.self_stream:
+        return "ss"
+    return "noact"
 
 class Session:
     """
@@ -31,7 +40,7 @@ class Session:
         rent_amount: int = 0,
 
         # routines
-        routine_callback_mean_time: int = 30, # interval in minutes
+        routine_callback_mean_time: int = 30,
         routine_drop_amount: int = 10,
         routines_fired_count: int=0,
 
@@ -40,6 +49,7 @@ class Session:
         is_screen_share_session: bool = False,
         is_no_activity_session: bool = True,
         is_type_restricted_session: bool = False,
+        **kwargs
     ):
         self.owner_id = owner_id
         self.guild_id = guild_id
@@ -62,25 +72,21 @@ class Session:
         self.is_type_restricted_session = is_type_restricted_session
         
         self.members = members or {}
-        self.active_count = active_count
         
         self.routine_callback_mean_time = routine_callback_mean_time
-        self.routine_drop_amount = routine_drop_amount
         self.routines_fired_count = routines_fired_count
         
-        # in-memory task tracking (not saved to DB)
         self.monitor_tasks = {}
         self.drop_task = None
         
     def to_dict(self):
         """Convert session state to dictionary for MongoDB."""
-        return {
+        d = {
             "_id": self.channel_id,
             "owner_id": self.owner_id,
             "guild_id": self.guild_id,
             "channel_id": self.channel_id,
             "members": self.members,
-            "active_count": self.active_count,
             "members_limit": self.members_limit,
             "members_count": self.members_count,
             "vc_level": self.vc_level,
@@ -88,13 +94,13 @@ class Session:
             "rent_type": self.rent_type,
             "rent_amount": self.rent_amount,
             "routine_callback_mean_time": self.routine_callback_mean_time,
-            "routine_drop_amount": self.routine_drop_amount,
             "routines_fired_count": self.routines_fired_count,
             "is_cam_session": self.is_cam_session,
             "is_screen_share_session": self.is_screen_share_session,
             "is_no_activity_session": self.is_no_activity_session,
             "is_type_restricted_session": self.is_type_restricted_session,
         }
+        return d
 
     @classmethod
     def from_dict(cls, data: dict):
@@ -111,16 +117,24 @@ class Session:
                 try:
                     await member.voice.channel.send(
                         embed=discord.Embed(
-                            description=f"{member.mention} Inactivity Detected. 🚨",
+                            description=f"{member.mention} Inactivity Detected. \U0001f6a8",
                             color=0x3498DB,
                         ),
                         delete_after=20,
                     )
                     await member.move_to(None)
-                    # Time during this inactivity is voided
                     self.members.pop(str(member.id), None)
                 except:
                     pass
+
+    def _sync_session_now(self):
+        col = session_collection()
+        if col is not None:
+            col.update_one(
+                {"_id": self.channel_id},
+                {"$set": self.to_dict()},
+                upsert=True
+            )
 
     async def drop_routine(self, channel: discord.VoiceChannel):
         try:
@@ -133,12 +147,13 @@ class Session:
                         continue
 
                     token = secrets.token_urlsafe(32)
-                    d_col = collections.get("drops")
+                    d_col = collections.get("drop.offers")
                     if d_col is not None:
                         d_col.insert_one({
                             "token": token,
                             "guild_id": self.guild_id,
                             "channel_id": self.channel_id,
+                            "drop_number": self.routines_fired_count + 1,
                             "created_at": datetime.now(timezone.utc),
                         })
 
@@ -148,12 +163,15 @@ class Session:
                     link = f"{domain}drops?token={token}"
 
                     self.routines_fired_count += 1
+                    self._sync_session_now()
+
                     embed = discord.Embed(
-                        title="🎁 Drops Have Landed!",
-                        description=f"Someone dropped goodies in the study VC!\n\n📦 **[Collect yours here!]({link})**\n\n*Hurry — everyone can claim once!*",
-                        color=discord.Color.gold(),
+                        title="\U0001f381 Drops Have Landed!",
+                        description=f"Someone dropped goodies in the study VC!\n\U0001f4e6 **[__Collect yours here by clicking this text!__]({link})**",
+                        color=discord.Color.gold()
                     )
-                    await channel.send(embed=embed, delete_after=120)
+                    embed.set_footer(text="*Hurry \u2014 everyone can claim once!*")
+                    await channel.send(embed=embed, delete_after=config.DROP_COLLECTION_TIME)
 
                 except asyncio.CancelledError:
                     raise
@@ -172,35 +190,171 @@ class Session:
                 updated = True
         return updated
 
-    def _handle_activity_start(self):
-        self.active_count += 1
+    def _seg_elapsed(self, member_id: str) -> float:
+        seg = self.members.get(member_id, {}).get("_seg")
+        if not seg:
+            return 0.0
+        seg_time = datetime.fromisoformat(seg) if isinstance(seg, str) else seg
+        secs = (datetime.now() - seg_time).total_seconds()
+        return max(0.0, secs)
 
-    def _handle_activity_stop(self):
-        self.active_count = max(0, self.active_count - 1)
-        
-    def _update_user_time(self, member: Member):
+    def _reset_seg(self, member_id: str):
+        self.members[member_id]["_seg"] = datetime.now().isoformat()
+
+    def _accrue_time(self, member_id: str, activity_type: str, seconds: float):
+        if member_id not in self.members:
+            return
+        sessions = self.members[member_id].get("sessions", [])
+        if not sessions:
+            return
+        cur = sessions[-1]
+        joined = cur.get("joined_at", {})
+        joined["total"] = joined.get("total", 0) + seconds
+        if activity_type == "cam+ss":
+            joined["cam"] = joined.get("cam", 0) + seconds
+            joined["ss"] = joined.get("ss", 0) + seconds
+        elif activity_type in ("cam", "ss", "noact"):
+            joined[activity_type] = joined.get(activity_type, 0) + seconds
+
+        net = self.members[member_id].setdefault("net_time", {"cam": 0, "ss": 0, "noact": 0, "total": 0})
+        net["total"] = net.get("total", 0) + seconds
+        if activity_type == "cam+ss":
+            net["cam"] = net.get("cam", 0) + seconds
+            net["ss"] = net.get("ss", 0) + seconds
+        elif activity_type in ("cam", "ss", "noact"):
+            net[activity_type] = net.get(activity_type, 0) + seconds
+
+    def _close_sub_session(self, member_id: str, activity_type: str):
+        if member_id not in self.members:
+            return
+        sessions = self.members[member_id].get("sessions", [])
+        if not sessions:
+            return
+        cur = sessions[-1]
+        if cur.get("left_at") is not None:
+            return
+
+        secs = self._seg_elapsed(member_id)
+        if secs > 0:
+            self._accrue_time(member_id, activity_type, secs)
+
+        now = datetime.now()
+        cur["left_at"] = now.isoformat()
+
+        joined = cur.get("joined_at", {})
+        act_col = collections.get("activity.session")
+        if act_col is not None:
+            act_col.insert_one({
+                "user_id": member_id,
+                "session_id": self.channel_id,
+                "joined_at": joined.get("time"),
+                "left_at": cur["left_at"],
+                "time_breakdown": {
+                    "ss": joined.get("ss", 0),
+                    "noact": joined.get("noact", 0),
+                    "cam": joined.get("cam", 0),
+                    "total": joined.get("total", 0),
+                }
+            })
+
+    def _start_sub_session(self, member_id: str):
+        now = datetime.now()
+        if member_id in self.members:
+            sessions = self.members[member_id].get("sessions", [])
+            if sessions:
+                last_session = sessions[-1]
+                if last_session.get("left_at"):
+                    left_time = datetime.fromisoformat(last_session["left_at"]) if isinstance(last_session["left_at"], str) else last_session["left_at"]
+                    if (now - left_time).total_seconds() <= 60:
+                        last_session["left_at"] = None
+                        last_session["joined_at"]["time"] = now.isoformat()
+                        self._reset_seg(member_id)
+                        return
+        else:
+            self.members[member_id] = {
+                "sessions": [],
+                "net_time": {"cam": 0, "ss": 0, "noact": 0, "total": 0}
+            }
+
+        self.members[member_id]["sessions"].append({
+            "joined_at": {
+                "time": now.isoformat(),
+                "ss": 0,
+                "noact": 0,
+                "cam": 0,
+                "total": 0
+            },
+            "left_at": None,
+        })
+        self._reset_seg(member_id)
+
+    def _update_members_count(self):
+        total = len(self.members)
+        cam = 0
+        ss = 0
+        noact = 0
+        for mid, mdata in self.members.items():
+            if not isinstance(mdata, dict):
+                continue
+            act_type = mdata.get("last_activity", "noact")
+            if act_type == "cam+ss":
+                cam += 1
+                ss += 1
+            elif act_type == "cam":
+                cam += 1
+            elif act_type == "ss":
+                ss += 1
+            else:
+                noact += 1
+        self.members_count = {
+            "total": total,
+            "noact": noact,
+            "ss": ss,
+            "cam": cam,
+        }
+
+    def _track_activity_change(self, member_id: str, old_type: str, new_type: str):
+        secs = self._seg_elapsed(member_id)
+        if secs > 0:
+            self._accrue_time(member_id, old_type, secs)
+        self._reset_seg(member_id)
+        self.members[member_id]["last_activity"] = new_type
+        self._update_members_count()
+
+    def _update_user_time(self, member: Member, activity_type: str = None):
         member_id = str(member.id)
-        if member_id in self.members and "joined_at" in self.members[member_id]:
-            joined_at = datetime.fromisoformat(self.members[member_id]["joined_at"])
-            secs = (datetime.now() - joined_at).total_seconds()
-            
-            u_col = collections.get('user')
-            if u_col is not None:
-                u_col.update_one(
-                    {"_id": member_id},
-                    {
-                        "$inc": {f"servers.{self.guild_id}.time": secs},
-                        "$set": {"name": member.display_name},
-                        "$setOnInsert": {"_id": member_id}
-                    },
-                    upsert=True
-                )
-            self.members[member_id]["joined_at"] = datetime.now().isoformat()
+        if member_id not in self.members:
+            return
+        sessions = self.members[member_id].get("sessions", [])
+        if not sessions:
+            return
+        cur = sessions[-1]
+        if cur.get("left_at") is not None:
+            return
+
+        secs = self._seg_elapsed(member_id)
+        if secs <= 0:
+            return
+
+        act_type = activity_type or self.members[member_id].get("last_activity", "noact")
+        self._accrue_time(member_id, act_type, secs)
+        self._reset_seg(member_id)
+
+        u_col = collections.get('user')
+        if u_col is not None:
+            u_col.update_one(
+                {"_id": member_id},
+                {
+                    "$inc": {f"servers.{self.guild_id}.time": secs},
+                    "$set": {"name": member.display_name},
+                    "$setOnInsert": {"_id": member_id}
+                },
+                upsert=True
+            )
 
     async def manage(self, member: Member, before: VoiceState, after: VoiceState, exceptions_handler=None, session_category_id=None, ignore_channel_id=None):
         member_id = str(member.id)
         
-        # Determine the channel relevant to this session instance
         channel = after.channel if (after.channel and str(after.channel.id) == self.channel_id) else before.channel
         
         is_after_in_session = after.channel and str(after.channel.id) == self.channel_id
@@ -208,9 +362,14 @@ class Session:
         
         if is_after_in_session and not is_before_in_session:
             # JOIN EVENT
-            self.members[member_id] = {"joined_at": datetime.now().isoformat()}
-            
-            # Start drop task if first member joins
+            if self.owner_id is None:
+                self.owner_id = member_id
+
+            self._start_sub_session(member_id)
+            after_type = _get_activity_type(after)
+            self.members[member_id]["last_activity"] = after_type
+            self._update_members_count()
+
             if len(self.members) == 1 and (not self.drop_task or self.drop_task.done()):
                 self.drop_task = asyncio.create_task(self.drop_routine(channel))
             
@@ -218,11 +377,9 @@ class Session:
             self.monitor_tasks[member_id] = task
             
             if checks.is_session_activity(after):
-                self._handle_activity_start()
                 task.cancel()
                 self.monitor_tasks.pop(member_id, None)
 
-            # Project Access Logic
             import secrets, os, qrcode, io
             dm_status = False
             u_col = collections.get('user')
@@ -256,7 +413,7 @@ class Session:
                     dm_status = False
                 
             embed = discord.Embed(
-                title=f"🎉 {member.display_name} joined the session! 🎉",
+                title=f"\U0001f389 {member.display_name} joined the session! \U0001f389",
                 description=f"Welcome {member.mention}!\nStudy time starts!",
                 color=0x3498DB,
             )
@@ -265,12 +422,12 @@ class Session:
             if dm_status:
                 embed.add_field(name="Project Access", value="Secret access link has been sent to your DMs! :ninja:", inline=False)
             else:
-                embed.add_field(name="Project Access", value="❌ I couldn't DM you the access link. Please open your DMs and rejoin!", inline=False)
+                embed.add_field(name="Project Access", value="\u274c I couldn't DM you the access link. Please open your DMs and rejoin!", inline=False)
 
             if not exceptions_handler or exceptions_handler.isNotInside(member_id):
                 embed.add_field(
                     name="Request",
-                    value="🔴 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
+                    value="\U0001f534 Please turn on your **camera or screen share**. Otherwise, you may be removed after 5 minutes!",
                     inline=False
                 )
             await channel.send(content=member.mention, embed=embed, delete_after=20)
@@ -281,60 +438,59 @@ class Session:
                 self.monitor_tasks[member_id].cancel()
                 del self.monitor_tasks[member_id]
 
-            self._update_user_time(member)
+            leave_act_type = self.members.get(member_id, {}).get("last_activity", "noact") if member_id in self.members else "noact"
+            self._close_sub_session(member_id, leave_act_type)
             self.members.pop(member_id, None)
-            
-            # Revoke Project Access
+            self._update_members_count()
+
             u_col = collections.get('user')
             if u_col is not None:
                 u_col.update_one({"_id": member_id}, {"$unset": {"webToken": ""}})
             
-            # Cancel drop task if everyone left
             if len(self.members) == 0 and self.drop_task:
                 self.drop_task.cancel()
                 self.drop_task = None
             
-            if checks.is_session_activity(before):
-                self._handle_activity_stop()
-                
             try:
                 await channel.send(
                     embed=discord.Embed(
-                        description=f"{member.mention} might be on a break. ☕",
+                        description=f"{member.mention} might be on a break. \u2615",
                         color=0x3498DB,
                     ),
                     delete_after=90,
                 )
             except discord.NotFound:
-                pass # The channel was probably just deleted
+                pass
             except Exception:
-                pass # Suppress other sending errors to prevent breaking the flow
+                pass
             
         elif is_before_in_session and is_after_in_session:
             # STILL IN SESSION (Activity state changed)
+            old_type = self.members.get(member_id, {}).get("last_activity", "noact") if member_id in self.members else "noact"
+            new_type = _get_activity_type(after)
+
+            if old_type != new_type:
+                self._track_activity_change(member_id, old_type, new_type)
+
             if checks.is_activity_started(before, after):
                 if member_id in self.monitor_tasks:
                     self.monitor_tasks[member_id].cancel()
                     del self.monitor_tasks[member_id]
                     
-                self._handle_activity_start()
-                
                 await channel.send(
                     embed=discord.Embed(
-                        description=f"{member.mention}'s Activity Detected! ✅",
+                        description=f"{member.mention}'s Activity Detected! \u2705",
                         color=0x3498DB,
                     ),
                     delete_after=20,
                 )
                 
             elif checks.is_activity_stopped(before, after):
-                self._handle_activity_stop()
-                
                 if not exceptions_handler or exceptions_handler.isNotInside(member_id):
-                    self._update_user_time(member)
+                    self._update_user_time(member, old_type)
                     
                     embed = discord.Embed(
-                        title="⚠️ Attention Required!",
+                        title="\u26a0\ufe0f Attention Required!",
                         description=f"{member.mention}, you turned off your camera or screen share.\n"
                         "Please turn it back on within **5 minutes**, or you will be removed.",
                         color=discord.Color.orange(),
@@ -407,4 +563,3 @@ class SessionManager:
             session.update_settings(**kwargs)
             await session.manage(member, before, after, exceptions_handler, session_category_id, ignore_channel_id)
             self.sync(session)
-

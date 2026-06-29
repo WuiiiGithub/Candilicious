@@ -42,6 +42,7 @@ leaderboardLimit = 10
 
 # Message Params
 msgDelAfter=10
+DROP_COLLECTION_TIME = 30
 msgColor = 0x3498db
 
 bot = None

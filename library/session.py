@@ -48,8 +48,6 @@ class tempDataHandler:
     def isInside(self, data_id):
         isInList = data_id in self.data
         doc = exceptionCollection.find_one({"user_id": data_id})
-        print(data_id)
-        print(doc)
         isInDB = False if doc == None else True
         return isInList or isInDB
     

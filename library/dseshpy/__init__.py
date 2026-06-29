@@ -18,7 +18,8 @@ def initialize(
     session_collection: _Collection,
     user_collection: _Collection = None,
     exception_collection: _Collection = None,
-    drops_collection: _Collection = None
+    drops_collection: _Collection = None,
+    activity_session_collection: _Collection = None
 ):
     collections['session'] = session_collection
     if user_collection is not None:
@@ -26,4 +27,6 @@ def initialize(
     if exception_collection is not None:
         collections['exception'] = exception_collection
     if drops_collection is not None:
-        collections['drops'] = drops_collection
+        collections['drop.offers'] = drops_collection
+    if activity_session_collection is not None:
+        collections['activity.session'] = activity_session_collection

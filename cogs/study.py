@@ -24,14 +24,20 @@ userCollection = db["users"]
 boardsCollection = db["boards"]
 exceptionCollection = db["exception"]
 exceptionCollection.create_index("expiresAt", expireAfterSeconds=0)
-dropsCollection = db["drops"]
-dropsCollection.create_index("created_at", expireAfterSeconds=86400)
+dropsCollection = db["drop.offers"]
+try:
+    dropsCollection.drop_index("created_at_1")
+except pymongo.errors.OperationFailure:
+    pass
+dropsCollection.create_index("created_at", expireAfterSeconds=3600)
+activitySessionCollection = db["activity.session"]
 
 from library import dseshpy
 dseshpy.initialize(
     session_collection=db["sessions"],
     user_collection=userCollection,
-    drops_collection=db["drops"]
+    drops_collection=db["drop.offers"],
+    activity_session_collection=activitySessionCollection
 )
 
 class Study(commands.Cog):

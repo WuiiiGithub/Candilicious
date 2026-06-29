@@ -93,9 +93,13 @@ async def lifespan(app: FastAPI):
             expireAfterSeconds=600
         )
 
-        await app.db["drops"].create_index(
-            [("createdAt", ASCENDING)],
-            expireAfterSeconds=86400
+        try:
+            await app.db["drop.offers"].drop_index("created_at_1")
+        except OperationFailure:
+            pass
+        await app.db["drop.offers"].create_index(
+            [("created_at", ASCENDING)],
+            expireAfterSeconds=3600
         )
 
     except (
