@@ -1,11 +1,11 @@
-import jwt
 import math
 import random
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from typing import Optional
 import config
+from . import verify_token
 
 router = APIRouter()
 
@@ -53,16 +53,7 @@ async def check_drop(request: Request, token: str):
     return {"claimed": claimed is not None}
 
 @router.post("/claim/{token}")
-async def claim_drop(request: Request, token: str, body: ClaimRequest):
-    auth = request.headers.get("Authorization")
-    if not auth or not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    try:
-        payload = jwt.decode(auth[7:], config.SECRET_KEY, algorithms=["HS256"])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
+async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
 
     drop = await request.app.db["drop.offers"].find_one({"token": token})

@@ -1,16 +1,20 @@
 import secrets
+import logging
 import httpx
 import jwt
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Request
 from starlette.responses import RedirectResponse
 from . import limiter
 import config
 from urllib.parse import urlencode
 
+logger = logging.getLogger(__name__)
+
 GUILD_ID = "1491471841716605062"
 
 router = APIRouter()
+
 
 @router.get("/login")
 @limiter.limit("5/minute")
@@ -25,16 +29,18 @@ async def login(request: Request):
         "redirect_uri": config.FRONTEND_DOMAIN,
         "response_type": "code",
         "scope": "identify guilds email",
-        "state": state
+        "state": state,
     }
     discord_url = f"https://discord.com/api/oauth2/authorize?{urlencode(params)}"
     return {"redirect_url": discord_url}
+
 
 @router.get("/callback")
 async def callback(request: Request, code: str, state: str):
     state_doc = await request.app.db["oauth_pending_states"].find_one_and_delete({"state": state})
     if not state_doc:
-        raise HTTPException(status_code=403, detail="Invalid or expired state")
+        logger.warning("Invalid or expired state during OAuth callback")
+        return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?error=session_expired", status_code=302)
 
     async with httpx.AsyncClient() as client:
         token_res = await client.post("https://discord.com/api/oauth2/token", data={
@@ -42,7 +48,7 @@ async def callback(request: Request, code: str, state: str):
             "client_secret": config.DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": config.FRONTEND_DOMAIN
+            "redirect_uri": config.FRONTEND_DOMAIN,
         })
 
         if token_res.status_code != 200:
@@ -50,8 +56,8 @@ async def callback(request: Request, code: str, state: str):
                 error_detail = token_res.json()
             except Exception:
                 error_detail = token_res.text
-            print(f"Token exchange failed: {error_detail}")
-            raise HTTPException(status_code=400, detail=f"Invalid token exchange: {error_detail}")
+            logger.error(f"Discord token exchange failed: {error_detail}")
+            return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?error=auth_failed", status_code=302)
 
         token_data = token_res.json()
         headers = {"Authorization": f"Bearer {token_data['access_token']}"}
@@ -62,8 +68,8 @@ async def callback(request: Request, code: str, state: str):
                 error_detail = user_res.json()
             except Exception:
                 error_detail = user_res.text
-            print(f"Could not fetch user info: {error_detail}")
-            raise HTTPException(status_code=400, detail=f"Could not fetch user info: {error_detail}")
+            logger.error(f"Failed to fetch Discord user info: {error_detail}")
+            return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?error=auth_failed", status_code=302)
 
         user_info = user_res.json()
 
@@ -103,4 +109,13 @@ async def callback(request: Request, code: str, state: str):
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?token={encoded_jwt}")
+    return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?token={encoded_jwt}", status_code=302)
+
+
+@router.get("/verify")
+async def verify(token: str):
+    try:
+        payload = jwt.decode(token, config.SECRET_KEY, algorithms=["HS256"])
+        return {"valid": True}
+    except jwt.PyJWTError:
+        return {"valid": False}

@@ -1,17 +1,18 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
+from . import verify_token
 
 router = APIRouter()
 
 
 @router.get("")
-async def get_tasks(request: Request):
+async def get_tasks(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         body = {}
 
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
 
@@ -47,13 +48,13 @@ async def get_tasks(request: Request):
 
 
 @router.post("")
-async def create_task(request: Request):
+async def create_task(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     board_id = body.get("board_id")
     text = body.get("text")
@@ -88,13 +89,13 @@ async def create_task(request: Request):
 
 
 @router.patch("")
-async def update_task(request: Request):
+async def update_task(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     board_id = body.get("board_id")
     task_id = body.get("task_id")
@@ -147,13 +148,13 @@ async def update_task(request: Request):
 
 
 @router.delete("")
-async def delete_task(request: Request):
+async def delete_task(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     board_id = body.get("board_id")
     task_id = body.get("task_id")

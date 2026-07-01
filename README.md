@@ -61,7 +61,7 @@ The repository includes several utility scripts to assist with deployment and da
    Create a `.env` file in the root directory:
    ```env
    TOKEN=your_discord_bot_token
-   APPLICATION_ID=your_discord_app_id
+   DISCORD_CLIENT_ID=your_discord_app_id
    MONGODB_URI=your_mongodb_uri
    DB_NAME=Candilicious
    WEBSITE_APP_PORT =10301

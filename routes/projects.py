@@ -1,13 +1,13 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
 from datetime import datetime, timezone
+from . import verify_token
 
 router = APIRouter()
 
 @router.get("")
-async def get_projects(request: Request):
-    # Accept user_id and project_id from query parameters
-    user_id = request.query_params.get("user_id")
+async def get_projects(request: Request, payload: dict = Depends(verify_token)):
+    user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
         
@@ -42,13 +42,13 @@ async def get_projects(request: Request):
         return response
 
 @router.post("")
-async def create_project(request: Request):
+async def create_project(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
         
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     title = body.get("title")
     description = body.get("description")
     created_at = body.get("created_at")
@@ -74,13 +74,13 @@ async def create_project(request: Request):
     return {"status": "success", "project": new_project}
 
 @router.patch("")
-async def update_project(request: Request):
+async def update_project(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
         
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     
     if not all([user_id, project_id]):
@@ -104,13 +104,13 @@ async def update_project(request: Request):
     return {"status": "success"}
 
 @router.delete("")
-async def delete_project(request: Request):
+async def delete_project(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
         
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     
     if not user_id:

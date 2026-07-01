@@ -19,6 +19,7 @@ from routes import (
     tasks,
     users,
     auth,
+    workspace,
 )
 from routes import limiter
 from slowapi import _rate_limit_exceeded_handler
@@ -51,7 +52,7 @@ sysLog = SystemLogger(filename=filename)
 
 load_dotenv()
 MONGODB_URI = os.getenv("MONGODB_URI")
-APPLICATION_ID = os.getenv("APPLICATION_ID")
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -154,7 +155,7 @@ bot = commands.Bot(
     command_prefix=".",
     intents=intents,
     help_command=None,
-    application_id=APPLICATION_ID,
+    application_id=DISCORD_CLIENT_ID,
 )
 
 @bot.event
@@ -243,6 +244,11 @@ app.include_router(
     router=drops.router,
     prefix="/api/drops",
     tags=["drops"]
+)
+app.include_router(
+    router=workspace.router,
+    prefix="/api/admin/workspace",
+    tags=["workspace"]
 )
 
 async def load():

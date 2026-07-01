@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
+from . import verify_token
 
 router = APIRouter()
 
@@ -20,9 +21,8 @@ async def recalculate_project_counts(request: Request, project_id: str):
     )
 
 @router.get("")
-async def get_boards(request: Request):
-    # Accept user_id, project_id, and board_id from query parameters
-    user_id = request.query_params.get("user_id")
+async def get_boards(request: Request, payload: dict = Depends(verify_token)):
+    user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=400, detail="user_id is required")
         
@@ -80,13 +80,13 @@ async def get_boards(request: Request):
         return response
 
 @router.post("")
-async def create_board(request: Request):
+async def create_board(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
         
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     title = body.get("title")
     description = body.get("description")
@@ -118,13 +118,13 @@ async def create_board(request: Request):
     return {"status": "success", "board": new_board}
 
 @router.patch("")
-async def update_board(request: Request):
+async def update_board(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
         
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     board_id = body.get("board_id")
     
@@ -149,13 +149,13 @@ async def update_board(request: Request):
     return {"status": "success"}
 
 @router.delete("")
-async def delete_board(request: Request):
+async def delete_board(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
         
-    user_id = body.get("user_id")
+    user_id = payload.get("sub")
     project_id = body.get("project_id")
     board_id = body.get("board_id")
     

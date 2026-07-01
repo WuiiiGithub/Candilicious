@@ -1,4 +1,4 @@
-import discord, pymongo, traceback, os, config, random, re
+import discord, pymongo, traceback, os, config, random, re, asyncio
 from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from discord import app_commands, ui
@@ -368,6 +368,75 @@ class Reminders(commands.Cog):
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
             cmdLog.send()
+
+    @app_commands.command(
+        name="reminder",
+        description="Set a reminder for yourself."
+    )
+    @app_commands.describe(
+        days="Number of days until the reminder.",
+        hrs="Number of hours until the reminder.",
+        mins="Number of minutes until the reminder.",
+        secs="Number of seconds until the reminder.",
+        text="The message for the reminder."
+    )
+    async def reminder(
+        self,
+        inter: discord.Interaction,
+        days: int = 0,
+        hrs: int = 0,
+        mins: int = 0,
+        secs: int = 0,
+        text: str = "Times up! 🔔"
+    ):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            cmdLog.process(status_code=50, name="Input Calc", details="Calculating total wait time for the reminder...")
+            total_seconds = secs + (mins * 60) + (hrs * 3600) + (days * 86400)
+
+            if total_seconds <= 0:
+                total_seconds = 300
+
+            await inter.response.send_message(
+                embed=discord.Embed(
+                    title="Reminder Set!",
+                    description=f"Your reminder has been set for {days} days, {hrs} hours, {mins} minutes, and {secs} seconds.\nMessage: {text}",
+                    color=config.msgColor
+                ),
+                ephemeral=True
+            )
+
+            cmdLog.process(status_code=100, name="Task Set", details=f"Reminder successfully scheduled for {total_seconds} seconds from now.")
+            asyncio.create_task(self.reminder_runner(inter.user, total_seconds, text))
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
+
+    async def reminder_runner(self, user: discord.User, time: int, text: str):
+        taskLog = TaskLogger(filename=filename, task_name="reminder_runner")
+        try:
+            taskLog.before(status_code=50, message="Delaying", details=f"Beginning {time}s wait before delivering reminder to {user.name}")
+            taskLog.send()
+            await asyncio.sleep(time)
+
+            resLog = TaskLogger(filename=filename, task_name="reminder_runner")
+            await user.send(
+                embed=discord.Embed(
+                    title="⏰ Reminder",
+                    description=text,
+                    color=config.msgColor,
+                    timestamp=datetime.now()
+                )
+            )
+            resLog.after(status_code=100, message="DM Send", details=f"Reminder successfully delivered to {user.name}.")
+            resLog.send()
+        except discord.Forbidden:
+            resLog.after(status_code=-25, message="DM Blocked", details=f"Unable to send reminder DM to {user.name}; they may have DMs disabled.")
+            resLog.send()
+        except Exception as e:
+            resLog.after(status_code=-100, message="Error", details=str(e))
+            resLog.send()
 
 async def setup(bot: commands.Bot):
     Reminders_cog = Reminders(bot)
