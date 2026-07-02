@@ -395,12 +395,9 @@ class Session:
             if len(self.members) == 1 and (not self.drop_task or self.drop_task.done()):
                 self.drop_task = asyncio.create_task(self.drop_routine(channel))
             
-            task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
-            self.monitor_tasks[member_id] = task
-
-            if self._is_allowed(after_type) and checks.is_session_activity(after):
-                task.cancel()
-                self.monitor_tasks.pop(member_id, None)
+            if not self._is_allowed(after_type):
+                task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
+                self.monitor_tasks[member_id] = task
 
             import secrets, os, qrcode, io
             dm_status = False
@@ -516,15 +513,16 @@ class Session:
                     self.monitor_tasks[member_id].cancel()
                     del self.monitor_tasks[member_id]
 
-                await channel.send(
-                    embed=discord.Embed(
-                        description=f"{member.mention}'s Activity Detected! \u2705",
-                        color=0x3498DB,
-                    ),
-                    delete_after=20,
-                )
+                if self.session_type != "*":
+                    await channel.send(
+                        embed=discord.Embed(
+                            description=f"{member.mention}'s Activity Detected! \u2705",
+                            color=0x3498DB,
+                        ),
+                        delete_after=20,
+                    )
                 
-            elif checks.is_activity_stopped(before, after):
+            elif checks.is_activity_stopped(before, after) and not self._is_allowed("noact"):
                 if not exceptions_handler or exceptions_handler.isNotInside(member_id):
                     self._update_user_time(member, old_type)
                     

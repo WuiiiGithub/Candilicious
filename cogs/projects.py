@@ -7,7 +7,7 @@ from datetime import datetime
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.MONGODB_NAME]
+db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.DB_NAME]
 
 ITEMS_PER_PAGE = 5
 TASKS_PER_PAGE = 10

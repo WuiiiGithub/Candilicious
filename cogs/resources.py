@@ -6,7 +6,7 @@ from library.logging import CogLogger, CommandLogger, ListenerLogger
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.MONGODB_NAME]
+db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.DB_NAME]
 
 class Resources(commands.Cog):
     def __init__(self, bot):

@@ -53,7 +53,7 @@ try:
         status_code=0, message="Waiting", details="Initiating connection to MongoDB..."
     )
     client = pymongo.MongoClient(HOST =MONGODB_URI, serverSelectionTimeoutMS=5000)
-    db = client[config.MONGODB_NAME]
+    db = client[config.DB_NAME]
     userCollection = db["users"]
     boardsCollection = db["boards"]
     exceptionCollection = db["exception"]
@@ -62,7 +62,7 @@ try:
     sysLog.complete(
         status_code=100,
         message="Connected",
-        details=f"Successfully established connection to MongoDB database: {config.MONGODB_NAME}",
+        details=f"Successfully established connection to MongoDB database: {config.DB_NAME}",
     )
 
 except (ServerSelectionTimeoutError, ConnectionFailure, OperationFailure) as e:

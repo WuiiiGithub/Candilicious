@@ -67,12 +67,12 @@ async def lifespan(app: FastAPI):
             MONGODB_URI, 
             serverSelectionTimeoutMS=5000
         )
-        app.db = app.mongodb_client[config.MONGODB_NAME]
+        app.db = app.mongodb_client[config.DB_NAME]
         app.db.command("ping")
         sysLog.complete(
             status_code=100,
             message="Connected",
-            details=f"Successfully established connection to MongoDB database: {config.MONGODB_NAME}",
+            details=f"Successfully established connection to MongoDB database: {config.DB_NAME}",
         )
         if isNgrokSetup:
             from pyngrok import ngrok, conf
@@ -289,4 +289,8 @@ async def main():
 
 
 if __name__ == "__main__":  
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("...")
+        print("=" * 50)

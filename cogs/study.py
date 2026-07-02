@@ -7,7 +7,8 @@ from datetime import (
     timezone
 )
 from discord.ext import commands
-from discord import app_commands
+from discord import app_commands, ui
+from typing import Optional, Union
 from library.templates import *
 from library.logging import *
 from library.session import *
@@ -18,7 +19,7 @@ cogLog = CogLogger(filename=filename)
 
 load_dotenv()
 
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))["Candilicious"]
+db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.DB_NAME]
 serverCollection = db["servers"]
 userCollection = db["users"]
 boardsCollection = db["boards"]
@@ -39,6 +40,425 @@ dseshpy.initialize(
     drops_collection=db["drop.offers"],
     activity_session_collection=activitySessionCollection
 )
+
+# ===================== CONFIG UI =====================
+
+def build_config_embed(server_data: dict, guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(
+        title="\u2699\ufe0f Server Configuration",
+        description="Select a section below to configure.",
+        color=config.msgColor,
+        timestamp=datetime.now(),
+    )
+
+    category_id = server_data.get("category")
+    create_vc_id = server_data.get("create_vc")
+
+    study_ch = "\u2705" if category_id and create_vc_id else "\u274c"
+    category_val = f"<#{category_id}>" if category_id else "Not set"
+    create_vc_val = f"<#{create_vc_id}>" if create_vc_id else "Not set"
+
+    embed.add_field(
+        name=f"{study_ch} Study Channel Setup",
+        value=f"**Category:** {category_val}\n**Create VC:** {create_vc_val}",
+        inline=False,
+    )
+
+    reminders = server_data.get("reminders", {}) or {}
+    rem_ch = "\u2705" if reminders.get("channel") else "\u274c"
+    rem_channel_val = f"<#{reminders['channel']}>" if reminders.get("channel") else "Not set"
+    rem_time_val = f"{reminders.get('time')} min" if reminders.get("time") else "Not set"
+    rem_text_val = reminders.get("text", "Not set") or "Not set"
+
+    embed.add_field(
+        name=f"{rem_ch} Reminder Setup",
+        value=f"**Channel:** {rem_channel_val}\n**Time:** {rem_time_val}\n**Text:** {rem_text_val}",
+        inline=False,
+    )
+
+    return embed
+
+
+class ConfigModal(ui.Modal, title="Reminder Settings"):
+    def __init__(self, current: dict):
+        super().__init__()
+        current = current or {}
+        self.add_item(ui.TextInput(
+            label="Reminder Interval (minutes)",
+            placeholder="e.g. 60",
+            default=str(current.get("time", "")) if current.get("time") else "",
+            required=True,
+            max_length=4,
+        ))
+        self.add_item(ui.TextInput(
+            label="Footer Text",
+            placeholder="e.g. Keep studying!",
+            default=current.get("text", ""),
+            required=False,
+            max_length=100,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        server_id = str(interaction.guild_id)
+        time_val = int(self.children[0].value)
+        text_val = self.children[1].value or ""
+        serverCollection.update_one(
+            {"_id": server_id},
+            {"$set": {"reminders.time": time_val, "reminders.text": text_val}},
+        )
+        rem_cog = interaction.client.get_cog("Reminders")
+        if rem_cog:
+            await rem_cog.refresh_reminders_cache()
+
+        server_data = serverCollection.find_one({"_id": server_id}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        view = ConfigView(server_data, interaction.guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class DegradationModal(ui.Modal, title="Degradation Rates"):
+    def __init__(self):
+        super().__init__()
+        rates = db["config"].find_one({"_id": "degradation_rates"}) or {}
+        self.add_item(ui.TextInput(
+            label="Wood Degradation (% per day)",
+            placeholder="e.g. 5",
+            default=str(round(rates.get("wood", 0.05) * 100, 1)) if rates.get("wood") else "5",
+            required=True,
+            max_length=4,
+        ))
+        self.add_item(ui.TextInput(
+            label="Iron Degradation (% per day)",
+            placeholder="e.g. 3",
+            default=str(round(rates.get("iron", 0.03) * 100, 1)) if rates.get("iron") else "3",
+            required=True,
+            max_length=4,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        wood_rate = float(self.children[0].value) / 100.0
+        iron_rate = float(self.children[1].value) / 100.0
+        db["config"].update_one(
+            {"_id": "degradation_rates"},
+            {"$set": {"wood": wood_rate, "iron": iron_rate}},
+            upsert=True,
+        )
+        embed = discord.Embed(
+            title="\U0001f4c9 Degradation Rates Updated",
+            description=f"\U0001fab5 Wood: {round(wood_rate * 100, 1)}%/day\n\U0001f529 Iron: {round(iron_rate * 100, 1)}%/day",
+            color=config.msgColor,
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+class ChannelSelectMenu(ui.ChannelSelect):
+    def __init__(self, channel_types: list, target: str):
+        self.target = target
+        super().__init__(
+            placeholder="Select a channel...",
+            channel_types=channel_types,
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        selected = self.values[0]
+        server_id = str(interaction.guild_id)
+
+        if self.target == "category":
+            serverCollection.update_one(
+                {"_id": server_id},
+                {"$set": {"category": str(selected.id)}},
+                upsert=True,
+            )
+        elif self.target == "create_vc":
+            serverCollection.update_one(
+                {"_id": server_id},
+                {"$set": {"create_vc": str(selected.id)}},
+                upsert=True,
+            )
+        elif self.target == "reminder_channel":
+            server_data = serverCollection.find_one({"_id": server_id}) or {}
+            reminders = server_data.get("reminders", {}) or {}
+            reminders["channel"] = str(selected.id)
+            serverCollection.update_one(
+                {"_id": server_id},
+                {"$set": {"reminders": reminders}},
+            )
+            rem_cog = interaction.client.get_cog("Reminders")
+            if rem_cog:
+                await rem_cog.refresh_reminders_cache()
+
+        server_data = serverCollection.find_one({"_id": server_id}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        view = ConfigView(server_data, interaction.guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class ChannelPickView(ui.View):
+    def __init__(self, server_data: dict, guild: discord.Guild, bot, target: str):
+        super().__init__(timeout=120)
+        self.server_data = server_data
+        self.guild = guild
+        self.bot = bot
+        self.target = target
+        channel_types = [discord.ChannelType.category] if target == "category" else [discord.ChannelType.voice]
+        self.add_item(ChannelSelectMenu(channel_types, target))
+
+    @ui.button(label="\u2190 Back", style=discord.ButtonStyle.grey, row=1)
+    async def back(self, interaction: discord.Interaction, button: ui.Button):
+        server_data = serverCollection.find_one({"_id": str(interaction.guild_id)}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        view = ConfigView(server_data, interaction.guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class CreateVCSelect(ui.Select):
+    def __init__(self, vcs: list):
+        opts = [discord.SelectOption(label=ch.name, value=str(ch.id), description=f"ID: {ch.id}") for ch in vcs]
+        super().__init__(placeholder="Choose a voice channel...", options=opts, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        server_id = str(interaction.guild_id)
+        serverCollection.update_one(
+            {"_id": server_id},
+            {"$set": {"create_vc": self.values[0]}},
+            upsert=True,
+        )
+        server_data = serverCollection.find_one({"_id": server_id}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        view = ConfigView(server_data, interaction.guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class CreateVCSelectView(ui.View):
+    def __init__(self, vcs: list, server_data: dict, guild: discord.Guild, bot):
+        super().__init__(timeout=120)
+        self.add_item(CreateVCSelect(vcs))
+
+    @ui.button(label="\u2190 Back", style=discord.ButtonStyle.grey, row=1)
+    async def back(self, interaction: discord.Interaction, button: ui.Button):
+        server_data = serverCollection.find_one({"_id": str(interaction.guild_id)}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        view = ConfigView(server_data, interaction.guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class ConfigSelect(ui.Select):
+    def __init__(self, server_data: dict):
+        options = [
+            discord.SelectOption(
+                label="Study Channel Setup",
+                value="study",
+                emoji="\U0001f4c1",
+                description="Configure VC category, drops, interval",
+            ),
+            discord.SelectOption(
+                label="Reminder Setup",
+                value="reminder",
+                emoji="\u23f0",
+                description="Configure study reminders",
+            ),
+            discord.SelectOption(
+                label="Delete Configuration",
+                value="delete",
+                emoji="\u274c",
+                description="Delete server or user data",
+            ),
+            discord.SelectOption(
+                label="Degradation Rates",
+                value="degradation",
+                emoji="\U0001f4c9",
+                description="Set resource degradation rates",
+            ),
+        ]
+        super().__init__(placeholder="Select a section to configure...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        value = self.values[0]
+        server_id = str(interaction.guild_id)
+        server_data = serverCollection.find_one({"_id": server_id}) or {}
+        view = self.view
+
+        if value == "study":
+            embed = discord.Embed(
+                title="\U0001f4c1 Study Channel Setup",
+                color=config.msgColor,
+                timestamp=datetime.now(),
+            )
+            study_embed = build_config_embed(server_data, interaction.guild)
+            category_f = study_embed.fields[0].value if study_embed.fields else ""
+            embed.description = f"**Current Settings:**\n{category_f}"
+            edit_view = ActionView("study", server_data, interaction.guild, interaction.client)
+            await interaction.response.edit_message(embed=embed, view=edit_view)
+
+        elif value == "reminder":
+            embed = discord.Embed(
+                title="\u23f0 Reminder Setup",
+                color=config.msgColor,
+                timestamp=datetime.now(),
+            )
+            study_embed = build_config_embed(server_data, interaction.guild)
+            rem_f = study_embed.fields[1].value if len(study_embed.fields) > 1 else ""
+            embed.description = f"**Current Settings:**\n{rem_f}"
+            edit_view = ActionView("reminder", server_data, interaction.guild, interaction.client)
+            await interaction.response.edit_message(embed=embed, view=edit_view)
+
+        elif value == "degradation":
+            rates_doc = db["config"].find_one({"_id": "degradation_rates"}) or {}
+            wood_rate = rates_doc.get("wood", 0.05)
+            iron_rate = rates_doc.get("iron", 0.03)
+            embed = discord.Embed(
+                title="\U0001f4c9 Degradation Rates",
+                description=f"Resources degrade over time when not being earned.\n\n"
+                f"\U0001fab5 **Wood:** {round(wood_rate * 100, 1)}%/day\n"
+                f"\U0001f529 **Iron:** {round(iron_rate * 100, 1)}%/day",
+                color=config.msgColor,
+                timestamp=datetime.now(),
+            )
+            edit_view = ActionView("degradation", server_data, interaction.guild, interaction.client)
+            await interaction.response.edit_message(embed=embed, view=edit_view)
+
+        elif value == "delete":
+            embed = discord.Embed(
+                title="\u274c Delete Configuration",
+                description="Choose an option below:",
+                color=discord.Color.red(),
+                timestamp=datetime.now(),
+            )
+            edit_view = ActionView("delete", server_data, interaction.guild, interaction.client)
+            await interaction.response.edit_message(embed=embed, view=edit_view)
+
+
+class ConfigView(ui.View):
+    def __init__(self, server_data: dict, guild: discord.Guild, bot):
+        super().__init__(timeout=180)
+        self.server_data = server_data
+        self.guild = guild
+        self.bot = bot
+        self.add_item(ConfigSelect(server_data))
+
+    @ui.button(label="Exit", style=discord.ButtonStyle.red, row=1)
+    async def exit(self, interaction: discord.Interaction, button: ui.Button):
+        server_data = serverCollection.find_one({"_id": str(interaction.guild_id)}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+class SubActionSelect(ui.Select):
+    def __init__(self, section: str):
+        if section == "study":
+            opts = [
+                discord.SelectOption(label="Set Category", value="category", emoji="\U0001f4c2", description="Choose the category for study VCs"),
+                discord.SelectOption(label="Set Create VC", value="create_vc", emoji="\U0001f50a", description="Choose the join-to-study voice channel"),
+            ]
+        elif section == "reminder":
+            opts = [
+                discord.SelectOption(label="Set Channel", value="channel", emoji="#\uFE0F\u20E3", description="Choose the reminder channel"),
+                discord.SelectOption(label="Set Time & Text", value="time_text", emoji="\u270f\ufe0f", description="Edit reminder interval and footer text"),
+            ]
+        elif section == "degradation":
+            opts = [
+                discord.SelectOption(label="Edit Degradation Rates", value="edit_rates", emoji="\U0001f4c8", description="Change wood and iron degradation rates"),
+            ]
+        elif section == "delete":
+            opts = [
+                discord.SelectOption(label="Delete Study Config", value="delete_study", emoji="\U0001f4c2", description="Remove study category and create VC"),
+                discord.SelectOption(label="Delete Reminder Config", value="delete_reminder", emoji="\u23f0", description="Remove reminder channel, interval, and text"),
+                discord.SelectOption(label="Delete All Config", value="delete_all", emoji="\U0001f5d1\ufe0f", description="Remove all server settings"),
+            ]
+        else:
+            opts = []
+        super().__init__(placeholder="Choose an action...", options=opts, row=0)
+        self.section = section
+
+    async def callback(self, interaction: discord.Interaction):
+        value = self.values[0]
+        server_id = str(interaction.guild_id)
+        server_data = serverCollection.find_one({"_id": server_id}) or {}
+
+        if self.section == "study":
+            if value == "category":
+                view = ChannelPickView(server_data, interaction.guild, interaction.client, target="category")
+                embed = discord.Embed(title="Select Category", description="Choose the category where study VCs will be created.", color=config.msgColor)
+                await interaction.response.edit_message(embed=embed, view=view)
+            elif value == "create_vc":
+                category_id = server_data.get("category")
+                if not category_id:
+                    embed = discord.Embed(title="No Category Set", description="Please configure a study category first before selecting a Create VC.", color=config.msgColor)
+                    await interaction.response.edit_message(embed=embed, view=ActionView("study", server_data, interaction.guild, interaction.client))
+                    return
+                category = interaction.guild.get_channel(int(category_id))
+                vcs = category.voice_channels if category else []
+                if not vcs:
+                    embed = discord.Embed(title="No Voice Channels", description=f"There are no voice channels in {category.mention if category else 'the study category'}. Please create one first.", color=config.msgColor)
+                    await interaction.response.edit_message(embed=embed, view=ActionView("study", server_data, interaction.guild, interaction.client))
+                    return
+                view = CreateVCSelectView(vcs, server_data, interaction.guild, interaction.client)
+                embed = discord.Embed(title="Select Create VC", description=f"Choose a voice channel from {category.mention}:", color=config.msgColor)
+                await interaction.response.edit_message(embed=embed, view=view)
+
+        elif self.section == "reminder":
+            if value == "channel":
+                view = ChannelPickView(server_data, interaction.guild, interaction.client, target="reminder_channel")
+                embed = discord.Embed(title="Select Reminder Channel", description="Choose the channel for study reminders.", color=config.msgColor)
+                await interaction.response.edit_message(embed=embed, view=view)
+            elif value == "time_text":
+                reminders = server_data.get("reminders", {}) or {}
+                modal = ConfigModal(reminders)
+                await interaction.response.send_modal(modal)
+
+        elif self.section == "degradation":
+            if value == "edit_rates":
+                modal = DegradationModal()
+                await interaction.response.send_modal(modal)
+
+        elif self.section == "delete":
+            if not interaction.user.guild_permissions.manage_guild:
+                return await interaction.response.send_message("You need **Manage Server** permission.", ephemeral=True)
+
+            await interaction.response.defer()
+
+            if value == "delete_study":
+                data = {k: server_data.get(k) for k in ("category", "create_vc") if k in server_data}
+                serverCollection.update_one({"_id": server_id}, {"$unset": {"category": "", "create_vc": ""}})
+                title = "\u2705 Study Config Deleted"
+            elif value == "delete_reminder":
+                data = {"reminders": server_data.get("reminders", {})}
+                serverCollection.update_one({"_id": server_id}, {"$unset": {"reminders": ""}})
+                title = "\u2705 Reminder Config Deleted"
+            elif value == "delete_all":
+                data = server_data
+                serverCollection.delete_one({"_id": server_id})
+                title = "\u2705 All Config Deleted"
+            else:
+                return
+
+            file = discord.File(io.BytesIO(json.dumps(data, indent=4).encode()), "backup.json")
+            await interaction.followup.send("Here is your data backup:", file=file, ephemeral=True)
+            embed = discord.Embed(title=title, color=config.msgColor)
+            await interaction.edit_original_response(embed=embed, view=None)
+
+
+class ActionView(ui.View):
+    def __init__(self, section: str, server_data: dict, guild: discord.Guild, bot):
+        super().__init__(timeout=180)
+        self.add_item(SubActionSelect(section))
+
+    @ui.button(label="\u2190 Back", style=discord.ButtonStyle.grey, row=1)
+    async def back(self, interaction: discord.Interaction, button: ui.Button):
+        server_data = serverCollection.find_one({"_id": str(interaction.guild_id)}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        view = ConfigView(server_data, interaction.guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    @ui.button(label="Exit", style=discord.ButtonStyle.red, row=1)
+    async def exit(self, interaction: discord.Interaction, button: ui.Button):
+        server_data = serverCollection.find_one({"_id": str(interaction.guild_id)}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        await interaction.response.edit_message(embed=embed, view=None)
+
 
 class Study(commands.Cog):
     def __init__(self, bot):
@@ -63,71 +483,20 @@ class Study(commands.Cog):
         finally:
             log.send()
 
-    @app_commands.command(name="config", description="Configure your study channel")
+    @app_commands.command(name="config", description="Configure server settings")
     @app_commands.guild_only()
-    @app_commands.describe(category="The category where study VCs will be created")
-    @app_commands.describe(create_vc="The channel users join to create a new study VC")
-    @app_commands.describe(interval="Time in which 1 drop takes place")
-    @app_commands.describe(drop="Quantity of Gold drops")
-    async def config(self, inter: discord.Interaction, category: discord.CategoryChannel, create_vc: discord.VoiceChannel, interval: int, drop: int):
-        """Save the study configuration in the database."""
+    @app_commands.default_permissions(administrator=True)
+    async def config(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            server_id = str(inter.guild_id)
-            category_id = str(category.id)
-            create_vc_id = str(create_vc.id)
-            cmdLog.process(
-                status_code=0,
-                name='Waiting',
-                details=f"Trying to configure the study category ({category_id}) and create_vc ({create_vc_id})."
-            )
-            serverCollection.update_one(
-                {"_id": server_id},
-                {"$set": {"_id": server_id, "category": category_id, "create_vc": create_vc_id, "drop": drop, "interval": interval}},
-                upsert=True,
-            )
-            
-            embed=discord.Embed(
-                title="Study Configurations",
-                description=f"**Configuration Successful!** :tada:",
-                timestamp=datetime.now(),
-                color=config.msgColor,
-            )
-            embed.add_field(
-                name="Category", 
-                value=category.mention,
-                inline=True
-            )
-            embed.add_field(
-                name="Create VC", 
-                value=create_vc.mention,
-                inline=True
-            )
-            embed.add_field(
-                name="Interval", 
-                value=interval, 
-                inline=True
-            )
-            embed.add_field(
-                name="Drops",
-                value=drop,
-                inline=False
-            )
-            await inter.response.send_message(
-                embed = embed,
-                delete_after=20,
-            )
-            cmdLog.process(
-                status_code=100,
-                name='Executed',
-                details='The server seems to have configured successfully.'
-            )
+            cmdLog.process(status_code=0, name='Waiting', details="Fetching server configuration...")
+            server_data = serverCollection.find_one({"_id": str(inter.guild_id)}) or {}
+            embed = build_config_embed(server_data, inter.guild)
+            view = ConfigView(server_data, inter.guild, self.bot)
+            await inter.response.send_message(embed=embed, view=view)
+            cmdLog.process(status_code=100, name='Executed', details="Config panel displayed.")
         except Exception as e:
-            cmdLog.process(
-                status_code=-100,
-                name='Error',
-                details=traceback.format_exc()
-            )
+            cmdLog.process(status_code=-100, name='Error', details=traceback.format_exc())
         finally:
             cmdLog.send()
 
@@ -388,98 +757,15 @@ class Study(commands.Cog):
 
     @app_commands.guild_only()
     @app_commands.command(
-        name="delete", description="Delete your or your server configuration."
+        name="delete", description="Request deletion of your data"
     )
-    @app_commands.choices(
-        scope=[
-            app_commands.Choice(name="Delete your collected data", value=1),
-            app_commands.Choice(name="Delete Server Configuration", value=0),
-        ]
-    )
-    @app_commands.describe(scope="This parameter tells about the scope of deletion")
-    async def delete(self, inter: discord.Interaction, scope: int = 1):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            cmdLog.process(status_code=0, name="Waiting", details="Initiating the deletion request processing...")
-            file = None
-
-            if scope:
-                user_data = userCollection.find_one({"_id": str(inter.user.id)})
-                if not user_data:
-                    cmdLog.process(status_code=-25, name="Missing", details="No user data was found to delete.")
-                    return await inter.response.send_message(
-                        embed=discord.Embed(
-                            title="", 
-                            description="No data found for you.",
-                            color=config.msgColor
-                        ),
-                        ephemeral=True,
-                    )
-
-                userCollection.delete_one({"_id": str(inter.user.id)})
-                cmdLog.process(status_code=75, name="Removed", details="User record has been successfully purged from the database.")
-                file = discord.File(
-                    io.BytesIO(json.dumps(user_data, indent=4).encode()),
-                    f"{inter.user.display_name}.json",
-                )
-
-            else:
-                if not inter.user.guild_permissions.manage_guild:
-                    cmdLog.process(status_code=-100, name="Denied", details="User lacks manage_guild permissions; deletion aborted.")
-                    return await inter.response.send_message(
-                        embed=discord.Embed(
-                            title="Missing Permissions",
-                            description="You are not a manager of this server.\nPlease request the manager to perform this operation.",
-                            color=config.msgColor,
-                        ),
-                        ephemeral=True,
-                    )
-
-                server_data = serverCollection.find_one({"_id": str(inter.guild.id)})
-                if not server_data:
-                    cmdLog.process(status_code=-25, name="Missing", details="No server configuration found to delete.")
-                    return await inter.response.send_message(
-                        embed=discord.Embed(
-                            title="", 
-                            description="No server data found.",
-                            color=config.msgColor
-                        ),
-                        ephemeral=True,
-                    )
-                    
-                serverCollection.delete_one({"_id": str(inter.guild.id)})
-                cmdLog.process(status_code=75, name="Removed", details="Server configuration purged from the database.")
-                file = discord.File(
-                    io.BytesIO(json.dumps(server_data, indent=4).encode()),
-                    f"{inter.guild.name}.json",
-                )
-
-            try:
-                await inter.user.send(
-                    content="The data being deleted is attached below.", file=file
-                )
-                await inter.response.send_message(
-                    embed=discord.Embed(
-                        title="", description="Deletion successful. Check your DMs.",
-                        color=config.msgColor
-                    ),
-                    ephemeral=True,
-                )
-                cmdLog.process(status_code=100, name="Executed", details="Deletion complete; backup file sent to user DMs.")
-            except discord.Forbidden:
-                cmdLog.process(status_code=-25, name="Blocked", details="Data was deleted but the backup file could not be DM'd.")
-                await inter.response.send_message(
-                    embed=discord.Embed(
-                        title="DMs Disabled",
-                        description="I am not able to DM you. Please enable DMs!",
-                        color=0x348DB,
-                    ),
-                    ephemeral=True,
-                )
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
+    async def delete(self, inter: discord.Interaction):
+        embed = discord.Embed(
+            title="\U0001f4ac Data Deletion Request",
+            description="To delete your personal data, please join the **Candilicious** support server and open a ticket.\n\n**[Join Candilicious Server](https://discord.gg/candilicious)**",
+            color=config.msgColor,
+        )
+        await inter.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name='plb', description='placeholder command for leaderboard')
     async def plb(self, inter: discord.Interaction, style: Literal['gold', 'silver', 'bronze', 'wood']):
@@ -608,17 +894,58 @@ class Study(commands.Cog):
         finally:
             cmdLog.send()
 
-    @app_commands.command(name='balance', description='Check the balance of your account')
+    @app_commands.command(name='balance', description='Check your resource balance')
     async def balance(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            cmdLog.process(status_code=0, name="Waiting", details="Fetching the user's account balance...")
-            await inter.response.send_message(discord.Embed(
-                title='',
-                description="Command under construction",
-                color=config.msgColor
-            ))
-            cmdLog.process(status_code=100, name="Executed", details="Balance delivered successfully.")
+            cmdLog.process(status_code=0, name="Waiting", details="Fetching user balance...")
+            user_id = str(inter.user.id)
+            user_data = userCollection.find_one({"_id": user_id})
+            if not user_data:
+                return await inter.response.send_message(
+                    embed=discord.Embed(description="No balance data yet.\nJoin a study VC and collect drops to start earning!", color=config.msgColor),
+                    ephemeral=True,
+                )
+
+            resources = user_data.get("economy", {}).get("resources", {})
+            wood_data = resources.get("wood", {})
+            iron_data = resources.get("iron", {})
+
+            rates_doc = db["config"].find_one({"_id": "degradation_rates"}) or {}
+            wood_rate = rates_doc.get("wood", 0.05)
+            iron_rate = rates_doc.get("iron", 0.03)
+
+            from library import degrade
+            wood_amount, wood_dt = degrade.apply(wood_data.get("amount", 0), wood_data.get("degraded_at"), wood_rate)
+            iron_amount, iron_dt = degrade.apply(iron_data.get("amount", 0), iron_data.get("degraded_at"), iron_rate)
+
+            userCollection.update_one(
+                {"_id": user_id},
+                {"$set": {
+                    "economy.resources.wood.amount": wood_amount,
+                    "economy.resources.wood.degraded_at": wood_dt,
+                    "economy.resources.iron.amount": iron_amount,
+                    "economy.resources.iron.degraded_at": iron_dt,
+                }}
+            )
+
+            wood_pct = round(wood_rate * 100, 1)
+            iron_pct = round(iron_rate * 100, 1)
+
+            embed = discord.Embed(
+                title=f"\U0001f4b0 {inter.user.display_name}'s Balance",
+                color=config.msgColor,
+                timestamp=datetime.now(),
+            )
+            embed.add_field(
+                name="Raw Resources",
+                value=f"\U0001fab5 Wood: `{wood_amount:,}`\n\U0001f529 Iron: `{iron_amount:,}`",
+                inline=False
+            )
+            embed.add_field(name="Degradation" , value=f"Wood: `{wood_pct}%/day`\nIron: `{iron_pct}%/day`", inline=False)
+
+            await inter.response.send_message(embed=embed)
+            cmdLog.process(status_code=100, name="Executed", details="Balance displayed.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

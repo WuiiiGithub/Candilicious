@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel
 from typing import Optional
 import config
+from library import degrade
 from . import verify_token
 
 router = APIRouter()
@@ -127,9 +128,26 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
         "claimed_at": datetime.now(timezone.utc),
     })
 
+    rates_doc = await request.app.db["config"].find_one({"_id": "degradation_rates"})
+    wood_rate = rates_doc.get("wood", 0.05) if rates_doc else 0.05
+    iron_rate = rates_doc.get("iron", 0.03) if rates_doc else 0.03
+
+    user_data = await request.app.db["users"].find_one({"_id": user_id})
+    resources = (user_data or {}).get("economy", {}).get("resources", {})
+    wood_data = resources.get("wood", {})
+    iron_data = resources.get("iron", {})
+
+    existing_wood, wood_dt = degrade.apply(wood_data.get("amount", 0), wood_data.get("degraded_at"), wood_rate)
+    existing_iron, iron_dt = degrade.apply(iron_data.get("amount", 0), iron_data.get("degraded_at"), iron_rate)
+
     await request.app.db["users"].update_one(
         {"_id": user_id},
-        {"$inc": {"economy.wood": wood, "economy.iron": iron}},
+        {"$set": {
+            "economy.resources.wood.amount": existing_wood + wood,
+            "economy.resources.wood.degraded_at": wood_dt,
+            "economy.resources.iron.amount": existing_iron + iron,
+            "economy.resources.iron.degraded_at": iron_dt,
+        }},
         upsert=True,
     )
 

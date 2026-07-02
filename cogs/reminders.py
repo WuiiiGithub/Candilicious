@@ -3,7 +3,6 @@ from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from discord import app_commands, ui
 from library.logging import *
-from typing import Union
 from datetime import datetime, timezone
 
 filename = __name__.title()
@@ -11,7 +10,7 @@ cogLog = CogLogger(filename=filename)
 
 load_dotenv()
 
-_db = pymongo.MongoClient(host=config.MONGODB_URI)[config.MONGODB_NAME]
+_db = pymongo.MongoClient(host=config.MONGODB_URI)[config.DB_NAME]
 serverCollection = _db["servers"]
 configCollection = _db["config"]
 
@@ -106,84 +105,7 @@ class Reminders(commands.Cog):
     def cog_unload(self):
         self.study_reminder.cancel()
 
-    @app_commands.command(
-        name="rconfig", description="Configure your reminder for server."
-    )
-    @app_commands.describe(
-        time="No. of minutes to repeat reminding.",
-        channel="Select a channel to remind",
-        text="Footer text to be used to remind with.",
-    )
-    async def rconfig(
-        self,
-        inter: discord.Interaction,
-        channel: Union[discord.TextChannel, discord.VoiceChannel] = None,
-        time: int = None,
-        text: str = None,
-    ):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            cmdLog.process(status_code=0, name="Waiting", details="Fetching current reminder configuration...")
-            serverDoc = serverCollection.find_one({"_id": str(inter.guild_id)}) or {}
-            reminderDoc = serverDoc.get("reminders", {})
 
-            if not reminderDoc and not (channel or time or text):
-                await inter.response.send_message(
-                    "Reminders not configured! Provide parameters to setup.",
-                    ephemeral=True,
-                )
-                cmdLog.process(status_code=-25, name="Aborted", details="No parameters provided for setup.")
-                return
-            
-            isUpdated = False
-            if channel:
-                reminderDoc["channel"] = str(channel.id)
-                isUpdated = True
-            if time:
-                reminderDoc["time"] = time
-                isUpdated = True
-            if text:
-                reminderDoc["text"] = text
-                isUpdated = True
-
-            cmdLog.process(status_code=75, name="DB Update", details="Updating reminder settings in database...")
-            # Update DB
-            serverCollection.update_one(
-                {"_id": str(inter.guild_id)},
-                {"$set": {"reminders": reminderDoc}},
-                upsert=True,
-            )
-
-            # Refresh cache immediately
-            await self.refresh_reminders_cache()
-
-            title = "Reminder Config"
-            if isUpdated:
-                title = "Updated " + title
-            embed = discord.Embed(
-                title=title, 
-                color=config.msgColor
-            )
-            embed.add_field(
-                name="Channel", 
-                value=f"<#{reminderDoc.get('channel', 'Not Set')}>",
-                inline=True
-            )
-            embed.add_field(
-                name="Time", value=f"{reminderDoc.get('time', 'Not Set')} mins",
-                inline=True
-            )
-            embed.add_field(
-                name="Text", 
-                value=reminderDoc.get("text", "Not Set"),
-                inline=False
-            )
-            await inter.response.send_message(embed=embed)
-            cmdLog.process(status_code=100, name="Executed", details="Reminder configuration successfully updated and response sent.")
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
 
     async def refresh_reminders_cache(self):
         """

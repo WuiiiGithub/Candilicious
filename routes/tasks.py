@@ -1,8 +1,47 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
 from . import verify_token
 
 router = APIRouter()
+
+
+async def log_task_event(
+    request: Request, user_id: str, project_id: str, board_id: str,
+    event_name: str, avg_jerk: list | None = None,
+    avg_pointer_speed: float | None = None
+):
+    await request.app.db["tasks.log"].insert_one({
+        "user_id": user_id,
+        "avg_jerk": avg_jerk,
+        "avg_pointer_speed": avg_pointer_speed,
+        "event_name": event_name,
+        "occured_at": datetime.now(timezone.utc),
+        "project_id": project_id,
+        "board_id": board_id,
+    })
+
+
+async def log_progress(
+    request: Request, user_id: str, project_id: str, project: dict,
+    avg_jerk: list | None = None, avg_pointer_speed: float | None = None
+):
+    counts = project.get("boards", {})
+    total = sum(counts.values())
+    done = counts.get("done", 0)
+    progress = round((done / total) * 100) if total > 0 else 0
+    await request.app.db["tasks.log"].insert_one({
+        "user_id": user_id,
+        "avg_jerk": avg_jerk,
+        "avg_pointer_speed": avg_pointer_speed,
+        "event_name": "progress_updated",
+        "occured_at": datetime.now(timezone.utc),
+        "project_id": project_id,
+        "board_id": None,
+        "progress_percent": progress,
+        "total_tasks": total,
+        "done_tasks": done,
+    })
 
 
 @router.get("")
@@ -39,7 +78,7 @@ async def get_tasks(request: Request, payload: dict = Depends(verify_token)):
                 "board_id": board.get("board_id"),
                 "project_id": board.get("project_id"),
                 "text": task.get("text"),
-                "priority": task.get("priority", "normal"),
+                "priority": task.get("priority", 1),
                 "status": task.get("status", "todo"),
                 "created_at": task.get("created_at"),
             })
@@ -73,9 +112,10 @@ async def create_task(request: Request, payload: dict = Depends(verify_token)):
         raise HTTPException(status_code=404, detail="Board not found or unauthorized")
 
     task_id = str(uuid.uuid4())
+    priority = body.get("priority", 1)
     new_task = {
         "text": text,
-        "priority": "normal",
+        "priority": priority,
         "status": "todo",
         "created_at": created_at,
     }
@@ -84,6 +124,34 @@ async def create_task(request: Request, payload: dict = Depends(verify_token)):
         {"board_id": board_id},
         {"$set": {f"tasks.{task_id}": new_task}}
     )
+
+    await log_task_event(
+        request, user_id, project_id, board_id, "task_created",
+        avg_jerk=body.get("avg_jerk"),
+        avg_pointer_speed=body.get("avg_pointer_speed"),
+    )
+
+    project = await request.app.db["projects.docs"].find_one({"project_id": project_id})
+    if project:
+        # update project counts
+        boards = await request.app.db["boards.docs"].find({"project_id": project_id}).to_list(length=None)
+        counts = {"todo": 0, "cooking": 0, "done": 0}
+        for b in boards:
+            for t_id, t in b.get("tasks", {}).items():
+                s = t.get("status", "todo")
+                if s in counts:
+                    counts[s] += 1
+        await request.app.db["projects.docs"].update_one(
+            {"project_id": project_id},
+            {"$set": {"boards": counts}}
+        )
+        project = await request.app.db["projects.docs"].find_one({"project_id": project_id})
+        if project:
+            await log_progress(
+                request, user_id, project_id, project,
+                avg_jerk=body.get("avg_jerk"),
+                avg_pointer_speed=body.get("avg_pointer_speed"),
+            )
 
     return {"status": "success", "task_id": task_id, "task": new_task}
 
@@ -130,6 +198,26 @@ async def update_task(request: Request, payload: dict = Depends(verify_token)):
             {"$set": update_fields}
         )
 
+        # Log each type of change
+        if "text" in body:
+            await log_task_event(
+                request, user_id, project_id, board_id, "task_renamed",
+                avg_jerk=body.get("avg_jerk"),
+                avg_pointer_speed=body.get("avg_pointer_speed"),
+            )
+        if "priority" in body:
+            await log_task_event(
+                request, user_id, project_id, board_id, "task_priority_changed",
+                avg_jerk=body.get("avg_jerk"),
+                avg_pointer_speed=body.get("avg_pointer_speed"),
+            )
+        if "status" in body:
+            await log_task_event(
+                request, user_id, project_id, board_id, "task_status_changed",
+                avg_jerk=body.get("avg_jerk"),
+                avg_pointer_speed=body.get("avg_pointer_speed"),
+            )
+
         # Recalculate project counts if status changed
         if "status" in body:
             boards = await request.app.db["boards.docs"].find({"project_id": project_id}).to_list(length=None)
@@ -143,6 +231,13 @@ async def update_task(request: Request, payload: dict = Depends(verify_token)):
                 {"project_id": project_id},
                 {"$set": {"boards": counts}}
             )
+            project = await request.app.db["projects.docs"].find_one({"project_id": project_id})
+            if project:
+                await log_progress(
+                    request, user_id, project_id, project,
+                    avg_jerk=body.get("avg_jerk"),
+                    avg_pointer_speed=body.get("avg_pointer_speed"),
+                )
 
     return {"status": "success"}
 
@@ -180,6 +275,12 @@ async def delete_task(request: Request, payload: dict = Depends(verify_token)):
         {"$unset": {f"tasks.{task_id}": ""}}
     )
 
+    await log_task_event(
+        request, user_id, project_id, board_id, "task_deleted",
+        avg_jerk=body.get("avg_jerk"),
+        avg_pointer_speed=body.get("avg_pointer_speed"),
+    )
+
     # Recalculate project counts after deletion
     boards = await request.app.db["boards.docs"].find({"project_id": project_id}).to_list(length=None)
     counts = {"todo": 0, "cooking": 0, "done": 0}
@@ -192,5 +293,12 @@ async def delete_task(request: Request, payload: dict = Depends(verify_token)):
         {"project_id": project_id},
         {"$set": {"boards": counts}}
     )
+    project = await request.app.db["projects.docs"].find_one({"project_id": project_id})
+    if project:
+        await log_progress(
+            request, user_id, project_id, project,
+            avg_jerk=body.get("avg_jerk"),
+            avg_pointer_speed=body.get("avg_pointer_speed"),
+        )
 
     return {"status": "success"}

@@ -8,7 +8,7 @@ import config
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.MONGODB_NAME]
+db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.DB_NAME]
 selfCollection = db["Self"]
 
 class General(commands.Cog):
