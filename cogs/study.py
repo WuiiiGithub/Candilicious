@@ -30,7 +30,11 @@ try:
     dropsCollection.drop_index("created_at_1")
 except pymongo.errors.OperationFailure:
     pass
-dropsCollection.create_index("created_at", expireAfterSeconds=3600)
+try:
+    dropsCollection.drop_index("expire_at_1")
+except pymongo.errors.OperationFailure:
+    pass
+dropsCollection.create_index("expire_at", expireAfterSeconds=0)
 activitySessionCollection = db["session.logs"]
 
 from library import dseshpy
@@ -721,35 +725,107 @@ class Study(commands.Cog):
     async def leaderboard(self, inter: discord.Interaction, view: str="display_name", scope: int = 1):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            cmdLog.process(status_code=0, name='Waiting', details="Trying to fetch the local study toppers from the database...")
-            if scope == 1:
-                toppers = list(userCollection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "_id": 1,
-                                "name": 1,
-                                "display_name": 1,
-                                "time": {"$ifNull": [f"$servers.{inter.guild_id}.time", 0]},
-                            }
-                        },
-                        {"$sort": {"time": -1}},
-                        {"$limit": 10},
-                    ]
-                ))
-                cmdLog.process(status_code=75, name='Ready', details="Successfully fetched the local toppers; preparing response...")
-                await inter.response.send_message(embed=discord.Embed(
+            cmdLog.process(status_code=0, name='Waiting', details="Fetching leaderboard data...")
+
+            if scope == 0:
+                await inter.response.send_message("The Leaderboard command is still under development!", ephemeral=True)
+                cmdLog.process(status_code=50, name="Pending")
+                return
+
+            guild_id = str(inter.guild_id)
+            user_id = str(inter.user.id)
+
+            total_count = userCollection.count_documents({f"servers.{guild_id}.time": {"$gt": 0}})
+
+            if total_count < 3:
+                await inter.response.send_message(
+                    embed=discord.Embed(description="Not enough users to rank. Need at least 3.", color=config.msgColor),
+                    delete_after=30
+                )
+                cmdLog.process(status_code=100, name="Not enough users")
+                return
+
+            pipeline = [
+                {"$match": {f"servers.{guild_id}.time": {"$gt": 0}}},
+                {"$project": {
+                    "_id": 1,
+                    "name": {"$ifNull": ["$name", "$_id"]},
+                    "display_name": {"$ifNull": ["$display_name", "$name", "$_id"]},
+                    "pfp": {"$ifNull": ["$pfp", ""]},
+                    "time": {"$ifNull": [f"$servers.{guild_id}.time", 0]},
+                }},
+                {"$sort": {"time": -1}},
+            ]
+            all_users = list(userCollection.aggregate(pipeline))
+
+            for i, u in enumerate(all_users):
+                u["_rank"] = i + 1
+
+            user_rank = None
+            for u in all_users:
+                if u["_id"] == user_id:
+                    user_rank = u["_rank"]
+                    break
+
+            top3 = all_users[:3]
+
+            if total_count <= 10 or user_rank is None or user_rank <= 10:
+                rows = all_users[3:10]
+            else:
+                start = max(3, user_rank - 7)
+                end = min(len(all_users), start + 7)
+                rows = all_users[start:end]
+
+            user_data = userCollection.find_one({"_id": user_id}, {"premium.type": 1})
+            is_premium = user_data.get("premium", {}).get("type") == "pro" if user_data else False
+
+            if is_premium:
+                await inter.response.defer()
+
+                def fmt_time(seconds):
+                    m = seconds // 60
+                    h = seconds // 3600
+                    m = m % 60
+                    return f"{int(h)}h {int(m)}m"
+
+                podium_data = []
+                for u in top3:
+                    podium_data.append({
+                        "rank": u["_rank"],
+                        "name": u.get(view, "Unknown"),
+                        "time": fmt_time(u["time"]),
+                        "avatar_url": u.get("pfp", ""),
+                    })
+
+                rows_data = []
+                for u in rows:
+                    rows_data.append({
+                        "rank": u["_rank"],
+                        "name": u.get(view, "Unknown"),
+                        "time": fmt_time(u["time"]),
+                        "avatar_url": u.get("pfp", ""),
+                    })
+
+                lb_data = {"podium": podium_data, "rows": rows_data}
+                image_data = await getNovaLeaderboard(lb_data, "gold")
+
+                if image_data:
+                    file = discord.File(fp=image_data, filename="leaderboard.webp")
+                    await inter.followup.send(file=file)
+                    cmdLog.process(status_code=100, name="Executed", details="Image leaderboard delivered.")
+                else:
+                    await inter.followup.send("Failed to generate leaderboard image.")
+                    cmdLog.process(status_code=-100, name="Failed", details="Image generation failed.")
+            else:
+                toppers = top3 + rows
+                await inter.response.send_message(
+                    embed=discord.Embed(
                         description=leaderboard_template(toppers=toppers, view=view),
                         color=config.msgColor
                     ),
                     delete_after=30
                 )
-                cmdLog.process(status_code=100, name="Executed", details="Local leaderboard successfully delivered.")
-            else:
-                await inter.response.send_message(
-                    "The Leaderboard command is still under development!", ephemeral=True
-                )
-                cmdLog.process(status_code=50, name="Pending", details="Global leaderboard requested but is still under construction.")
+                cmdLog.process(status_code=100, name="Executed", details="Text leaderboard delivered.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
@@ -889,6 +965,49 @@ class Study(commands.Cog):
                 else:
                     await inter.followup.send(f"Found {len(users_to_fix)} users, but could not fetch names for any of them.", ephemeral=True)
                     cmdLog.process(status_code=-25, name="Failed", details="Recovery attempted but zero users could be fetched from Discord.")
+
+            elif cmd == 'sync':
+                await inter.response.send_message("Syncing all users with Discord...", ephemeral=True)
+
+                all_users = list(userCollection.find({}, {"_id": 1}))
+                cmdLog.process(status_code=50, name="Ready", details=f"Found {len(all_users)} total users to sync.")
+
+                bulk_ops = []
+                count = 0
+                failed = 0
+
+                for doc in all_users:
+                    user_id = doc['_id']
+                    try:
+                        user = await inter.client.fetch_user(int(user_id))
+                        bulk_ops.append(pymongo.UpdateOne(
+                            {"_id": user_id},
+                            {"$set": {
+                                "name": user.name,
+                                "display_name": user.display_name,
+                                "pfp": user.display_avatar.url,
+                            }},
+                            upsert=True
+                        ))
+                        count += 1
+                    except Exception:
+                        failed += 1
+                        continue
+
+                    if count % 10 == 0:
+                        await asyncio.sleep(1)
+
+                if bulk_ops:
+                    result = userCollection.bulk_write(bulk_ops)
+                    await inter.followup.send(
+                        f"Sync complete!\n- Users updated: {result.modified_count}\n- Users upserted: {result.upserted_count}\n- Failed: {failed}",
+                        ephemeral=True
+                    )
+                    cmdLog.process(status_code=100, name="Executed", details=f"Sync complete: {result.modified_count} updated, {failed} failed.")
+                else:
+                    await inter.followup.send("No users to sync.", ephemeral=True)
+                    cmdLog.process(status_code=-25, name="Failed", details="No users synced.")
+
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
@@ -1189,6 +1308,106 @@ class Study(commands.Cog):
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
             cmdLog.send()
+
+    @app_commands.command(name='sync', description='Sync config values from database into the running bot')
+    async def sync_config(self, inter: discord.Interaction):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            await inter.response.defer(ephemeral=True)
+            synced = []
+
+            drops_doc = db["config"].find_one({"_id": "drops"})
+            if drops_doc:
+                for k, v in drops_doc.items():
+                    if k != "_id" and hasattr(config, k.upper()):
+                        setattr(config, k.upper(), v)
+                synced.append("drops")
+            else:
+                db["config"].update_one(
+                    {"_id": "drops"},
+                    {"$set": {
+                        "collection_time": config.DROP_COLLECTION_TIME,
+                        "mean_time": config.DROP_MEAN_TIME,
+                        "variance": config.DROP_VARIANCE,
+                    }},
+                    upsert=True
+                )
+                synced.append("drops (created)")
+
+            resources_doc = db["config"].find_one({"_id": "resources"})
+            resource_defaults = {
+                "wood_base_mean": config.RESOURCE_WOOD_BASE_MEAN,
+                "wood_base_decay": config.RESOURCE_WOOD_BASE_DECAY,
+                "wood_decay_rate": config.RESOURCE_WOOD_DECAY_RATE,
+                "wood_std_dev": config.RESOURCE_WOOD_STD_DEV,
+                "wood_min": config.RESOURCE_WOOD_MIN,
+                "iron_base_mean": config.RESOURCE_IRON_BASE_MEAN,
+                "iron_base_decay": config.RESOURCE_IRON_BASE_DECAY,
+                "iron_decay_rate": config.RESOURCE_IRON_DECAY_RATE,
+                "iron_std_dev": config.RESOURCE_IRON_STD_DEV,
+                "iron_min": config.RESOURCE_IRON_MIN,
+                "variance_factor_rate": config.RESOURCE_VARIANCE_FACTOR_RATE,
+                "variance_factor_min": config.RESOURCE_VARIANCE_FACTOR_MIN,
+            }
+            if resources_doc:
+                cfg_key_map = {
+                    "wood_base_mean": "RESOURCE_WOOD_BASE_MEAN",
+                    "wood_base_decay": "RESOURCE_WOOD_BASE_DECAY",
+                    "wood_decay_rate": "RESOURCE_WOOD_DECAY_RATE",
+                    "wood_std_dev": "RESOURCE_WOOD_STD_DEV",
+                    "wood_min": "RESOURCE_WOOD_MIN",
+                    "iron_base_mean": "RESOURCE_IRON_BASE_MEAN",
+                    "iron_base_decay": "RESOURCE_IRON_BASE_DECAY",
+                    "iron_decay_rate": "RESOURCE_IRON_DECAY_RATE",
+                    "iron_std_dev": "RESOURCE_IRON_STD_DEV",
+                    "iron_min": "RESOURCE_IRON_MIN",
+                    "variance_factor_rate": "RESOURCE_VARIANCE_FACTOR_RATE",
+                    "variance_factor_min": "RESOURCE_VARIANCE_FACTOR_MIN",
+                }
+                for db_key, cfg_key in cfg_key_map.items():
+                    if db_key in resources_doc and hasattr(config, cfg_key):
+                        setattr(config, cfg_key, resources_doc[db_key])
+                synced.append("resources")
+            else:
+                db["config"].update_one(
+                    {"_id": "resources"},
+                    {"$set": resource_defaults},
+                    upsert=True
+                )
+                synced.append("resources (created)")
+
+            auto_cut_doc = db["config"].find_one({"_id": "auto_cut"})
+            auto_cut_defaults = {
+                "cost": config.PREMIUM_COST,
+                "duration_days": config.PREMIUM_TTL_DAYS,
+                "unit": config.PREMIUM_UNIT,
+            }
+            if auto_cut_doc:
+                if "cost" in auto_cut_doc:
+                    config.PREMIUM_COST = auto_cut_doc["cost"]
+                if "duration_days" in auto_cut_doc:
+                    config.PREMIUM_TTL_DAYS = auto_cut_doc["duration_days"]
+                if "unit" in auto_cut_doc:
+                    config.PREMIUM_UNIT = auto_cut_doc["unit"]
+                synced.append("auto_cut")
+            else:
+                db["config"].update_one(
+                    {"_id": "auto_cut"},
+                    {"$set": auto_cut_defaults},
+                    upsert=True
+                )
+                synced.append("auto_cut (created)")
+
+            await inter.followup.send(f"Synced: {', '.join(synced)}", ephemeral=True)
+            cmdLog.process(status_code=100, name="Sync Done", details=f"Synced: {', '.join(synced)}")
+
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+            if not inter.response.is_done():
+                await inter.response.send_message("Something went wrong.", ephemeral=True)
+        finally:
+            cmdLog.send()
+
 
 async def setup(bot):
     Study_cog = Study(bot)

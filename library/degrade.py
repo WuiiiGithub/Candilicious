@@ -7,6 +7,8 @@ def apply(amount: int, degraded_at, daily_rate: float) -> tuple[int, datetime]:
         return amount, now
     if not isinstance(degraded_at, datetime):
         return amount, now
+    if degraded_at.tzinfo is None:
+        degraded_at = degraded_at.replace(tzinfo=timezone.utc)
     delta = (now - degraded_at).total_seconds()
     if delta <= 0:
         return amount, now

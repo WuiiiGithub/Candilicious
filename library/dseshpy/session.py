@@ -1,7 +1,7 @@
 import asyncio
 import secrets
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from . import collections
 from . import checks
 from discord import VoiceState, Member
@@ -129,7 +129,8 @@ class Session:
         try:
             while True:
                 try:
-                    interval = random.uniform(0.5, 1.5) * self.routine_callback_mean_time
+                    v = config.DROP_VARIANCE
+                    interval = random.uniform(1 - v, 1 + v) * self.routine_callback_mean_time
                     await asyncio.sleep(interval * 60)
 
                     if not channel.members:
@@ -144,6 +145,7 @@ class Session:
                             "channel_id": self.channel_id,
                             "drop_number": self.routines_fired_count + 1,
                             "created_at": datetime.now(timezone.utc),
+                            "expire_at": datetime.now(timezone.utc) + timedelta(seconds=config.DROP_COLLECTION_TIME + 5),
                         })
 
                     domain = os.getenv("FRONTEND_DOMAIN", "")
@@ -253,6 +255,14 @@ class Session:
         if secs > 0:
             self._accrue_time(member_id, activity_type, secs)
 
+        u_col = collections.get('user')
+        if u_col is not None and secs > 0:
+            u_col.update_one(
+                {"_id": member_id},
+                {"$inc": {f"servers.{self.guild_id}.time": secs}},
+                upsert=True
+            )
+
         now = datetime.now(timezone.utc)
         log_id = self.members[member_id].get("log_id")
         if log_id:
@@ -346,12 +356,6 @@ class Session:
     def _update_user_time(self, member: Member, activity_type: str = None):
         member_id = str(member.id)
         if member_id not in self.members:
-            return
-        sessions = self.members[member_id].get("sessions", [])
-        if not sessions:
-            return
-        cur = sessions[-1]
-        if cur.get("left_at") is not None:
             return
 
         secs = self._seg_elapsed(member_id)

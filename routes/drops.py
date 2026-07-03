@@ -18,33 +18,27 @@ class ClaimRequest(BaseModel):
     study_type_amount: Optional[str] = None
     respond_time: Optional[int] = None
 
-ACTIVITY_TIERS = [
-    ("No Activity", 1.0, 0.00),
-    ("Stream", 1.5, 0.03),
-    ("Cam", 2.0, 0.08),
-    ("Cam + Stream", 2.5, 0.15),
-]
-
 def get_activity_tier(state):
+    tiers = config.ACTIVITY_TIERS
     if state.self_video and state.self_stream:
-        return ACTIVITY_TIERS[3]
+        return tiers[3]
     elif state.self_video:
-        return ACTIVITY_TIERS[2]
+        return tiers[2]
     elif state.self_stream:
-        return ACTIVITY_TIERS[1]
+        return tiers[1]
     else:
-        return ACTIVITY_TIERS[0]
+        return tiers[0]
 
 def calculate_reward(activity_mult: float, iron_chance: float, vc_level: int, vc_xp: int):
-    wood_mean = 60 - 35 * math.exp(-0.1 * (vc_level - 1))
-    iron_mean = 20 - 12 * math.exp(-0.1 * (vc_level - 1))
+    wood_mean = config.RESOURCE_WOOD_BASE_MEAN - config.RESOURCE_WOOD_BASE_DECAY * math.exp(-config.RESOURCE_WOOD_DECAY_RATE * (vc_level - 1))
+    iron_mean = config.RESOURCE_IRON_BASE_MEAN - config.RESOURCE_IRON_BASE_DECAY * math.exp(-config.RESOURCE_IRON_DECAY_RATE * (vc_level - 1))
 
-    variance_factor = max(0.1, 1.0 - vc_xp * 0.001)
+    variance_factor = max(config.RESOURCE_VARIANCE_FACTOR_MIN, 1.0 - vc_xp * config.RESOURCE_VARIANCE_FACTOR_RATE)
 
-    wood = max(2, int(random.gauss(wood_mean * activity_mult, 10 * activity_mult * variance_factor)))
+    wood = max(config.RESOURCE_WOOD_MIN, int(random.gauss(wood_mean * activity_mult, config.RESOURCE_WOOD_STD_DEV * activity_mult * variance_factor)))
     iron = 0
     if random.random() < iron_chance:
-        iron = max(0, int(random.gauss(iron_mean * activity_mult, 5 * activity_mult * variance_factor)))
+        iron = max(config.RESOURCE_IRON_MIN, int(random.gauss(iron_mean * activity_mult, config.RESOURCE_IRON_STD_DEV * activity_mult * variance_factor)))
 
     return wood, iron
 
