@@ -104,6 +104,7 @@ async def callback(request: Request, code: str, state: str):
         "username": user_info.get("username"),
         "avatar": user_info.get("avatar"),
         "in_guild": in_guild,
+        "is_owner": user_id == str(config.OWNER_ID),
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(days=7),
     }

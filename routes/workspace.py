@@ -1,10 +1,19 @@
+import secrets
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from hashlib import sha256
 from . import verify_token
+import config
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+OTP_TTL_MINUTES = 5
+SESSION_TTL_SECONDS = 600
 
 class WorkspaceRequest(BaseModel):
     action: str
@@ -19,6 +28,66 @@ class RemindersData(BaseModel):
     gifs: list[str]
     texts: list[str]
 
+class DropsData(BaseModel):
+    mean_time: float = 30
+    variance: float = 0.5
+    collection_time: float = 30
+
+class ResourceTier(BaseModel):
+    base_mean: float = 60
+    base_decay: float = 35
+    decay_rate: float = 0.1
+    std_dev: float = 10
+    min: float = 2
+
+class ResourcesData(BaseModel):
+    wood: ResourceTier = ResourceTier()
+    iron: ResourceTier = ResourceTier(base_mean=20, base_decay=12, decay_rate=0.1, std_dev=5, min=0)
+    variance_factor_rate: float = 0.001
+    variance_factor_min: float = 0.1
+
+class ActivityTier(BaseModel):
+    name: str
+    multiplier: float
+    bonus: float
+
+class PremiumData(BaseModel):
+    cost: float = 100
+    ttl_days: float = 7
+    unit: str = "iron"
+
+class VariablesData(BaseModel):
+    drops: DropsData = DropsData()
+    resources: ResourcesData = ResourcesData()
+    activity_tiers: list[list] = []
+    premium: PremiumData = PremiumData()
+
+
+VARIABLES_DEFAULTS = {
+    "drops": {"mean_time": 30, "variance": 0.5, "collection_time": 30},
+    "resources": {
+        "wood": {"base_mean": 60, "base_decay": 35, "decay_rate": 0.1, "std_dev": 10, "min": 2},
+        "iron": {"base_mean": 20, "base_decay": 12, "decay_rate": 0.1, "std_dev": 5, "min": 0},
+        "variance_factor_rate": 0.001,
+        "variance_factor_min": 0.1,
+    },
+    "activity_tiers": [
+        ["No Activity", 1.0, 0.0],
+        ["Stream", 1.5, 0.03],
+        ["Cam", 2.0, 0.08],
+        ["Cam + Stream", 2.5, 0.15],
+    ],
+    "premium": {"cost": 100, "ttl_days": 7, "unit": "iron"},
+}
+
+
+async def get_owner_id(db) -> str:
+    doc = await db["config"].find_one({"_id": "bot"}, projection={"owner_id": 1})
+    if doc and doc.get("owner_id"):
+        return str(doc["owner_id"])
+    logger.warning("Bot config document missing owner_id — falling back to config.OWNER_ID")
+    return str(config.OWNER_ID)
+
 
 @router.post("")
 async def workspace(
@@ -27,6 +96,20 @@ async def workspace(
     payload: dict = Depends(verify_token)
 ):
     db = request.app.db
+    user_id = payload.get("sub")
+    owner_id = await get_owner_id(db)
+
+    if body.action == "request_otp":
+        return await request_otp(db, request, user_id, owner_id)
+    elif body.action == "verify_otp":
+        return await verify_otp(db, user_id, body.data or {})
+    elif body.action == "revoke_session":
+        return await revoke_session(db, user_id, body.data or {})
+
+    if user_id != owner_id:
+        session = await db["admin_sessions"].find_one({"_id": user_id})
+        if not session or session.get("expires_at", datetime.now(timezone.utc)) < datetime.now(timezone.utc):
+            raise HTTPException(status_code=403, detail="Only the bot owner can access the workspace")
 
     if body.action == "get_policy":
         doc_id = (body.data or {}).get("id", "")
@@ -37,8 +120,83 @@ async def workspace(
         return await get_reminders(db)
     elif body.action == "save_reminders":
         return await save_reminders(db, RemindersData(**(body.data or {})))
+    elif body.action == "get_variables":
+        return await get_variables(db)
+    elif body.action == "save_variables":
+        return await save_variables(db, body.data or {})
     else:
         raise HTTPException(status_code=400, detail=f"Unknown action: {body.action}")
+
+
+async def request_otp(db, request, user_id: str, owner_id: str):
+    if user_id != owner_id:
+        raise HTTPException(status_code=403, detail="Only the bot owner can request an OTP")
+
+    otp = str(secrets.randbelow(900000) + 100000)
+    otp_hash = sha256(otp.encode()).hexdigest()
+    now = datetime.now(timezone.utc)
+
+    await db["admin_otp"].update_one(
+        {"_id": user_id},
+        {"$set": {
+            "otp_hash": otp_hash,
+            "created_at": now,
+            "expires_at": now + timedelta(minutes=OTP_TTL_MINUTES),
+        }},
+        upsert=True,
+    )
+
+    bot = request.app.state.bot
+    try:
+        user = bot.get_user(int(owner_id))
+        if not user:
+            user = await bot.fetch_user(int(owner_id))
+        if user:
+            await user.send(f"Your admin workspace OTP: **{otp}**\nThis code expires in {OTP_TTL_MINUTES} minutes.")
+            logger.info(f"OTP sent to owner {owner_id}")
+        else:
+            logger.error(f"Could not find Discord user for owner {owner_id}")
+            raise HTTPException(status_code=500, detail="Could not send OTP: owner not found")
+    except Exception as e:
+        logger.error(f"Failed to send OTP DM: {e}")
+        raise HTTPException(status_code=500, detail="Could not send OTP via Discord DM")
+
+    return {"sent": True}
+
+
+async def verify_otp(db, user_id: str, data: dict):
+    otp_attempt = str(data.get("otp", ""))
+    otp_hash_attempt = sha256(otp_attempt.encode()).hexdigest()
+
+    stored = await db["admin_otp"].find_one({"_id": user_id})
+    if not stored:
+        raise HTTPException(status_code=400, detail="No OTP requested. Please request an OTP first.")
+
+    if stored.get("expires_at", datetime.now(timezone.utc)) < datetime.now(timezone.utc):
+        await db["admin_otp"].delete_one({"_id": user_id})
+        raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
+
+    if stored["otp_hash"] != otp_hash_attempt:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+
+    await db["admin_otp"].delete_one({"_id": user_id})
+
+    now = datetime.now(timezone.utc)
+    await db["admin_sessions"].update_one(
+        {"_id": user_id},
+        {"$set": {
+            "created_at": now,
+            "expires_at": now + timedelta(seconds=SESSION_TTL_SECONDS),
+        }},
+        upsert=True,
+    )
+
+    return {"verified": True, "session_ttl_seconds": SESSION_TTL_SECONDS}
+
+
+async def revoke_session(db, user_id: str, data: dict):
+    await db["admin_sessions"].delete_one({"_id": user_id})
+    return {"revoked": True}
 
 
 async def get_policy(db, doc_id: str):
@@ -71,6 +229,47 @@ async def save_reminders(db, data: RemindersData):
     await db["config"].update_one(
         {"_id": "reminders"},
         {"$set": {"gifs": data.gifs, "texts": data.texts}},
+        upsert=True
+    )
+    return {"status": "saved"}
+
+
+def merge_defaults(raw: dict) -> dict:
+    merged = {}
+    for key, defaults in VARIABLES_DEFAULTS.items():
+        val = raw.get(key)
+        if isinstance(defaults, dict):
+            if isinstance(val, dict):
+                merged[key] = {**defaults, **val}
+            else:
+                merged[key] = dict(defaults)
+        elif isinstance(defaults, list):
+            merged[key] = val if isinstance(val, list) and len(val) > 0 else list(defaults)
+        else:
+            merged[key] = val if val is not None else defaults
+    return merged
+
+
+async def get_variables(db):
+    doc = await db["config"].find_one({"_id": "variables"})
+    raw = doc if doc else {}
+    return merge_defaults(raw)
+
+
+async def save_variables(db, data: dict):
+    merged = merge_defaults(data)
+    try:
+        VariablesData(**merged)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid variable data: {e.errors()}")
+    await db["config"].update_one(
+        {"_id": "variables"},
+        {"$set": {
+            "drops": merged["drops"],
+            "resources": merged["resources"],
+            "activity_tiers": merged["activity_tiers"],
+            "premium": merged["premium"],
+        }},
         upsert=True
     )
     return {"status": "saved"}

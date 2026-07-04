@@ -107,6 +107,15 @@ async def lifespan(app: FastAPI):
             expireAfterSeconds=0
         )
 
+        await app.db["admin_otp"].create_index(
+            [("expires_at", ASCENDING)],
+            expireAfterSeconds=0
+        )
+        await app.db["admin_sessions"].create_index(
+            [("expires_at", ASCENDING)],
+            expireAfterSeconds=0
+        )
+
     except (
         ServerSelectionTimeoutError, 
         ConnectionFailure, 
@@ -170,6 +179,32 @@ async def on_ready():
         message="Ready",
         details=f"Discord bot has logged in as {bot.user} ({bot.user.id})",
     )
+
+    try:
+        bot_config = await app.db["config"].find_one({"_id": "bot"}, projection={"status": 1})
+        if bot_config and bot_config.get("status"):
+            status_str = bot_config["status"].lower()
+            status_map = {
+                "online": discord.Status.online,
+                "idle": discord.Status.idle,
+                "dnd": discord.Status.dnd,
+                "offline": discord.Status.offline,
+                "invisible": discord.Status.invisible,
+            }
+            desired = status_map.get(status_str)
+            if desired:
+                await bot.change_presence(status=desired)
+                log.complete(
+                    status_code=100,
+                    message="Status Synced",
+                    details=f"Bot status set to {status_str} from MongoDB config",
+                )
+    except Exception as e:
+        log.error(
+            status_code=-50,
+            message="Status Sync Fail",
+            details=f"Failed to sync bot status from MongoDB: {e}",
+        )
 
     guild_ids = config.availableIn.get("guilds", [])
     for g_id in guild_ids:
