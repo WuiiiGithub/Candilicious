@@ -170,22 +170,30 @@ class Reminders(commands.Cog):
                         embed.set_footer(text=data.get("text", "Focus!"))
                         embed.set_image(url=random.choice(self.gifs))
 
-                        is_picked_member_bot = True
-                        while is_picked_member_bot:
-                            member = random.choice(channel.guild.members)
-                            is_picked_member_bot = member.bot
+                        all_members = [m for m in channel.guild.members if not m.bot]
+                        tagged = data.get("tagged", [])
+                        untagged = [m for m in all_members if str(m.id) not in tagged]
 
+                        if not untagged:
+                            tagged = []
+                            untagged = all_members[:]
+
+                        picked = random.sample(untagged, min(len(untagged), 5))
+                        new_tagged = tagged + [str(m.id) for m in picked]
+
+                        mentions = " ".join(m.mention for m in picked)
                         await channel.send(
-                            content=f"YOOO WAKEUP {member.mention}",
+                            content=f"YOOO WAKEUP {mentions}",
                             embed=embed
                         )
 
                         # Update DB (Sync call)
                         serverCollection.update_one(
                             {"_id": reminder["_id"]},
-                            {"$set": {"reminders.last_sent": now}},
+                            {"$set": {"reminders.last_sent": now, "reminders.tagged": new_tagged}},
                         )
                         data["last_sent"] = now
+                        data["tagged"] = new_tagged
                         taskLog.during(status_code=75, message="Success", details=f"Reminder successfully sent to channel {channel_id}")
                         sent_any = True
                     except Exception as e:

@@ -7,6 +7,7 @@
         "text": "<str:footer_text>",
         "time": "<int:reminder_interval_minutes>",
         "channel": "<str:reminder_channel_id>",
-        "last_sent": "<datetime:last_reminder_sent_time>"
+        "last_sent": "<datetime:last_reminder_sent_time>",
+        "tagged": ["<array:user_ids_already_pinged>"]
     }
 }
