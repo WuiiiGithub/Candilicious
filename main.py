@@ -16,6 +16,7 @@ from routes import (
     logs,
     projects,
     servers,
+    social,
     tasks,
     users,
     auth,
@@ -283,6 +284,11 @@ app.include_router(
     router=drops.router,
     prefix="/api/drops",
     tags=["drops"]
+)
+app.include_router(
+    router=social.router,
+    prefix="/api/social",
+    tags=["social"]
 )
 app.include_router(
     router=workspace.router,
