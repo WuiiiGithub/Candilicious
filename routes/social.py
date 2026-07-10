@@ -43,7 +43,9 @@ async def get_posts(
         if isinstance(doc.get("created_at"), datetime):
             doc["created_at"] = doc["created_at"].isoformat()
         doc["liked_by_me"] = current_user_id in doc.get("likes", [])
+        doc["disliked_by_me"] = current_user_id in doc.get("dislikes", [])
         doc.pop("likes", None)
+        doc.pop("dislikes", None)
         posts.append(doc)
 
     return {"ok": 1, "posts": posts}
@@ -68,7 +70,9 @@ async def get_post(
     if isinstance(doc.get("created_at"), datetime):
         doc["created_at"] = doc["created_at"].isoformat()
     doc["liked_by_me"] = current_user_id in doc.get("likes", [])
+    doc["disliked_by_me"] = current_user_id in doc.get("dislikes", [])
     doc.pop("likes", None)
+    doc.pop("dislikes", None)
 
     return {"ok": 1, "post": doc}
 
@@ -96,6 +100,8 @@ async def create_post(
         "thumbnail_url": body.thumbnail_url,
         "likes": [],
         "like_count": 0,
+        "dislikes": [],
+        "dislike_count": 0,
         "views": 0,
         "created_at": datetime.now(timezone.utc),
     }
@@ -146,6 +152,48 @@ async def toggle_like(
         "ok": 1,
         "liked": liked,
         "like_count": updated.get("like_count", 0),
+    }
+
+
+@router.post("/posts/{post_id}/dislike")
+async def toggle_dislike(
+    request: Request,
+    post_id: str,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+
+    try:
+        post = await request.app.db["social.posts"].find_one({"_id": ObjectId(post_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid post ID")
+
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    dislikes = post.get("dislikes", [])
+    if user_id in dislikes:
+        await request.app.db["social.posts"].update_one(
+            {"_id": ObjectId(post_id)},
+            {"$pull": {"dislikes": user_id}, "$inc": {"dislike_count": -1}},
+        )
+        disliked = False
+    else:
+        await request.app.db["social.posts"].update_one(
+            {"_id": ObjectId(post_id)},
+            {"$push": {"dislikes": user_id}, "$inc": {"dislike_count": 1}},
+        )
+        disliked = True
+
+    updated = await request.app.db["social.posts"].find_one(
+        {"_id": ObjectId(post_id)},
+        {"dislike_count": 1, "dislikes": 1},
+    )
+
+    return {
+        "ok": 1,
+        "disliked": disliked,
+        "dislike_count": updated.get("dislike_count", 0),
     }
 
 
