@@ -42,7 +42,8 @@ dseshpy.initialize(
     session_collection=db["sessions"],
     user_collection=userCollection,
     drops_collection=db["drop.offers"],
-    activity_session_collection=activitySessionCollection
+    activity_session_collection=activitySessionCollection,
+    config_collection=db["config"]
 )
 
 # ===================== CONFIG UI =====================
@@ -471,7 +472,9 @@ class Study(commands.Cog):
 
         # study vc vars
         self.exceptions = tempDataHandler()
-        self.session_manager = dseshpy.session.SessionManager()
+        event_bus = getattr(bot, 'event_bus', None)
+        self.session_manager = dseshpy.session.SessionManager(event_bus=event_bus)
+        bot.session_manager = self.session_manager
 
         cogLog.log_cog(action="starting", status_code=0, details="Study Cog has been initialized and is ready for use.")
 
@@ -573,13 +576,39 @@ class Study(commands.Cog):
                 if len(before.channel.members) == 0:
                     try:
                         await before.channel.delete()
-                        self.session_manager.active_sessions.pop(str(before.channel.id), None)
-                        db["sessions"].delete_one({"_id": str(before.channel.id)})
+                        old_ch_id = str(before.channel.id)
+                        sid = self.session_manager.channel_sessions.get(old_ch_id)
+                        if sid:
+                            sess = self.session_manager.active_sessions.get(sid)
+                            if sess and len(sess.members) > 0:
+                                sess.channel_id = f"w{sess.owner_id}"
+                                sess.guild_id = "web"
+                                self.session_manager.sync(sess)
+                                if old_ch_id in self.session_manager.channel_sessions:
+                                    del self.session_manager.channel_sessions[old_ch_id]
+                                self.session_manager.channel_sessions[sess.channel_id] = sid
+                            elif sess:
+                                self.session_manager._cleanup_session(sess)
+                            else:
+                                sess_data = db["sessions"].find_one({"session_id": sid})
+                                if sess_data:
+                                    u_col = db["users"]
+                                    for uid in sess_data.get("members", {}):
+                                        u_col.update_one(
+                                            {"_id": uid, "current_session": sid},
+                                            {"$unset": {"current_session": ""}}
+                                        )
+                                db["sessions"].delete_one({"session_id": sid})
+                                for uid, usid in list(self.session_manager.user_sessions.items()):
+                                    if usid == sid:
+                                        del self.session_manager.user_sessions[uid]
+                                if old_ch_id in self.session_manager.channel_sessions:
+                                    del self.session_manager.channel_sessions[old_ch_id]
                         log.process(status_code=75, message="Delete VC", details="Deleted empty study VC.")
                     except discord.Forbidden:
-                        log.process(status_code=-100, message="Forbidden", details="Missing permissions to delete VC.")
+                        log.error(status_code=-100, message="Forbidden", details="Missing permissions to delete VC.")
                     except Exception as e:
-                        log.process(status_code=-100, message="Error", details=f"Failed to delete empty VC: {e}")
+                        log.error(status_code=-100, message="Error", details=f"Failed to delete empty VC: {e}")
             
             log.complete(status_code=100, message="Handled", details="State change handled by SessionManager.")
             log.send()
@@ -1091,30 +1120,39 @@ class Study(commands.Cog):
         try:
             server_id = str(inter.guild_id)
 
+            def _find_session_by_channel(ch_id: str):
+                sid = self.session_manager.channel_sessions.get(ch_id)
+                if sid:
+                    return self.session_manager.active_sessions.get(sid)
+                for sess in self.session_manager.active_sessions.values():
+                    if sess.channel_id == ch_id:
+                        return sess
+                return None
+
             if name is None and status is None and session_type is None:
                 if inter.user.voice:
-                    for session in self.session_manager.active_sessions.values():
-                        if str(inter.user.voice.channel.id) == session.channel_id:
-                            channel = inter.user.voice.channel
-                            type_names = {
-                                "*": "All Types Allowed",
-                                "cam": "CAM Only",
-                                "ss": "Screen Share Only",
-                                "cam+ss": "CAM or Screen Share Allowed",
-                                "cam&ss": "CAM & Screen Share Allowed",
-                                "cam+noact": "CAM or No Activity Allowed",
-                                "ss+noact": "Screen Share or No Activity Allowed",
-                            }
-                            embed = discord.Embed(
-                                title="Current VC Configuration",
-                                color=config.msgColor,
-                                timestamp=datetime.now(),
-                            )
-                            embed.add_field(name="Name", value=channel.name, inline=True)
-                            embed.add_field(name="Status", value=channel.status or "\u200b", inline=True)
-                            embed.add_field(name="Session Type", value=type_names.get(session.session_type, session.session_type), inline=False)
-                            await inter.response.send_message(embed=embed, ephemeral=True, delete_after=30)
-                            return
+                    session = _find_session_by_channel(str(inter.user.voice.channel.id))
+                    if session:
+                        channel = inter.user.voice.channel
+                        type_names = {
+                            "*": "All Types Allowed",
+                            "cam": "CAM Only",
+                            "ss": "Screen Share Only",
+                            "cam+ss": "CAM or Screen Share Allowed",
+                            "cam&ss": "CAM & Screen Share Allowed",
+                            "cam+noact": "CAM or No Activity Allowed",
+                            "ss+noact": "Screen Share or No Activity Allowed",
+                        }
+                        embed = discord.Embed(
+                            title="Current VC Configuration",
+                            color=config.msgColor,
+                            timestamp=datetime.now(),
+                        )
+                        embed.add_field(name="Name", value=channel.name, inline=True)
+                        embed.add_field(name="Status", value=channel.status or "\u200b", inline=True)
+                        embed.add_field(name="Session Type", value=type_names.get(session.session_type, session.session_type), inline=False)
+                        await inter.response.send_message(embed=embed, ephemeral=True, delete_after=30)
+                        return
 
                 await inter.response.send_message(
                     embed=discord.Embed(
@@ -1126,18 +1164,17 @@ class Study(commands.Cog):
                 return
 
             if inter.user.voice:
-                for session in self.session_manager.active_sessions.values():
-                    if str(inter.user.voice.channel.id) == session.channel_id:
-                        if str(inter.user.id) != session.owner_id:
-                            await inter.response.send_message(
-                                embed=discord.Embed(
-                                    description="You are not the session owner.",
-                                    color=config.msgColor,
-                                ),
-                                ephemeral=True, delete_after=10,
-                            )
-                            return
-                        break
+                session = _find_session_by_channel(str(inter.user.voice.channel.id))
+                if session:
+                    if str(inter.user.id) != session.owner_id:
+                        await inter.response.send_message(
+                            embed=discord.Embed(
+                                description="You are not the session owner.",
+                                color=config.msgColor,
+                            ),
+                            ephemeral=True, delete_after=10,
+                        )
+                        return
 
             embed = discord.Embed(
                 title="VC Settings Updated",
@@ -1146,52 +1183,51 @@ class Study(commands.Cog):
             )
 
             if session_type is not None and inter.user.voice:
-                for session in self.session_manager.active_sessions.values():
-                    if str(inter.user.voice.channel.id) == session.channel_id:
-                        session.update_settings(session_type=session_type)
-                        self.session_manager.sync(session)
+                session = _find_session_by_channel(str(inter.user.voice.channel.id))
+                if session:
+                    session.update_settings(session_type=session_type)
+                    self.session_manager.sync(session)
 
-                        channel = inter.user.voice.channel
-                        category_id = str(channel.category_id) if channel.category_id else None
-                        non_compliant = []
-                        for vc_member in channel.members:
-                            if vc_member.bot:
-                                continue
-                            act_type = dseshpy.session._get_activity_type(vc_member.voice)
-                            if not session._is_allowed(act_type):
-                                non_compliant.append(vc_member)
-                                if str(vc_member.id) not in session.monitor_tasks:
-                                    task = asyncio.create_task(
-                                        session.activity_monitor(
-                                            vc_member, self.exceptions,
-                                            category_id, None
-                                        )
+                    channel = inter.user.voice.channel
+                    category_id = str(channel.category_id) if channel.category_id else None
+                    non_compliant = []
+                    for vc_member in channel.members:
+                        if vc_member.bot:
+                            continue
+                        act_type = dseshpy.session._get_activity_type(vc_member.voice)
+                        if not session._is_allowed(act_type):
+                            non_compliant.append(vc_member)
+                            if str(vc_member.id) not in session.monitor_tasks:
+                                task = asyncio.create_task(
+                                    session.activity_monitor(
+                                        vc_member, self.exceptions,
+                                        category_id, None
                                     )
-                                    session.monitor_tasks[str(vc_member.id)] = task
+                                )
+                                session.monitor_tasks[str(vc_member.id)] = task
 
-                        if non_compliant:
-                            mentions = " ".join(m.mention for m in non_compliant)
-                            await channel.send(
-                                content=mentions,
-                                embed=discord.Embed(
-                                    description=f"\u26a0\ufe0f This VC now requires **{session._type_description()}**. "
-                                    f"Turn on the required devices within 5 minutes or you'll be removed.",
-                                    color=0x3498DB,
-                                ),
-                                delete_after=30,
-                            )
+                    if non_compliant:
+                        mentions = " ".join(m.mention for m in non_compliant)
+                        await channel.send(
+                            content=mentions,
+                            embed=discord.Embed(
+                                description=f"\u26a0\ufe0f This VC now requires **{session._type_description()}**. "
+                                f"Turn on the required devices within 5 minutes or you'll be removed.",
+                                color=0x3498DB,
+                            ),
+                            delete_after=30,
+                        )
 
-                        type_names = {
-                            "*": "All Types Allowed",
-                            "cam": "CAM Only",
-                            "ss": "Screen Share Only",
-                            "cam+ss": "CAM or Screen Share Allowed",
-                            "cam&ss": "CAM & Screen Share Allowed",
-                            "cam+noact": "CAM or No Activity Allowed",
-                            "ss+noact": "Screen Share or No Activity Allowed",
-                        }
-                        embed.add_field(name="Session Type", value=type_names.get(session_type, session_type), inline=True)
-                        break
+                    type_names = {
+                        "*": "All Types Allowed",
+                        "cam": "CAM Only",
+                        "ss": "Screen Share Only",
+                        "cam+ss": "CAM or Screen Share Allowed",
+                        "cam&ss": "CAM & Screen Share Allowed",
+                        "cam+noact": "CAM or No Activity Allowed",
+                        "ss+noact": "Screen Share or No Activity Allowed",
+                    }
+                    embed.add_field(name="Session Type", value=type_names.get(session_type, session_type), inline=True)
 
             if inter.user.voice:
                 channel = inter.user.voice.channel
@@ -1248,7 +1284,12 @@ class Study(commands.Cog):
                 )
                 return
 
-            session_doc = db["sessions"].find_one({"_id": channel_id})
+            sid = self.session_manager.channel_sessions.get(channel_id)
+            session_doc = None
+            if sid:
+                session_doc = db["sessions"].find_one({"session_id": sid})
+            if not session_doc:
+                session_doc = db["sessions"].find_one({"channel_id": channel_id})
             if not session_doc:
                 await inter.response.send_message(
                     embed=discord.Embed(
@@ -1259,6 +1300,7 @@ class Study(commands.Cog):
                 )
                 return
 
+            session_id = session_doc.get("session_id")
             current_xp = session_doc.get("vc_xp", 0)
             current_level = session_doc.get("vc_level", 1)
 
@@ -1274,12 +1316,12 @@ class Study(commands.Cog):
                 level_up = True
 
             db["sessions"].update_one(
-                {"_id": channel_id},
+                {"session_id": session_id},
                 {"$set": {"vc_xp": new_xp, "vc_level": new_level}},
             )
 
-            if channel_id in self.session_manager.active_sessions:
-                sess = self.session_manager.active_sessions[channel_id]
+            if session_id in self.session_manager.active_sessions:
+                sess = self.session_manager.active_sessions[session_id]
                 sess.vc_xp = new_xp
                 sess.vc_level = new_level
 
@@ -1308,6 +1350,122 @@ class Study(commands.Cog):
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
             cmdLog.send()
+
+    @app_commands.command(name='join', description='Join a study session by session ID.')
+    @app_commands.describe(session_id='The 16-char session ID to join')
+    async def join_session_cmd(self, inter: discord.Interaction, session_id: str):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            cmdLog.process(status_code=0, name='Waiting', details=f"Looking up session {session_id}...")
+
+            session_doc = db["sessions"].find_one({"session_id": session_id})
+            if not session_doc:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="Session not found. Double-check the session ID and try again.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True, delete_after=15,
+                )
+                cmdLog.process(status_code=-100, name="Not Found", details="Session ID not found in DB.")
+                cmdLog.send()
+                return
+
+            channel_id = session_doc.get("channel_id", "")
+            guild_id = session_doc.get("guild_id", "")
+
+            if channel_id.startswith("w"):
+                domain = os.getenv("WEBSITE_DOMAIN", "")
+                if domain and not domain.endswith("/"):
+                    domain += "/"
+                desc = "This is a **web-only session** — there is no Discord voice channel to join."
+                if domain:
+                    desc += f"\n\nJoin via the web app: [**Open Session**]({domain})"
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=desc,
+                        color=discord.Color.orange(),
+                    ),
+                    ephemeral=True, delete_after=30,
+                )
+                cmdLog.process(status_code=50, name="Web Only", details="Session is web-only, directed user to web.")
+                cmdLog.send()
+                return
+
+            if not inter.user.voice or not inter.user.voice.channel:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="You need to be in a voice channel first. Join any voice channel, then use this command again.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True, delete_after=15,
+                )
+                cmdLog.process(status_code=-100, name="No Voice", details="User is not in a voice channel.")
+                cmdLog.send()
+                return
+
+            vc = inter.guild.get_channel(int(channel_id)) if guild_id and guild_id != "web" else None
+            if not vc:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="The voice channel for this session no longer exists.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True, delete_after=15,
+                )
+                cmdLog.process(status_code=-100, name="VC Gone", details=f"Channel {channel_id} not found in guild.")
+                cmdLog.send()
+                return
+
+            if inter.user.voice.channel.id == int(channel_id):
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="You're already in this session!",
+                        color=discord.Color.green(),
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                cmdLog.process(status_code=50, name="Already In", details="User is already in the session VC.")
+                cmdLog.send()
+                return
+
+            try:
+                await inter.user.move_to(vc)
+            except discord.Forbidden:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="I don't have permission to move you to that channel.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True, delete_after=15,
+                )
+                cmdLog.process(status_code=-100, name="Forbidden", details="Missing permissions to move user.")
+                cmdLog.send()
+                return
+
+            members = session_doc.get("members", {})
+            member_count = len(members)
+            session_type = session_doc.get("session_type", "*")
+
+            desc = f"Welcome to the session!\n\n"
+            desc += f"**Members:** {member_count}\n"
+            desc += f"**Type:** `{session_type}`"
+
+            await inter.response.send_message(
+                embed=discord.Embed(
+                    title="Joined Session!",
+                    description=desc,
+                    color=discord.Color.green(),
+                ),
+                ephemeral=True, delete_after=15,
+            )
+            cmdLog.process(status_code=100, name="Joined", details=f"Moved {inter.user.name} to session {session_id}.")
+
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
+
 
     @app_commands.command(name='sync', description='Sync config values from database into the running bot')
     async def sync_config(self, inter: discord.Interaction):

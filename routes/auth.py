@@ -3,7 +3,8 @@ import logging
 import httpx
 import jwt
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
+from pydantic import BaseModel
 from starlette.responses import RedirectResponse
 from . import limiter
 import config
@@ -110,13 +111,96 @@ async def callback(request: Request, code: str, state: str):
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?token={encoded_jwt}", status_code=302)
+    from urllib.parse import quote
+    response = RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/#token={quote(encoded_jwt, safe='')}", status_code=302)
+    response.set_cookie(
+        key="session_token",
+        value=encoded_jwt,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=7 * 24 * 60 * 60,
+        path="/",
+    )
+    return response
 
 
 @router.get("/verify")
-async def verify(token: str):
+async def verify(token: str = None, request: Request = None):
+    if not token and request:
+        token = request.cookies.get("session_token")
+    if not token:
+        return {"valid": False}
     try:
         payload = jwt.decode(token, config.SECRET_KEY, algorithms=["HS256"])
-        return {"valid": True}
+        return {"valid": True, "payload": payload}
     except jwt.PyJWTError:
         return {"valid": False}
+
+
+class WebTokenRequest(BaseModel):
+    token: str
+
+
+@router.post("/webtoken")
+async def exchange_web_token(request: Request, body: WebTokenRequest):
+    """
+    Exchange a bot-generated web token for a JWT.
+    The bot creates webToken when a user joins a voice channel.
+    Only valid while the user is still in the VC (bot removes token on leave).
+    """
+    user_data = await request.app.db["users"].find_one(
+        {"webToken": body.token},
+        {"name": 1, "display_name": 1, "pfp": 1, "profile_pfp": 1},
+    )
+    if not user_data:
+        raise HTTPException(status_code=401, detail="Invalid or expired web token")
+
+    user_id = user_data["_id"]
+
+    bot = request.app.state.bot
+    in_guild = False
+    if bot:
+        try:
+            guild = bot.get_guild(int(GUILD_ID))
+            if guild:
+                member = guild.get_member(int(user_id))
+                if member:
+                    in_guild = True
+        except (ValueError, TypeError):
+            pass
+
+    username = user_data.get("name", "Unknown")
+    avatar_hash = user_data.get("pfp", "")
+    avatar = ""
+    if avatar_hash:
+        if avatar_hash.startswith("https://") or avatar_hash.startswith("data:"):
+            avatar = ""
+        else:
+            ext = "gif" if avatar_hash.startswith("a_") else "png"
+            avatar_hash_clean = avatar_hash.split("/")[-1].split(".")[0] if "/" in avatar_hash else avatar_hash
+            avatar = avatar_hash_clean
+
+    payload = {
+        "sub": user_id,
+        "username": username,
+        "avatar": avatar,
+        "in_guild": in_guild,
+        "is_owner": user_id == str(config.OWNER_ID),
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=12),
+    }
+    encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
+
+    from fastapi.responses import JSONResponse
+    response = JSONResponse(content={"ok": 1, "token": encoded_jwt})
+    response.set_cookie(
+        key="session_token",
+        value=encoded_jwt,
+        httponly=True,
+        secure=True,
+        samesite="none",
+        max_age=12 * 60 * 60,
+        path="/",
+    )
+    return response

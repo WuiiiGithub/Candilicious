@@ -10,6 +10,7 @@ filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
 serverCollection = pymongo.MongoClient(host=config.MONGODB_URI)[config.DB_NAME]['server']
+sessionsCollection = pymongo.MongoClient(host=config.MONGODB_URI)[config.DB_NAME]['sessions']
 
 class Server(commands.Cog):
     def __init__(self, bot):
@@ -64,21 +65,54 @@ class Server(commands.Cog):
             cmdLog.send()
     
     @app_commands.guild_only()
-    @app_commands.command(name='invite', description='Manage invite links to users.')
+    @app_commands.command(name='invite', description='Get session info for this channel.')
     async def invite(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            cmdLog.process(status_code=50, name="Invite Gen", details="Generating a new invite link for the channel...")
-            link = await inter.channel.create_invite()
+            cmdLog.process(status_code=50, name="Session Info", details="Looking up session for this channel...")
+
+            if not inter.channel or not hasattr(inter.channel, 'id'):
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="This command can only be used in a voice channel.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                cmdLog.send()
+                return
+
+            session_doc = sessionsCollection.find_one({"channel_id": str(inter.channel.id)})
+            if not session_doc:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="No active session in this channel.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                cmdLog.process(status_code=50, name="No Session", details="No session found for this channel.")
+                cmdLog.send()
+                return
+
+            sid = session_doc.get("session_id")
+            members = session_doc.get("members", {})
+            member_count = len(members)
+            session_type = session_doc.get("session_type", "*")
+
+            description = f"**Members:** {member_count}\n"
+            description += f"**Type:** `{session_type}`\n\n"
+            description += f"**Session ID** (copy & share):\n```\n{sid}\n```"
+
             await inter.response.send_message(
                 embed=discord.Embed(
-                    title="Invite",
-                    description=f"Wishing you to [join us](<{link}>).",
+                    title="Session Info",
+                    description=description,
                     color=config.msgColor
                 ),
                 ephemeral=True
             )
-            cmdLog.process(status_code=100, name="Invite Ready", details="Invite link successfully generated and delivered.")
+            cmdLog.process(status_code=100, name="Done", details=f"Session info for {sid} delivered.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

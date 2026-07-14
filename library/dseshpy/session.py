@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import secrets
 import os
 from datetime import datetime, timezone, timedelta
@@ -12,6 +13,12 @@ import config
 import pymongo
 session_collection = lambda: collections.get('session')
 
+
+def generate_session_id(channel_id: str) -> str:
+    """Generate a short, unique 16-char hex session ID from channel_id and timestamp."""
+    raw = f"{channel_id}:{datetime.now(timezone.utc).isoformat()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
 def _get_activity_type(state: VoiceState) -> str:
     if state.self_video and state.self_stream:
         return "cam+ss"
@@ -20,6 +27,53 @@ def _get_activity_type(state: VoiceState) -> str:
     elif state.self_stream:
         return "ss"
     return "noact"
+
+def _load_drop_config():
+    """Read drop config directly from DB so changes take effect immediately."""
+    cfg_col = collections.get("config")
+    if cfg_col is None:
+        return
+    doc = cfg_col.find_one({"_id": "variables"})
+    if not doc:
+        return
+    drops = doc.get("drops", {})
+    resources = doc.get("resources", {})
+    activity_tiers = doc.get("activity_tiers", [])
+    premium = doc.get("premium", {})
+    if drops:
+        if "mean_time" in drops:
+            config.DROP_MEAN_TIME = float(drops["mean_time"])
+        if "variance" in drops:
+            config.DROP_VARIANCE = float(drops["variance"])
+        if "collection_time" in drops:
+            config.DROP_COLLECTION_TIME = float(drops["collection_time"])
+    wood = resources.get("wood", {})
+    if wood:
+        for k, attr in [("base_mean", "RESOURCE_WOOD_BASE_MEAN"), ("base_decay", "RESOURCE_WOOD_BASE_DECAY"),
+                         ("decay_rate", "RESOURCE_WOOD_DECAY_RATE"), ("std_dev", "RESOURCE_WOOD_STD_DEV"),
+                         ("min", "RESOURCE_WOOD_MIN")]:
+            if k in wood:
+                setattr(config, attr, float(wood[k]))
+    iron = resources.get("iron", {})
+    if iron:
+        for k, attr in [("base_mean", "RESOURCE_IRON_BASE_MEAN"), ("base_decay", "RESOURCE_IRON_BASE_DECAY"),
+                         ("decay_rate", "RESOURCE_IRON_DECAY_RATE"), ("std_dev", "RESOURCE_IRON_STD_DEV"),
+                         ("min", "RESOURCE_IRON_MIN")]:
+            if k in iron:
+                setattr(config, attr, float(iron[k]))
+    if "variance_factor_rate" in resources:
+        config.RESOURCE_VARIANCE_FACTOR_RATE = float(resources["variance_factor_rate"])
+    if "variance_factor_min" in resources:
+        config.RESOURCE_VARIANCE_FACTOR_MIN = float(resources["variance_factor_min"])
+    if isinstance(activity_tiers, list) and len(activity_tiers) == 4:
+        config.ACTIVITY_TIERS = [tuple(t) for t in activity_tiers]
+    if premium:
+        if "cost" in premium:
+            config.PREMIUM_COST = float(premium["cost"])
+        if "ttl_days" in premium:
+            config.PREMIUM_TTL_DAYS = float(premium["ttl_days"])
+        if "unit" in premium:
+            config.PREMIUM_UNIT = premium["unit"]
 
 class Session:
     """
@@ -46,8 +100,10 @@ class Session:
 
         # session type: "cam", "ss", "cam+ss", "cam&ss", "cam+noact", "ss+noact", "*"
         session_type: str = "*",
+        session_id: str = None,
         **kwargs
     ):
+        self.session_id = session_id or generate_session_id(channel_id)
         self.owner_id = owner_id
         self.guild_id = guild_id
         self.channel_id = channel_id
@@ -72,11 +128,12 @@ class Session:
         
         self.monitor_tasks = {}
         self.drop_task = None
+        self.event_bus = None
         
     def to_dict(self):
         """Convert session state to dictionary for MongoDB."""
         d = {
-            "_id": self.channel_id,
+            "session_id": self.session_id,
             "owner_id": self.owner_id,
             "guild_id": self.guild_id,
             "channel_id": self.channel_id,
@@ -97,6 +154,8 @@ class Session:
     def from_dict(cls, data: dict):
         """Create a Session from MongoDB document."""
         data.pop("_id", None)
+        if "session_id" not in data:
+            data["session_id"] = data.get("channel_id")
         return cls(**data)
 
     async def activity_monitor(self, member: Member, exceptions_handler=None, session_category_id=None, ignore_channel_id=None):
@@ -116,25 +175,47 @@ class Session:
                 except:
                     pass
 
+
     def _sync_session_now(self):
         col = session_collection()
         if col is not None:
             col.update_one(
-                {"_id": self.channel_id},
+                {"session_id": self.session_id},
                 {"$set": self.to_dict()},
                 upsert=True
             )
 
+    async def _emit_event(self, event_type, data):
+        """Publish an event to the frontend via the event bus."""
+        if self.event_bus:
+            try:
+                await self.event_bus.publish(self.session_id, event_type, data)
+            except Exception:
+                pass
+
     async def drop_routine(self, channel: discord.VoiceChannel):
+        print(f"[Drop] Routine STARTED for session {self.session_id} (guild={self.guild_id}, members={list(self.members.keys())})", flush=True)
         try:
             while True:
                 try:
+                    _load_drop_config()
                     v = config.DROP_VARIANCE
-                    interval = random.uniform(1 - v, 1 + v) * self.routine_callback_mean_time
-                    await asyncio.sleep(interval * 60)
+                    mean = config.DROP_MEAN_TIME
+                    d_col = collections.get("drop.offers")
+                    print(f"[Drop] Session {self.session_id}: config loaded — mean={mean}min, variance={v}, drop_col={'YES' if d_col is not None else 'NO'}", flush=True)
+                    interval = random.uniform(1 - v, 1 + v) * mean
+                    sleep_sec = interval * 60
+                    print(f"[Drop] Session {self.session_id}: sleeping {sleep_sec:.0f}s ({interval:.1f}min)", flush=True)
+                    await asyncio.sleep(sleep_sec)
 
-                    if not channel.members:
-                        continue
+                    if self.guild_id == "web":
+                        if not self.members:
+                            print(f"[Drop] Session {self.session_id}: skipped — no members")
+                            continue
+                    else:
+                        if not channel.members:
+                            print(f"[Drop] Session {self.session_id}: skipped — no VC members")
+                            continue
 
                     token = secrets.token_urlsafe(32)
                     d_col = collections.get("drop.offers")
@@ -143,10 +224,14 @@ class Session:
                             "token": token,
                             "guild_id": self.guild_id,
                             "channel_id": self.channel_id,
+                            "session_id": self.session_id,
                             "drop_number": self.routines_fired_count + 1,
                             "created_at": datetime.now(timezone.utc),
                             "expire_at": datetime.now(timezone.utc) + timedelta(seconds=config.DROP_COLLECTION_TIME + 5),
                         })
+                        print(f"[Drop] Session {self.session_id}: drop #{self.routines_fired_count + 1} INSERTED into drop.offers (token={token[:8]}...)", flush=True)
+                    else:
+                        print(f"[Drop] Session {self.session_id}: ERROR — drop.offers collection not found in dseshpy collections!", flush=True)
 
                     domain = os.getenv("FRONTEND_DOMAIN", "")
                     if domain and not domain.endswith("/"):
@@ -156,18 +241,30 @@ class Session:
                     self.routines_fired_count += 1
                     self._sync_session_now()
 
-                    embed = discord.Embed(
-                        title="\U0001f381 Drops Have Landed!",
-                        description=f"Someone dropped goodies in the study VC!\n\U0001f4e6 **[__Collect yours here by clicking this text!__]({link})**",
-                        color=discord.Color.gold()
-                    )
-                    embed.set_footer(text="*Hurry \u2014 everyone can claim once!*")
-                    await channel.send(embed=embed, delete_after=config.DROP_COLLECTION_TIME)
+                    await self._emit_event("drop_created", {
+                        "token": token,
+                        "drop_number": self.routines_fired_count,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "expire_at": (datetime.now(timezone.utc) + timedelta(seconds=config.DROP_COLLECTION_TIME)).isoformat(),
+                    })
+                    print(f"[Drop] Session {self.session_id}: drop #{self.routines_fired_count} EMITTED via event_bus", flush=True)
+
+                    if self.guild_id != "web" and channel:
+                        embed = discord.Embed(
+                            title="\U0001f381 Drops Have Landed!",
+                            description=f"Someone dropped goodies in the study VC!\n\U0001f4e6 **[__Collect yours here by clicking this text!__]({link})**",
+                            color=discord.Color.gold()
+                        )
+                        embed.set_footer(text="*Hurry \u2014 everyone can claim once!*")
+                        try:
+                            await channel.send(embed=embed, delete_after=config.DROP_COLLECTION_TIME)
+                        except (discord.NotFound, discord.HTTPException):
+                            pass
 
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    print(f"Drop routine iteration error: {e}")
+                    print(f"[Drop] Session {self.session_id}: ERROR — {e}", flush=True)
 
         except asyncio.CancelledError:
             pass
@@ -284,7 +381,7 @@ class Session:
         act_col = collections.get("session.logs")
         if act_col is not None:
             latest = act_col.find_one(
-                {"user_id": member_id, "session_id": self.channel_id},
+                {"user_id": member_id, "session_id": self.session_id},
                 sort=[("_id", -1)]
             )
             if latest and latest.get("left_at"):
@@ -305,7 +402,7 @@ class Session:
 
         result = act_col.insert_one({
             "user_id": member_id,
-            "session_id": self.channel_id,
+            "session_id": self.session_id,
             "guild_id": self.guild_id,
             "joined_at": {
                 "time": now.isoformat(),
@@ -403,6 +500,16 @@ class Session:
                 task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
                 self.monitor_tasks[member_id] = task
 
+            avatar_url = member.display_avatar.url if member.display_avatar else ""
+            await self._emit_event("member_join", {
+                "user_id": member_id,
+                "username": member.name,
+                "display_name": member.display_name,
+                "avatar_url": avatar_url,
+                "activity": after_type,
+                "is_web_user": False,
+            })
+
             import secrets, os, qrcode, io
             dm_status = False
             u_col = collections.get('user')
@@ -410,20 +517,20 @@ class Session:
                 web_token = secrets.token_urlsafe(32)
                 u_col.update_one(
                     {"_id": member_id},
-                    {"$set": {"webToken": web_token}},
+                    {"$set": {"webToken": web_token, "current_session": self.session_id}},
                     upsert=True
                 )
                 domain = os.getenv("WEBSITE_DOMAIN")
                 if domain and not domain.endswith('/'):
                     domain = domain + "/"
-                link = f"{domain}projects/{web_token}"
-
-                qr = qrcode.QRCode(box_size=10, border=8)
-                qr.add_data(link)
-                qr.make(fit=True)
-                img = qr.make_image(fill="black", back_color="white")
+                link = f"{domain}?webtoken={web_token}&session={self.session_id}"
 
                 try:
+                    qr = qrcode.QRCode(box_size=10, border=8)
+                    qr.add_data(link)
+                    qr.make(fit=True)
+                    img = qr.make_image(fill="black", back_color="white")
+
                     with io.BytesIO() as image_binary:
                         img.save(image_binary, format="WEBP")
                         image_binary.seek(0)
@@ -432,7 +539,7 @@ class Session:
                             file=discord.File(image_binary, "qrcode.png")
                         )
                     dm_status = True
-                except discord.Forbidden:
+                except Exception:
                     dm_status = False
                 
             embed = discord.Embed(
@@ -453,7 +560,10 @@ class Session:
                     value=f"\U0001f534 This session requires **{self._type_description()}**.\nTurn on the required devices, or you'll be removed after 5 minutes!",
                     inline=False
                 )
-            await channel.send(content=member.mention, embed=embed, delete_after=20)
+            try:
+                await channel.send(content=member.mention, embed=embed, delete_after=20)
+            except (discord.NotFound, discord.HTTPException):
+                pass
             
         elif is_before_in_session and not is_after_in_session:
             # LEAVE EVENT
@@ -464,13 +574,41 @@ class Session:
             leave_act_type = self.members.get(member_id, {}).get("last_activity", "noact") if member_id in self.members else "noact"
             self._close_sub_session(member_id, leave_act_type)
             self.members.pop(member_id, None)
-            if member_id == self.owner_id:
+            old_owner = self.owner_id
+            if member_id == old_owner:
                 self.owner_id = next(iter(self.members)) if self.members else None
             self._update_members_count()
 
+            await self._emit_event("member_leave", {
+                "user_id": member_id,
+            })
+            if self.owner_id != old_owner:
+                await self._emit_event("owner_change", {
+                    "owner_id": self.owner_id,
+                })
+
             u_col = collections.get('user')
             if u_col is not None:
-                u_col.update_one({"_id": member_id}, {"$unset": {"webToken": ""}})
+                user_doc = u_col.find_one({"_id": member_id}, {"current_session": 1})
+                if user_doc and user_doc.get("current_session") == self.session_id:
+                    u_col.update_one(
+                        {"_id": member_id},
+                        {"$unset": {"webToken": "", "current_session": ""}}
+                    )
+
+            has_discord_members = any(
+                not m.get("is_web_user", False)
+                for m in self.members.values()
+                if isinstance(m, dict)
+            )
+
+            if not self.channel_id.startswith("w") and not has_discord_members and self.members:
+                self.channel_id = f"w{self.owner_id}"
+                self.guild_id = "web"
+                self._sync_session_now()
+
+                if self.drop_task and not self.drop_task.done():
+                    pass
             
             if len(self.members) == 0 and self.drop_task:
                 self.drop_task.cancel()
@@ -496,18 +634,25 @@ class Session:
 
             if old_type != new_type:
                 self._track_activity_change(member_id, old_type, new_type)
+                await self._emit_event("activity_change", {
+                    "user_id": member_id,
+                    "activity": new_type,
+                })
 
                 if not self._is_allowed(new_type):
                     if member_id not in self.monitor_tasks:
                         task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
                         self.monitor_tasks[member_id] = task
-                        await channel.send(
-                            embed=discord.Embed(
-                                description=f"{member.mention} Your activity doesn't match this session's requirements ({self._type_description()}). \u26a0\ufe0f",
-                                color=0x3498DB,
-                            ),
-                            delete_after=20,
-                        )
+                        try:
+                            await channel.send(
+                                embed=discord.Embed(
+                                    description=f"{member.mention} Your activity doesn't match this session's requirements ({self._type_description()}). \u26a0\ufe0f",
+                                    color=0x3498DB,
+                                ),
+                                delete_after=20,
+                            )
+                        except (discord.NotFound, discord.HTTPException):
+                            pass
                 elif member_id in self.monitor_tasks:
                     self.monitor_tasks[member_id].cancel()
                     del self.monitor_tasks[member_id]
@@ -518,13 +663,16 @@ class Session:
                     del self.monitor_tasks[member_id]
 
                 if self.session_type != "*":
-                    await channel.send(
-                        embed=discord.Embed(
-                            description=f"{member.mention}'s Activity Detected! \u2705",
-                            color=0x3498DB,
-                        ),
-                        delete_after=20,
-                    )
+                    try:
+                        await channel.send(
+                            embed=discord.Embed(
+                                description=f"{member.mention}'s Activity Detected! \u2705",
+                                color=0x3498DB,
+                            ),
+                            delete_after=20,
+                        )
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
                 
             elif checks.is_activity_stopped(before, after) and not self._is_allowed("noact"):
                 if not exceptions_handler or exceptions_handler.isNotInside(member_id):
@@ -536,7 +684,10 @@ class Session:
                         "Please turn it back on within **5 minutes**, or you will be removed.",
                         color=discord.Color.orange(),
                     )
-                    await channel.send(embed=embed, delete_after=20)
+                    try:
+                        await channel.send(embed=embed, delete_after=20)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
                     
                     old_task = self.monitor_tasks.get(member_id)
                     if old_task:
@@ -549,8 +700,11 @@ class SessionManager:
     """
     Manages discord study sessions seamlessly. Ensures single point of handling and DB sync.
     """
-    def __init__(self):
+    def __init__(self, event_bus=None):
         self.active_sessions = {}
+        self.channel_sessions = {}
+        self.user_sessions = {}
+        self.event_bus = event_bus
 
     def _get_collection(self):
         col = session_collection()
@@ -562,18 +716,19 @@ class SessionManager:
         """Syncs a single session state to MongoDB."""
         col = self._get_collection()
         col.update_one(
-            {"_id": session.channel_id},
+            {"session_id": session.session_id},
             {"$set": session.to_dict()},
             upsert=True
         )
 
     async def get_or_create_session(self, guild_id: str, channel_id: str) -> Session:
         """Fetches from memory, then DB, or creates anew."""
-        if channel_id in self.active_sessions:
-            return self.active_sessions[channel_id]
+        existing_sid = self.channel_sessions.get(channel_id)
+        if existing_sid and existing_sid in self.active_sessions:
+            return self.active_sessions[existing_sid]
 
         col = self._get_collection()
-        data = col.find_one({"_id": channel_id})
+        data = col.find_one({"channel_id": channel_id})
         
         if data:
             session = Session.from_dict(data)
@@ -582,8 +737,12 @@ class SessionManager:
                 guild_id=guild_id,
                 channel_id=channel_id
             )
-            
-        self.active_sessions[channel_id] = session
+        
+        session.event_bus = self.event_bus
+        self.active_sessions[session.session_id] = session
+        self.channel_sessions[channel_id] = session.session_id
+        for mid in session.members:
+            self.user_sessions[mid] = session.session_id
         return session
 
     async def process(self, member: Member, before: VoiceState, after: VoiceState, session_category_id: str, ignore_channel_id: str = None, exceptions_handler=None, **kwargs):
@@ -591,6 +750,17 @@ class SessionManager:
         Single entry point to handle voice state updates.
         Delegates the event to the correct Session object(s) and ensures DB synchronization.
         """
+        member_id = str(member.id)
+
+        current_sid = self.user_sessions.get(member_id)
+        if not current_sid:
+            u_col = collections.get('user')
+            if u_col is not None:
+                user_doc = u_col.find_one({"_id": member_id}, {"current_session": 1})
+                if user_doc and user_doc.get("current_session"):
+                    current_sid = user_doc["current_session"]
+                    self.user_sessions[member_id] = current_sid
+
         channels_involved = set()
         
         if before.channel and checks.get_session_status(before, session_category_id, ignore_channel_id):
@@ -601,6 +771,94 @@ class SessionManager:
 
         for channel_id in channels_involved:
             session = await self.get_or_create_session(str(member.guild.id), channel_id)
+
+            if current_sid and session.session_id != current_sid:
+                old_session = self.active_sessions.get(current_sid)
+                if old_session:
+                    old_user_data = old_session.members.get(member_id)
+                    if old_user_data:
+                        leave_act = old_user_data.get("last_activity", "noact")
+                        old_session._close_sub_session(member_id, leave_act)
+                        old_session.members.pop(member_id, None)
+                        old_owner = old_session.owner_id
+                        if member_id == old_owner:
+                            old_session.owner_id = next(iter(old_session.members)) if old_session.members else None
+                        old_session._update_members_count()
+
+                        u_col = collections.get('user')
+                        if u_col is not None:
+                            u_col.update_one(
+                                {"_id": member_id},
+                                {"$unset": {"webToken": "", "current_session": ""}}
+                            )
+
+                        has_discord = any(
+                            not m.get("is_web_user", False)
+                            for m in old_session.members.values()
+                            if isinstance(m, dict)
+                        )
+                        old_ch = old_session.channel_id
+                        if not old_ch.startswith("w") and not has_discord and old_session.members:
+                            old_session.channel_id = f"w{old_session.owner_id}"
+                            old_session.guild_id = "web"
+                            self.channel_sessions.pop(old_ch, None)
+                            self.channel_sessions[old_session.channel_id] = old_session.session_id
+
+                        if len(old_session.members) == 0:
+                            self._cleanup_session(old_session)
+                        else:
+                            await old_session._emit_event("member_leave", {"user_id": member_id})
+                            if old_session.owner_id != old_owner:
+                                await old_session._emit_event("owner_change", {"owner_id": old_session.owner_id})
+                            self.sync(old_session)
+                else:
+                    u_col = collections.get('user')
+                    if u_col is not None:
+                        u_col.update_one(
+                            {"_id": member_id},
+                            {"$unset": {"current_session": "", "webToken": ""}}
+                        )
+                    self.user_sessions.pop(member_id, None)
+                    current_sid = None
+
+            old_channel_id = session.channel_id
             session.update_settings(**kwargs)
-            await session.manage(member, before, after, exceptions_handler, session_category_id, ignore_channel_id)
-            self.sync(session)
+            try:
+                await session.manage(member, before, after, exceptions_handler, session_category_id, ignore_channel_id)
+            finally:
+                self.sync(session)
+
+            if session.channel_id != old_channel_id:
+                self.channel_sessions.pop(old_channel_id, None)
+                self.channel_sessions[session.channel_id] = session.session_id
+
+            if member_id in session.members:
+                self.user_sessions[member_id] = session.session_id
+            else:
+                self.user_sessions.pop(member_id, None)
+
+    def _cleanup_session(self, session: Session):
+        """Remove a session from memory and DB."""
+        u_col = collections.get('user')
+        if u_col is not None:
+            for uid in session.members:
+                u_col.update_one(
+                    {"_id": uid, "current_session": session.session_id},
+                    {"$unset": {"current_session": ""}}
+                )
+        if session.session_id in self.active_sessions:
+            del self.active_sessions[session.session_id]
+        old_ch = None
+        for ch, sid in list(self.channel_sessions.items()):
+            if sid == session.session_id:
+                old_ch = ch
+                break
+        if old_ch:
+            del self.channel_sessions[old_ch]
+        for uid, sid in list(self.user_sessions.items()):
+            if sid == session.session_id:
+                del self.user_sessions[uid]
+        col = self._get_collection()
+        col.delete_one({"session_id": session.session_id})
+        if session.drop_task and not session.drop_task.done():
+            session.drop_task.cancel()

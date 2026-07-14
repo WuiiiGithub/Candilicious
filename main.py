@@ -21,7 +21,9 @@ from routes import (
     users,
     auth,
     workspace,
+    sessions,
 )
+from routes.event_bus import EventBus
 from routes import limiter
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -117,6 +119,9 @@ async def lifespan(app: FastAPI):
             expireAfterSeconds=0
         )
 
+        from routes.workspace import load_variables_from_db
+        await load_variables_from_db(app.db)
+
     except (
         ServerSelectionTimeoutError, 
         ConnectionFailure, 
@@ -142,6 +147,10 @@ async def lifespan(app: FastAPI):
 
     # stop with
     print("...", "=" * 50, sep="\n")
+    try:
+        await bot.close()
+    except Exception:
+        pass
     app.mongodb_client.close()
     if isNgrokSetup:
         ngrok.kill()
@@ -236,6 +245,10 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 bot.userNetworkConnection = {}
 
+event_bus = EventBus()
+app.state.event_bus = event_bus
+bot.event_bus = event_bus
+
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
@@ -294,6 +307,11 @@ app.include_router(
     router=workspace.router,
     prefix="/api/admin/workspace",
     tags=["workspace"]
+)
+app.include_router(
+    router=sessions.router,
+    prefix="/api/sessions",
+    tags=["sessions"]
 )
 
 async def load():

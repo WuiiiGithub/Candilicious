@@ -55,7 +55,7 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
     if not drop:
         raise HTTPException(status_code=404, detail="Drop not found")
 
-    session_id = drop["channel_id"]
+    session_id = drop.get("session_id") or drop.get("channel_id")
     guild_id = drop["guild_id"]
 
     existing = await request.app.db["activity.drops"].find_one({
@@ -64,23 +64,32 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
     if existing:
         raise HTTPException(status_code=400, detail="You already claimed this drop")
 
+    session = await request.app.db["sessions"].find_one({"session_id": session_id})
+    if not session:
+        raise HTTPException(status_code=400, detail="Session not found")
+
+    actual_channel_id = session.get("channel_id", "")
+    is_web_session = guild_id == "web" or actual_channel_id.startswith("w")
+
     bot = request.app.state.bot
-    guild = bot.get_guild(int(guild_id))
-    if not guild:
-        raise HTTPException(status_code=400, detail="Guild not found")
+    act_str, activity_mult, iron_chance = config.ACTIVITY_TIERS[0]
 
-    member = guild.get_member(int(user_id))
-    if not member or not member.voice:
-        raise HTTPException(status_code=400, detail="You are not in a voice channel")
+    if not is_web_session:
+        guild = bot.get_guild(int(guild_id))
+        if not guild:
+            raise HTTPException(status_code=400, detail="Guild not found")
 
-    if str(member.voice.channel.id) != session_id:
-        raise HTTPException(status_code=400, detail="You are not in the study voice channel")
+        member = guild.get_member(int(user_id))
+        if not member or not member.voice:
+            raise HTTPException(status_code=400, detail="You are not in a voice channel")
 
-    act_str, activity_mult, iron_chance = get_activity_tier(member.voice)
+        if str(member.voice.channel.id) != actual_channel_id:
+            raise HTTPException(status_code=400, detail="You are not in the study voice channel")
 
-    session = await request.app.db["sessions"].find_one({"_id": session_id})
-    vc_level = session.get("vc_level", 1) if session else 1
-    vc_xp = session.get("vc_xp", 0) if session else 0
+        act_str, activity_mult, iron_chance = get_activity_tier(member.voice)
+
+    vc_level = session.get("vc_level", 1)
+    vc_xp = session.get("vc_xp", 0)
 
     wood, iron = calculate_reward(activity_mult, iron_chance, vc_level, vc_xp)
 
@@ -145,16 +154,16 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
         upsert=True,
     )
 
-    bot = request.app.state.bot
-    channel = bot.get_channel(int(session_id))
-    if channel:
-        try:
-            await channel.send(
-                content=f"\U0001f381 <@{user_id}> collected the drop! +**{wood}** \U0001fab5 Wood +**{iron}** \U0001f529 Iron",
-                delete_after=config.DROP_COLLECTION_TIME,
-            )
-        except Exception:
-            pass
+    if not is_web_session:
+        channel = bot.get_channel(int(actual_channel_id))
+        if channel:
+            try:
+                await channel.send(
+                    content=f"\U0001f381 <@{user_id}> collected the drop! +**{wood}** \U0001fab5 Wood +**{iron}** \U0001f529 Iron",
+                    delete_after=config.DROP_COLLECTION_TIME,
+                )
+            except Exception:
+                pass
 
     parts = []
     if wood > 0:

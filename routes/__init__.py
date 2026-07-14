@@ -8,17 +8,24 @@ import config
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
+def _decode_token(token: str) -> dict:
+    return jwt.decode(token, config.SECRET_KEY, algorithms=["HS256"])
+
+def verify_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    token = None
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+    else:
+        token = request.cookies.get("session_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized: no token provided")
     try:
-        payload = jwt.decode(
-            token, 
-            config.SECRET_KEY, 
-            algorithms=["HS256"]
-        )
-        return payload
+        return _decode_token(token)
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Unauthorized: {str(e)}")
 

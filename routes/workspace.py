@@ -272,4 +272,47 @@ async def save_variables(db, data: dict):
         }},
         upsert=True
     )
+    _apply_to_config(merged)
     return {"status": "saved"}
+
+
+def _apply_to_config(merged: dict):
+    drops = merged.get("drops", {})
+    resources = merged.get("resources", {})
+    activity_tiers = merged.get("activity_tiers", [])
+    premium = merged.get("premium", {})
+
+    config.DROP_MEAN_TIME = drops.get("mean_time", config.DROP_MEAN_TIME)
+    config.DROP_VARIANCE = drops.get("variance", config.DROP_VARIANCE)
+    config.DROP_COLLECTION_TIME = drops.get("collection_time", config.DROP_COLLECTION_TIME)
+
+    wood = resources.get("wood", {})
+    config.RESOURCE_WOOD_BASE_MEAN = wood.get("base_mean", config.RESOURCE_WOOD_BASE_MEAN)
+    config.RESOURCE_WOOD_BASE_DECAY = wood.get("base_decay", config.RESOURCE_WOOD_BASE_DECAY)
+    config.RESOURCE_WOOD_DECAY_RATE = wood.get("decay_rate", config.RESOURCE_WOOD_DECAY_RATE)
+    config.RESOURCE_WOOD_STD_DEV = wood.get("std_dev", config.RESOURCE_WOOD_STD_DEV)
+    config.RESOURCE_WOOD_MIN = wood.get("min", config.RESOURCE_WOOD_MIN)
+
+    iron = resources.get("iron", {})
+    config.RESOURCE_IRON_BASE_MEAN = iron.get("base_mean", config.RESOURCE_IRON_BASE_MEAN)
+    config.RESOURCE_IRON_BASE_DECAY = iron.get("base_decay", config.RESOURCE_IRON_BASE_DECAY)
+    config.RESOURCE_IRON_DECAY_RATE = iron.get("decay_rate", config.RESOURCE_IRON_DECAY_RATE)
+    config.RESOURCE_IRON_STD_DEV = iron.get("std_dev", config.RESOURCE_IRON_STD_DEV)
+    config.RESOURCE_IRON_MIN = iron.get("min", config.RESOURCE_IRON_MIN)
+
+    config.RESOURCE_VARIANCE_FACTOR_RATE = resources.get("variance_factor_rate", config.RESOURCE_VARIANCE_FACTOR_RATE)
+    config.RESOURCE_VARIANCE_FACTOR_MIN = resources.get("variance_factor_min", config.RESOURCE_VARIANCE_FACTOR_MIN)
+
+    if isinstance(activity_tiers, list) and len(activity_tiers) == 4:
+        config.ACTIVITY_TIERS = [tuple(t) for t in activity_tiers]
+
+    config.PREMIUM_COST = premium.get("cost", config.PREMIUM_COST)
+    config.PREMIUM_TTL_DAYS = premium.get("ttl_days", config.PREMIUM_TTL_DAYS)
+    config.PREMIUM_UNIT = premium.get("unit", config.PREMIUM_UNIT)
+
+
+async def load_variables_from_db(db):
+    doc = await db["config"].find_one({"_id": "variables"})
+    if doc:
+        merged = merge_defaults(doc)
+        _apply_to_config(merged)
