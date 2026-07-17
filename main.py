@@ -15,6 +15,7 @@ from routes import (
     drops,
     logs,
     projects,
+    reports,
     servers,
     social,
     tasks,
@@ -312,6 +313,11 @@ app.include_router(
     router=sessions.router,
     prefix="/api/sessions",
     tags=["sessions"]
+)
+app.include_router(
+    router=reports.router,
+    prefix="/api/reports",
+    tags=["reports"]
 )
 
 async def load():
