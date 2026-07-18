@@ -3,7 +3,8 @@ from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from discord import app_commands, ui
 from library.logging import *
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
@@ -13,6 +14,146 @@ load_dotenv()
 _db = pymongo.MongoClient(host=config.MONGODB_URI)[config.DB_NAME]
 serverCollection = _db["servers"]
 configCollection = _db["config"]
+userCollection = _db["users"]
+schedulerCollection = _db["schedulers"]
+
+STUDY_CALL_STATEMENTS = [
+    # --- MOTIVATIONAL (30) ---
+    "The secret of getting ahead is getting started. Let's study! 📚",
+    "Success is the sum of small efforts repeated day in and day out. Start now!",
+    "Don't watch the clock; do what it does. Keep going. ⏰",
+    "Your future is created by what you do today, not tomorrow.",
+    "Study hard, for the well is deep, and our brains are shallow. 💡",
+    "The beautiful thing about learning is nobody can take it away from you.",
+    "Education is the passport to the future. Go claim yours! 🎓",
+    "A little progress each day adds up to big results. Let's get started!",
+    "Dream big. Start small. Act now. Study time! 🚀",
+    "Discipline is choosing between what you want now and what you want most.",
+    "The expert in anything was once a beginner. Keep studying! 🌱",
+    "Don't stop when you're tired. Stop when you're done.",
+    "Study while others are sleeping. Work while others are loafing.",
+    "The only way to do great work is to love what you study.",
+    "Push yourself, because no one else is going to do it for you.",
+    "Great things never come from comfort zones. Time to study! 📖",
+    "Don't wish for it. Work for it. Study session awaits!",
+    "Success isn't always about greatness. It's about consistency.",
+    "The harder you work for something, the greater you'll feel when you achieve it.",
+    "Don't count the days. Make the days count. Study now! ⭐",
+    "Your only limit is your mind. Break through it!",
+    "Every expert was once a student. Your time is now! 🎯",
+    "Invest in your brain. It's the only one you'll ever have.",
+    "Knowledge is power. Power up with studying! 💪",
+    "The journey of a thousand miles begins with a single step — or page.",
+    "Don't wait for opportunity. Create it through studying!",
+    "Stars can't shine without darkness. Study through the struggle! ✨",
+    "Be stronger than your excuses. Study time!",
+    "What you do today can improve all your tomorrows. Start studying!",
+    "Small daily improvements lead to stunning results over time.",
+
+    # --- EMOTIONAL / HEARTFELT (25) ---
+    "I know you're tired, but imagine how proud you'll feel when you're done. 💙",
+    "Sometimes the strongest people are the ones who smile through the pain and study.",
+    "Your hard work will pay off. I believe in you more than you know. 🥺",
+    "It's okay to struggle. It's not okay to give up. I'm here rooting for you!",
+    "The world needs what you're learning. Don't keep it hidden forever. 🌍",
+    "I remember when you started. Look how far you've come. Keep going!",
+    "Even on your worst days, you're still capable of great things. Study on! 💫",
+    "Don't let today's fatigue steal tomorrow's success.",
+    "You didn't come this far only to come this far. Keep pushing! 🫂",
+    "There's someone out there who would give anything to have your opportunities. Honor that.",
+    "Your future self is begging you to study right now. Listen to them.",
+    "The pain of studying is temporary. The pride lasts forever. 💪",
+    "I wish I could show you the person you'll become if you don't give up. 🥹",
+    "You are one study session away from a good mood. Give it a try!",
+    "Even the darkest night will end and the sun will rise — but only if you keep going.",
+    "The seeds of your success are in your daily study habits. Plant them today! 🌻",
+    "You matter. Your goals matter. Your education matters. Now get to it!",
+    "Be gentle with yourself, but don't let that be an excuse to stop.",
+    "I'm not asking you to be perfect. I'm asking you to try. That's enough. ❤️",
+    "The fact that you're still here means you haven't given up. That's beautiful.",
+    "Your determination inspires me. Now go inspire yourself — study!",
+    "Some days are harder than others. This might be one. But you're harder than any day.",
+    "A single page today is a chapter tomorrow. Just start! 📖",
+    "The bravest thing you can do is keep going when it feels impossible.",
+    "You carry so much potential inside you. Unleash it through learning! 🦋",
+
+    # --- FUNNY / LIGHTEARTED (20) ---
+    "Your bed is cozy, but your GPA isn't. Study! 😂📚",
+    "Plot twist: studying actually makes you smarter. Wild, right? 🤯",
+    "Your brain has 86 billion neurons. Time to put some of them to work!",
+    "Netflix will still be there after you study. Probably.",
+    "Procrastination called. I told it you're busy studying. 📱🚫",
+    "Be the student your future employer can't ignore. Study!",
+    "Your textbook misses you. It's been so long. Go say hi! 👋",
+    "Studying is like a gym for your brain. Time to flex! 💪🧠",
+    "Fun fact: studying is just learning with extra steps. You got this!",
+    "If studying were easy, everyone would do it. Be elite! 👑",
+    "Breaking news: local student actually studies. More at 11! 📰",
+    "Plot armor only works in anime. In real life, you need knowledge! ⚔️",
+    "Your brain called — it's bored. Feed it some knowledge! 🧠🍽️",
+    "Studying now = flexing later. Choose your fighter! 🥊",
+    "Don't be a potato on the couch. Be a genius at the desk! 🥔➡️🎓",
+    "Studying: because Google won't always be there during exams. 🤫",
+    "The mitochondria is the powerhouse of the cell, and YOU are the powerhouse of your future!",
+    "A wise person once said... actually, go study and find out what they said!",
+    "Your waifu/husbando would want you to study. Don't disappoint them! 💕",
+    "Running from your textbooks? They're faster. Just face them! 📚🏃",
+
+    # --- SERIOUS / NO-NONSENSE (15) ---
+    "Stop scrolling. Open the book. The clock is ticking. ⏳",
+    "Every minute you waste is a minute someone else is using to surpass you.",
+    "You have goals. You have dreams. Now put in the work.",
+    "No one is coming to save you. Your future is in your hands. Study.",
+    "The uncomfortable truth: you need to study to get where you want to be.",
+    "Complacency is the enemy of progress. Wake up and study!",
+    "You already know what you need to do. So do it. No more excuses.",
+    "Talent without effort is nothing. But effort without talent is at least a start. Study!",
+    "The cost of not following your dreams is spending the rest of your life wishing you had.",
+    "Harsh truth: comfort zones don't build successful careers. Books do.",
+    "This is your wake-up call. You're falling behind. Get to work! ⚠️",
+    "Don't be average. Average is easy. Be extraordinary. Study!",
+    "Results happen over time, not overnight. Work hard, be patient, study daily.",
+    "You're not tired. You're just unmotivated. Fix that. Study!",
+    "There are no shortcuts to anywhere worth going. Open the book.",
+
+    # --- STREAK-SPECIFIC: HIGH STREAK (10) ---
+    "Look at you go! {streak} days straight! You're absolutely on fire! 🔥🔥🔥",
+    "Incredible! {streak} days of consistent studying. You're built different! 💎",
+    "{streak} days?! You're not a student anymore — you're a legend! 🏆",
+    "Your {streak}-day streak is proof that you're unstoppable. Keep that energy!",
+    "They said consistency is key, and you proved them right! {streak} days strong! 🔑",
+    "{streak} consecutive days of studying. Your dedication is genuinely inspiring! 🌟",
+    "You've studied for {streak} days straight. That's not luck — that's pure discipline! 🫡",
+    "Day {streak} and counting. You're writing your own success story! ✍️",
+    "A {streak}-day streak? You're in the top 1% of dedicated students. Remarkable! 📊",
+    "Keep that streak alive! {streak} days and counting — you're a machine! 🤖",
+
+    # --- STREAK-SPECIFIC: NEW/LOW STREAK (5) ---
+    "Welcome back! Every journey starts with day one. Let's build that streak! 🌱",
+    "Day {streak} of your streak! It's small but it's yours. Protect it! 🛡️",
+    "Building a streak one day at a time. You're at {streak}. Keep growing! 🌿",
+    "A {streak}-day streak is a beginning, not an end. The best is yet to come!",
+    "Started from zero, now you're at {streak}. Imagine where you'll be tomorrow!",
+]
+
+STREAK_BREAK_MESSAGES = [
+    "💀 bruh... {streak} days gone just like that? I thought you were built different. Guess not. 💀 Study NOW.",
+    "💀 {streak} days of streak and you fumbled?? That's crazy. Open the book before I cry. 💀",
+    "💀 so you really let a {streak}-day streak die?? I'm not mad, just disappointed. Actually no, I'm mad. 💀",
+    "💀 {streak} days... {streak} DAYS... and you just?? stopped?? what happened bro 💀 get back to studying",
+    "💀 bro woke up and chose failure today 💀 {streak}-day streak: GONE. your excuses: STILL WEAK. study.",
+    "💀 I kept your streak alive for {streak} days and THIS is how you repay me?? 💀 nah study rn",
+    "💀 {streak} days of being legendary and you just... folded?? 💀 I can't even rn. open the book.",
+    "💀 imagine having a {streak}-day streak and ruining it 💀 couldn't be me. oh wait, it's YOU. study.",
+    "💀 bro's streak didn't just break, it DIED. {streak} days of progress. gone. 💀 resurrect it. study.",
+    "💀 {streak} days of cooking and you burnt the kitchen 💀 get back in there and start over. I'm watching.",
+    "💀 the way you fumbled this {streak}-day streak... I'm actually embarrassed FOR you 💀 fix it.",
+    "💀 {streak} days of grind and one day of laziness ended it all 💀 you had ONE job bro 💀 STUDY.",
+    "💀 I believed in you for {streak} days straight. {streak} whole days. and you let me down 💀 how dare you",
+    "💀 streak: {streak} days. today: zero. your motivation: also zero apparently 💀 prove me wrong.",
+    "💀 {streak} days of streak and you ghosted studying like it was a tinder match 💀 that's wild 💀 come back",
+]
+
 
 class ConfirmTextView(ui.View):
     def __init__(self, content: str, author_id: int):
@@ -86,12 +227,15 @@ class ConfirmGifView(ui.View):
         self.stop()
         await interaction.response.edit_message(content="❌ Cancelled.", embed=None, view=None)
 
+
 class Reminders(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.reminders_cache = []
         self.gifs = []
         self.texts = []
+        self.study_calls = []
+        self.streak_break_msgs = []
 
         cogLog.log_cog(
             action="starting", 
@@ -99,18 +243,298 @@ class Reminders(commands.Cog):
             details="Reminders Cog Initialized"
         )
 
-        # Start the background task
         self.study_reminder.start()
+        self.daily_study_call.start()
+        self.streak_checker.start()
 
     def cog_unload(self):
         self.study_reminder.cancel()
+        self.daily_study_call.cancel()
+        self.streak_checker.cancel()
 
+    # ===================== DB HELPERS =====================
 
+    def _ensure_user_scheduler(self, user_id: str):
+        schedulerCollection.update_one(
+            {"_id": user_id},
+            {
+                "$setOnInsert": {
+                    "active_hours": [],
+                    "last_seen_online": None,
+                    "last_dm_sent": None,
+                    "last_study_time": None,
+                    "dm_paused": False,
+                }
+            },
+            upsert=True
+        )
+
+    def _update_user_presence(self, user_id: str):
+        now = datetime.now(timezone.utc)
+        hour = now.hour
+        self._ensure_user_scheduler(user_id)
+
+        schedulerCollection.update_one(
+            {"_id": user_id},
+            {
+                "$set": {"last_seen_online": now},
+                "$push": {
+                    "active_hours": {
+                        "$each": [hour],
+                        "$slice": -168
+                    }
+                }
+            }
+        )
+
+    def _get_user_active_window(self, user_id: str) -> Optional[int]:
+        doc = schedulerCollection.find_one(
+            {"_id": user_id},
+            {"active_hours": 1, "last_seen_online": 1}
+        )
+        if not doc:
+            return None
+
+        last_seen = doc.get("last_seen_online")
+        if last_seen is None:
+            return None
+
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(tzinfo=timezone.utc)
+
+        if (datetime.now(timezone.utc) - last_seen).total_seconds() > 7 * 86400:
+            return None
+
+        hours = doc.get("active_hours", [])
+        if not hours:
+            return None
+
+        from collections import Counter
+        hour_counts = Counter(hours)
+        if hour_counts:
+            most_common_hour = hour_counts.most_common(1)[0][0]
+            return most_common_hour
+
+        return None
+
+    def _should_dm_user(self, user_id: str) -> bool:
+        doc = schedulerCollection.find_one(
+            {"_id": user_id},
+            {"last_dm_sent": 1, "dm_paused": 1}
+        )
+        if not doc:
+            return True
+
+        if doc.get("dm_paused", False):
+            return False
+
+        last_dm = doc.get("last_dm_sent")
+        if last_dm is None:
+            return True
+
+        if last_dm.tzinfo is None:
+            last_dm = last_dm.replace(tzinfo=timezone.utc)
+
+        return (datetime.now(timezone.utc) - last_dm).total_seconds() >= 86400
+
+    def _mark_dm_sent(self, user_id: str):
+        now = datetime.now(timezone.utc)
+        schedulerCollection.update_one(
+            {"_id": user_id},
+            {"$set": {"last_dm_sent": now}},
+            upsert=True
+        )
+
+    def _record_study(self, user_id: str, bot=None):
+        now = datetime.now(timezone.utc)
+        today = now.date().isoformat()
+
+        user_doc = userCollection.find_one(
+            {"_id": user_id},
+            {"streak": 1, "last_study_date": 1}
+        )
+
+        current_streak = 0
+        last_study_date = None
+        if user_doc:
+            current_streak = user_doc.get("streak", 0)
+            last_study = user_doc.get("last_study_date")
+            if last_study:
+                if isinstance(last_study, str):
+                    last_study_date = last_study
+                else:
+                    last_study_date = last_study.date().isoformat() if hasattr(last_study, 'date') else str(last_study)
+
+        if last_study_date == today:
+            userCollection.update_one(
+                {"_id": user_id},
+                {"$set": {"last_study_time": now, "last_study_date": today}},
+                upsert=True
+            )
+            schedulerCollection.update_one(
+                {"_id": user_id},
+                {"$set": {"last_study_time": now}},
+                upsert=True
+            )
+            return
+
+        yesterday = (now - timedelta(days=1)).date().isoformat()
+        if last_study_date == yesterday:
+            new_streak = current_streak + 1
+        else:
+            if current_streak > 0 and bot is not None:
+                asyncio.create_task(self._send_streak_break_dm(bot, user_id, current_streak))
+            new_streak = 1
+
+        userCollection.update_one(
+            {"_id": user_id},
+            {
+                "$set": {
+                    "streak": new_streak,
+                    "last_study_time": now,
+                    "last_study_date": today,
+                }
+            },
+            upsert=True
+        )
+        schedulerCollection.update_one(
+            {"_id": user_id},
+            {"$set": {"last_study_time": now}},
+            upsert=True
+        )
+
+    async def _send_streak_break_dm(self, bot, user_id: str, old_streak: int):
+        try:
+            user = await bot.fetch_user(int(user_id))
+            if user is None:
+                return
+            break_msg = self._get_streak_break_msg(old_streak)
+            embed = discord.Embed(
+                title="💔 Streak Broken",
+                description=break_msg,
+                color=discord.Color.dark_red(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.set_footer(text="Every ending is a new beginning. Start today!")
+            await user.send(embed=embed)
+        except discord.Forbidden:
+            pass
+        except Exception:
+            pass
+
+    def _is_streak_broken(self, user_id: str) -> bool:
+        now = datetime.now(timezone.utc)
+        yesterday = (now - timedelta(days=1)).date().isoformat()
+
+        user_doc = userCollection.find_one(
+            {"_id": user_id},
+            {"streak": 1, "last_study_date": 1}
+        )
+        if not user_doc:
+            return False
+
+        streak = user_doc.get("streak", 0)
+        last_study = user_doc.get("last_study_date")
+
+        if streak <= 0 or last_study is None:
+            return False
+
+        if isinstance(last_study, str):
+            last_study_date = last_study
+        else:
+            last_study_date = last_study.date().isoformat() if hasattr(last_study, 'date') else str(last_study)
+
+        return last_study_date < yesterday
+
+    def _check_broken_streaks(self):
+        now = datetime.now(timezone.utc)
+        today = now.date()
+        yesterday = (now - timedelta(days=1)).date()
+
+        broken = []
+        cursor = userCollection.find(
+            {
+                "streak": {"$gt": 0},
+                "$or": [
+                    {"last_study_date": {"$lt": yesterday.isoformat()}},
+                    {"last_study_date": {"$exists": False}},
+                    {"last_study_date": None},
+                ]
+            },
+            {"_id": 1, "streak": 1, "name": 1}
+        )
+
+        for doc in cursor:
+            broken.append(doc)
+
+        return broken
+
+    def _break_streak(self, user_id: str):
+        userCollection.update_one(
+            {"_id": user_id},
+            {"$set": {"streak": 0, "last_study_date": None}}
+        )
+
+    def _load_study_calls(self):
+        conf = configCollection.find_one({"_id": "study_calls"})
+        if conf and conf.get("statements"):
+            self.study_calls = conf["statements"]
+        else:
+            self._seed_study_calls()
+
+    def _seed_study_calls(self):
+        existing = configCollection.find_one({"_id": "study_calls"})
+        if existing and len(existing.get("statements", [])) >= 100:
+            self.study_calls = existing["statements"]
+            return
+
+        configCollection.update_one(
+            {"_id": "study_calls"},
+            {"$set": {"statements": STUDY_CALL_STATEMENTS}},
+            upsert=True
+        )
+        self.study_calls = STUDY_CALL_STATEMENTS
+
+    def _get_study_call(self, streak: int = 0) -> str:
+        if not self.study_calls:
+            self._load_study_calls()
+
+        if streak >= 10:
+            pool = [s for s in self.study_calls if "{streak}" in s and any(
+                kw in s for kw in ["🔥", "💎", "🏆", "unstoppable", "legend", "energy",
+                                    "proof", "built different", "dedication", "machine",
+                                    "remarkable", "discipline", "legend", "story"]
+            )]
+            if not pool:
+                pool = [s for s in self.study_calls if "{streak}" in s]
+        elif streak > 0:
+            pool = [s for s in self.study_calls if "{streak}" in s and any(
+                kw in s for kw in ["journey", "growing", "Protect", "beginning", "started"]
+            )]
+            if not pool:
+                pool = [s for s in self.study_calls if "{streak}" in s]
+        else:
+            pool = [s for s in self.study_calls if "{streak}" not in s]
+
+        if not pool:
+            pool = self.study_calls if self.study_calls else ["Time to study! 📚"]
+
+        msg = random.choice(pool)
+        if "{streak}" in msg:
+            msg = msg.replace("{streak}", str(streak))
+        return msg
+
+    def _get_streak_break_msg(self, streak: int) -> str:
+        if not self.streak_break_msgs:
+            self.streak_break_msgs = STREAK_BREAK_MESSAGES
+
+        msg = random.choice(self.streak_break_msgs)
+        msg = msg.replace("{streak}", str(streak))
+        return msg
+
+    # ===================== CACHE REFRESH =====================
 
     async def refresh_reminders_cache(self):
-        """
-        Helper to pull data from DB into memory.
-        """
         try:
             pipeline = [{"$match": {"reminders": {"$exists": True, "$ne": None}}}]
             self.reminders_cache = list(serverCollection.aggregate(pipeline))
@@ -124,8 +548,65 @@ class Reminders(commands.Cog):
                         "https://images-ext-1.discordapp.net/external/urjscwFcuDFRDEaUyi4CIuMKyP-HdabaYLF8_iB3sno/https/media.tenor.com/dS1sKvQgD4AAAAPo/hamster-ayasan.mp4"
                     ],
                 )
+
+            self._load_study_calls()
         except Exception:
             cogLog.log_cog(action="error", status_code=-100, details=f"Failed to refresh reminders cache:\n{traceback.format_exc()}")
+
+    # ===================== PRESENCE TRACKING =====================
+
+    @commands.Cog.listener()
+    async def on_presence_update(self, before: discord.Member, after: discord.Member):
+        if after.bot:
+            return
+        try:
+            user_id = str(after.id)
+            if after.status != discord.Status.offline and after.status != discord.Status.invisible:
+                self._update_user_presence(user_id)
+                if self._is_streak_broken(user_id):
+                    user_doc = userCollection.find_one({"_id": user_id}, {"streak": 1})
+                    old_streak = user_doc.get("streak", 0) if user_doc else 0
+                    if old_streak > 0:
+                        self._break_streak(user_id)
+                        await self._send_streak_break_dm(self.bot, user_id, old_streak)
+        except Exception:
+            pass
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member):
+        if after.bot:
+            return
+        try:
+            user_id = str(after.id)
+            if after.status != discord.Status.offline and after.status != discord.Status.invisible:
+                self._update_user_presence(user_id)
+                if self._is_streak_broken(user_id):
+                    user_doc = userCollection.find_one({"_id": user_id}, {"streak": 1})
+                    old_streak = user_doc.get("streak", 0) if user_doc else 0
+                    if old_streak > 0:
+                        self._break_streak(user_id)
+                        await self._send_streak_break_dm(self.bot, user_id, old_streak)
+        except Exception:
+            pass
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ):
+        if member.bot:
+            return
+        try:
+            user_id = str(member.id)
+            if after.channel is not None:
+                self._update_user_presence(user_id)
+                self._record_study(user_id, bot=self.bot)
+        except Exception:
+            pass
+
+    # ===================== CHANNEL REMINDERS =====================
 
     @tasks.loop(minutes=1)
     async def study_reminder(self):
@@ -187,7 +668,6 @@ class Reminders(commands.Cog):
                             embed=embed
                         )
 
-                        # Update DB (Sync call)
                         serverCollection.update_one(
                             {"_id": reminder["_id"]},
                             {"$set": {"reminders.last_sent": now, "reminders.tagged": new_tagged}},
@@ -211,6 +691,194 @@ class Reminders(commands.Cog):
         taskLog.before(status_code=75, message="Ready", details="Bot is ready; refreshing reminders cache from database.")
         await self.refresh_reminders_cache()
         taskLog.send()
+
+    # ===================== DAILY STUDY CALL (DM 25%) =====================
+
+    @tasks.loop(minutes=15)
+    async def daily_study_call(self):
+        taskLog = TaskLogger(filename=filename, task_name="daily_study_call")
+        try:
+            now = datetime.now(timezone.utc)
+            current_hour = now.hour
+
+            eligible_users = []
+            cursor = schedulerCollection.find(
+                {
+                    "last_seen_online": {"$ne": None},
+                    "dm_paused": {"$ne": True},
+                },
+                {"_id": 1, "last_dm_sent": 1, "last_seen_online": 1}
+            )
+
+            for doc in cursor:
+                uid = doc["_id"]
+                last_dm = doc.get("last_dm_sent")
+                last_seen = doc.get("last_seen_online")
+
+                if last_dm and last_dm.tzinfo is None:
+                    last_dm = last_dm.replace(tzinfo=timezone.utc)
+                if last_seen and last_seen.tzinfo is None:
+                    last_seen = last_seen.replace(tzinfo=timezone.utc)
+
+                if last_dm and (now - last_dm).total_seconds() < 86400:
+                    continue
+
+                if last_seen and (now - last_seen).total_seconds() > 7 * 86400:
+                    continue
+
+                active_hour = self._get_user_active_window(uid)
+                if active_hour is None:
+                    continue
+
+                hour_diff = abs(current_hour - active_hour)
+                if hour_diff > 2:
+                    continue
+
+                eligible_users.append((uid, active_hour))
+
+            if not eligible_users:
+                return
+
+            sample_size = max(1, len(eligible_users) // 4)
+            sampled = random.sample(eligible_users, min(sample_size, len(eligible_users)))
+
+            sent_count = 0
+            for uid, _ in sampled:
+                try:
+                    user = await self.bot.fetch_user(int(uid))
+                    if user is None:
+                        continue
+
+                    user_doc = userCollection.find_one(
+                        {"_id": uid},
+                        {"streak": 1}
+                    )
+                    streak = user_doc.get("streak", 0) if user_doc else 0
+
+                    study_msg = self._get_study_call(streak)
+
+                    embed = discord.Embed(
+                        title="📚 Study Call!",
+                        description=study_msg,
+                        color=discord.Color.blue(),
+                        timestamp=now,
+                    )
+
+                    if streak > 0:
+                        embed.add_field(
+                            name=f"🔥 {streak} Day Streak!",
+                            value="Don't break the chain!",
+                            inline=True
+                        )
+
+                    embed.set_footer(text="Your future self will thank you.")
+
+                    gif = random.choice(self.gifs) if self.gifs else None
+                    if gif:
+                        embed.set_image(url=gif)
+
+                    await user.send(embed=embed)
+
+                    self._mark_dm_sent(uid)
+                    sent_count += 1
+
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
+
+                except discord.Forbidden:
+                    schedulerCollection.update_one(
+                        {"_id": uid},
+                        {"$set": {"dm_paused": True}}
+                    )
+                except Exception as e:
+                    taskLog.during(
+                        status_code=-50,
+                        message="DM Error",
+                        details=f"Failed to DM user {uid}: {e}"
+                    )
+
+            taskLog.during(
+                status_code=75,
+                message="Success",
+                details=f"Sent study calls to {sent_count}/{len(sampled)} users out of {len(eligible_users)} eligible"
+            )
+            taskLog.send()
+
+        except Exception:
+            taskLog.during(status_code=-100, message="Error", details=traceback.format_exc())
+            taskLog.send()
+
+    @daily_study_call.before_loop
+    async def before_daily_study_call(self):
+        taskLog = TaskLogger(filename=filename, task_name="daily_study_call")
+        taskLog.before(status_code=0, message="Waiting", details="Waiting for bot to be ready...")
+        await self.bot.wait_until_ready()
+        taskLog.before(status_code=75, message="Ready", details="Bot ready; daily study call task starting.")
+        await self.refresh_reminders_cache()
+        taskLog.send()
+
+    # ===================== STREAK CHECKER =====================
+
+    @tasks.loop(hours=1)
+    async def streak_checker(self):
+        taskLog = TaskLogger(filename=filename, task_name="streak_checker")
+        try:
+            broken_users = self._check_broken_streaks()
+
+            for user_doc in broken_users:
+                uid = user_doc["_id"]
+                old_streak = user_doc.get("streak", 0)
+
+                if old_streak <= 0:
+                    continue
+
+                try:
+                    user = await self.bot.fetch_user(int(uid))
+                    if user is None:
+                        self._break_streak(uid)
+                        continue
+
+                    break_msg = self._get_streak_break_msg(old_streak)
+
+                    embed = discord.Embed(
+                        title="💔 Streak Broken",
+                        description=break_msg,
+                        color=discord.Color.dark_red(),
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    embed.set_footer(text="Every ending is a new beginning. Start today!")
+
+                    try:
+                        await user.send(embed=embed)
+                    except discord.Forbidden:
+                        pass
+
+                    self._break_streak(uid)
+
+                    taskLog.during(
+                        status_code=50,
+                        message="Streak Break",
+                        details=f"Notified user {uid} about broken {old_streak}-day streak"
+                    )
+
+                except Exception as e:
+                    taskLog.during(
+                        status_code=-50,
+                        message="Error",
+                        details=f"Failed to process streak break for {uid}: {e}"
+                    )
+
+            if broken_users:
+                taskLog.send()
+
+        except Exception:
+            taskLog.during(status_code=-100, message="Error", details=traceback.format_exc())
+            taskLog.send()
+
+    @streak_checker.before_loop
+    async def before_streak_checker(self):
+        await self.bot.wait_until_ready()
+
+    # ===================== CONTEXT MENUS =====================
 
     async def add_gif_context(self, inter: discord.Interaction, message: discord.Message):
         cmdLog = CommandLogger(filename=filename, inter=inter)
@@ -245,7 +913,6 @@ class Reminders(commands.Cog):
                 cmdLog.process(status_code=-25, name="Missing", details="No GIF URL could be extracted from the message.")
                 return
 
-            # Show confirmation
             embed = discord.Embed(
                 title="Confirm Adding this GIF?",
                 color=discord.Color.yellow()
@@ -283,7 +950,6 @@ class Reminders(commands.Cog):
 
             content = re.sub(r"\s+", " ", content)
 
-            # Show confirmation
             embed = discord.Embed(
                 title="Confirm Adding this Text?",
                 description=content[:1024],
@@ -298,6 +964,8 @@ class Reminders(commands.Cog):
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
             cmdLog.send()
+
+    # ===================== COMMANDS =====================
 
     @app_commands.command(
         name="reminder",
@@ -367,6 +1035,93 @@ class Reminders(commands.Cog):
         except Exception as e:
             resLog.after(status_code=-100, message="Error", details=str(e))
             resLog.send()
+
+    @app_commands.command(
+        name="streak",
+        description="Check your current study streak."
+    )
+    async def streak(self, inter: discord.Interaction):
+        user_id = str(inter.user.id)
+
+        if self._is_streak_broken(user_id):
+            user_doc = userCollection.find_one(
+                {"_id": user_id},
+                {"streak": 1}
+            )
+            old_streak = user_doc.get("streak", 0) if user_doc else 0
+            self._break_streak(user_id)
+            if old_streak > 0:
+                try:
+                    break_msg = self._get_streak_break_msg(old_streak)
+                    await inter.response.send_message(
+                        embed=discord.Embed(
+                            title="💔 Streak Broken",
+                            description=break_msg,
+                            color=discord.Color.dark_red(),
+                        ),
+                        ephemeral=True,
+                    )
+                except Exception:
+                    pass
+                return
+
+        user_doc = userCollection.find_one(
+            {"_id": user_id},
+            {"streak": 1, "last_study_date": 1}
+        )
+
+        streak_val = user_doc.get("streak", 0) if user_doc else 0
+        last_study = user_doc.get("last_study_date") if user_doc else None
+
+        if streak_val > 0:
+            emoji = "🔥" if streak_val >= 10 else "⚡" if streak_val >= 5 else "🌱"
+            embed = discord.Embed(
+                title=f"{emoji} Study Streak: {streak_val} Days!",
+                description=f"You've been studying for **{streak_val} consecutive days**! Keep the fire burning!",
+                color=discord.Color.green() if streak_val >= 10 else discord.Color.gold() if streak_val >= 5 else discord.Color.blue(),
+            )
+            embed.set_footer(text="Don't break the chain!")
+        else:
+            embed = discord.Embed(
+                title="🌱 No Active Streak",
+                description="You don't have an active study streak yet.\nJoin a study session today to start one!",
+                color=discord.Color.light_grey(),
+            )
+
+        await inter.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="pause_dms",
+        description="Pause or resume daily study call DMs."
+    )
+    async def pause_dms(self, inter: discord.Interaction):
+        user_id = str(inter.user.id)
+        self._ensure_user_scheduler(user_id)
+
+        doc = schedulerCollection.find_one({"_id": user_id}, {"dm_paused": 1})
+        current = doc.get("dm_paused", False) if doc else False
+        new_state = not current
+
+        schedulerCollection.update_one(
+            {"_id": user_id},
+            {"$set": {"dm_paused": new_state}}
+        )
+
+        if new_state:
+            embed = discord.Embed(
+                title="🔕 DMs Paused",
+                description="Daily study call DMs have been paused.\nUse `/pause_dms` again to resume.",
+                color=discord.Color.orange(),
+            )
+        else:
+            embed = discord.Embed(
+                title="🔔 DMs Resumed",
+                description="Daily study call DMs are back on! Get ready for motivational messages.",
+                color=discord.Color.green(),
+            )
+
+        await inter.response.send_message(embed=embed, ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     Reminders_cog = Reminders(bot)
