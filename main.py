@@ -149,6 +149,13 @@ async def lifespan(app: FastAPI):
     # stop with
     print("...", "=" * 50, sep="\n")
     try:
+        recovery = getattr(bot, 'recovery', None)
+        if recovery:
+            await recovery.take_snapshot()
+            recovery.stop_snapshot_task()
+    except Exception:
+        pass
+    try:
         await bot.close()
     except Exception:
         pass

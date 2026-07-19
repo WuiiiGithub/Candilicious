@@ -38,6 +38,7 @@ dropsCollection.create_index("expire_at", expireAfterSeconds=0)
 activitySessionCollection = db["session.logs"]
 
 from library import dseshpy
+from library.recovery import RecoveryManager
 dseshpy.initialize(
     session_collection=db["sessions"],
     user_collection=userCollection,
@@ -476,6 +477,15 @@ class Study(commands.Cog):
         self.session_manager = dseshpy.session.SessionManager(event_bus=event_bus)
         bot.session_manager = self.session_manager
 
+        # recovery
+        self.recovery = RecoveryManager(
+            db=db,
+            session_manager=self.session_manager,
+            event_bus=event_bus,
+            bot=bot,
+        )
+        bot.recovery = self.recovery
+
         cogLog.log_cog(action="starting", status_code=0, details="Study Cog has been initialized and is ready for use.")
 
     @commands.Cog.listener()
@@ -489,6 +499,12 @@ class Study(commands.Cog):
             log.error(status_code=-100, message="Error", details=traceback.format_exc())
         finally:
             log.send()
+
+        try:
+            await self.recovery.recover()
+            self.recovery.start_snapshot_task(interval_minutes=5)
+        except Exception:
+            pass
 
     @app_commands.command(name="config", description="Configure server settings")
     @app_commands.guild_only()
