@@ -491,6 +491,7 @@ class Study(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         log = ListenerLogger(filename=filename, event_name="on_ready")
+        print("[Study] on_ready fired", flush=True)
         try:
             log.process(status_code=0, message="Syncing", details="Trying to sync with Bot Tree...")
             await self.bot.tree.sync()
@@ -501,10 +502,14 @@ class Study(commands.Cog):
             log.send()
 
         try:
+            print("[Study] Waiting 3s for guilds to populate...", flush=True)
+            # Wait for guild voice states to populate before recovery
+            await asyncio.sleep(3)
             await self.recovery.recover()
             self.recovery.start_snapshot_task(interval_minutes=5)
         except Exception:
-            pass
+            import traceback as _tb
+            print(f"[Recovery] FATAL recovery error: {_tb.format_exc()}", flush=True)
 
     @app_commands.command(name="config", description="Configure server settings")
     @app_commands.guild_only()
