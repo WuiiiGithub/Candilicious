@@ -209,7 +209,12 @@ class ChannelPickView(ui.View):
         self.guild = guild
         self.bot = bot
         self.target = target
-        channel_types = [discord.ChannelType.category] if target == "category" else [discord.ChannelType.voice]
+        if target == "category":
+            channel_types = [discord.ChannelType.category]
+        elif target == "reminder_channel":
+            channel_types = [discord.ChannelType.text, discord.ChannelType.news]
+        else:
+            channel_types = [discord.ChannelType.voice]
         self.add_item(ChannelSelectMenu(channel_types, target))
 
     @ui.button(label="\u2190 Back", style=discord.ButtonStyle.grey, row=1)
