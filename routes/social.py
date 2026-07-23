@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
 from . import verify_token
+import config
 
 router = APIRouter()
 
@@ -46,6 +47,7 @@ async def get_posts(
         doc["disliked_by_me"] = current_user_id in doc.get("dislikes", [])
         doc.pop("likes", None)
         doc.pop("dislikes", None)
+        doc.pop("content", None)
         posts.append(doc)
 
     return {"ok": 1, "posts": posts}
@@ -57,22 +59,71 @@ async def get_post(
     post_id: str,
     payload: dict = Depends(verify_token),
 ):
+    current_user_id = payload.get("sub")
+    doc = None
+    custom_doc = None
+
     try:
         doc = await request.app.db["social.posts"].find_one({"_id": ObjectId(post_id)})
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid post ID")
+        pass
 
-    if not doc:
+    if doc:
+        custom_id = doc.get("custom_id")
+        if custom_id:
+            custom_doc = await request.app.db["posts.custom"].find_one({"_id": custom_id})
+    else:
+        custom_doc = await request.app.db["posts.custom"].find_one({"_id": post_id})
+        if custom_doc:
+            card = await request.app.db["social.posts"].find_one({"custom_id": post_id})
+            if card:
+                doc = card
+
+    if not doc and not custom_doc:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    current_user_id = payload.get("sub")
-    doc["_id"] = str(doc["_id"])
-    if isinstance(doc.get("created_at"), datetime):
-        doc["created_at"] = doc["created_at"].isoformat()
-    doc["liked_by_me"] = current_user_id in doc.get("likes", [])
-    doc["disliked_by_me"] = current_user_id in doc.get("dislikes", [])
-    doc.pop("likes", None)
-    doc.pop("dislikes", None)
+    is_custom = custom_doc is not None
+
+    if doc:
+        doc["_id"] = str(doc["_id"])
+        if isinstance(doc.get("created_at"), datetime):
+            doc["created_at"] = doc["created_at"].isoformat()
+        doc["liked_by_me"] = current_user_id in doc.get("likes", [])
+        doc["disliked_by_me"] = current_user_id in doc.get("dislikes", [])
+        doc.pop("likes", None)
+        doc.pop("dislikes", None)
+        author_id = doc.get("user_id", "")
+        if custom_doc:
+            for key in ("writing_time", "ip"):
+                if key in custom_doc:
+                    doc[key] = custom_doc[key]
+    elif custom_doc:
+        custom_doc["_id"] = str(custom_doc["_id"])
+        if isinstance(custom_doc.get("created_at"), datetime):
+            custom_doc["created_at"] = custom_doc["created_at"].isoformat()
+        custom_doc["liked_by_me"] = current_user_id in custom_doc.get("likes", [])
+        custom_doc["disliked_by_me"] = current_user_id in custom_doc.get("dislikes", [])
+        custom_doc.pop("likes", None)
+        custom_doc.pop("dislikes", None)
+        author_id = custom_doc.get("user_id", "")
+        doc = custom_doc
+
+    author_data = await request.app.db["users"].find_one({"_id": author_id}) or {}
+    username = author_data.get("name", "Unknown")
+    display_name = author_data.get("display_name") or username
+    profile_pfp = author_data.get("profile_pfp")
+    pfp = author_data.get("pfp")
+    avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(author_id) % 5}.png"
+    if profile_pfp:
+        avatar_url = profile_pfp
+    elif pfp:
+        avatar_url = pfp if pfp.startswith(("https://", "data:")) else f"https://cdn.discordapp.com/avatars/{author_id}/{pfp}.png"
+
+    doc["author"] = {
+        "display_name": display_name,
+        "avatar_url": avatar_url,
+    }
+    doc["is_custom"] = is_custom
 
     return {"ok": 1, "post": doc}
 
@@ -113,8 +164,59 @@ async def create_post(
     return {"ok": 1, "post": post}
 
 
-@router.post("/posts/{post_id}/like")
-async def toggle_like(
+class UpdatePostRequest(BaseModel):
+    title: Optional[str] = None
+    caption: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+
+
+@router.put("/posts/{post_id}")
+async def update_post(
+    request: Request,
+    post_id: str,
+    body: UpdatePostRequest,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+
+    try:
+        post = await request.app.db["social.posts"].find_one({"_id": ObjectId(post_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid post ID")
+
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    if post["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="You can only edit your own posts")
+
+    update_fields: dict = {}
+    if body.title is not None:
+        if len(body.title) > 200:
+            raise HTTPException(status_code=400, detail="Title must be 200 characters or fewer")
+        update_fields["title"] = body.title
+    if body.caption is not None:
+        if len(body.caption) > 2000:
+            raise HTTPException(status_code=400, detail="Caption must be 2000 characters or fewer")
+        update_fields["caption"] = body.caption
+    if body.thumbnail_url is not None:
+        update_fields["thumbnail_url"] = body.thumbnail_url
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    await request.app.db["social.posts"].update_one(
+        {"_id": ObjectId(post_id)},
+        {"$set": update_fields},
+    )
+
+    updated = await request.app.db["social.posts"].find_one({"_id": ObjectId(post_id)})
+
+    return {"ok": 1, "post": _serialize_post(updated)}
+
+
+@router.delete("/posts/{post_id}")
+async def delete_post(
     request: Request,
     post_id: str,
     payload: dict = Depends(verify_token),
@@ -129,29 +231,83 @@ async def toggle_like(
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
+    if post["user_id"] != user_id:
+        raise HTTPException(status_code=403, detail="You can only delete your own posts")
+
+    await request.app.db["social.posts"].delete_one({"_id": ObjectId(post_id)})
+
+    return {"ok": 1}
+
+
+def _serialize_post(post: dict) -> dict:
+    post["_id"] = str(post["_id"])
+    if isinstance(post.get("created_at"), datetime):
+        post["created_at"] = post["created_at"].isoformat()
+    return post
+
+
+@router.post("/posts/{post_id}/like")
+async def toggle_like(
+    request: Request,
+    post_id: str,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+    collection = None
+    oid = None
+
+    try:
+        oid = ObjectId(post_id)
+    except Exception:
+        pass
+
+    if oid:
+        post = await request.app.db["social.posts"].find_one({"_id": oid})
+        if post:
+            collection = "social.posts"
+
+    if not collection:
+        post = await request.app.db["posts.custom"].find_one({"_id": post_id})
+        if post:
+            collection = "posts.custom"
+
+    if not post or not collection:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    find_id = oid if collection == "social.posts" else post_id
     likes = post.get("likes", [])
+    dislikes = post.get("dislikes", [])
+    inc_like = 0
+    inc_dislike = 0
+
     if user_id in likes:
-        await request.app.db["social.posts"].update_one(
-            {"_id": ObjectId(post_id)},
+        await request.app.db[collection].update_one(
+            {"_id": find_id},
             {"$pull": {"likes": user_id}, "$inc": {"like_count": -1}},
         )
         liked = False
+        inc_like = -1
     else:
-        await request.app.db["social.posts"].update_one(
-            {"_id": ObjectId(post_id)},
-            {"$push": {"likes": user_id}, "$inc": {"like_count": 1}},
+        pull_dislike = {"$pull": {"dislikes": user_id}} if user_id in dislikes else {}
+        if user_id in dislikes:
+            inc_dislike = -1
+        await request.app.db[collection].update_one(
+            {"_id": find_id},
+            {"$push": {"likes": user_id}, "$inc": {"like_count": 1, "dislike_count": inc_dislike}, **pull_dislike},
         )
         liked = True
+        inc_like = 1
 
-    updated = await request.app.db["social.posts"].find_one(
-        {"_id": ObjectId(post_id)},
-        {"like_count": 1, "likes": 1},
+    updated = await request.app.db[collection].find_one(
+        {"_id": find_id},
+        {"like_count": 1, "dislike_count": 1},
     )
 
     return {
         "ok": 1,
         "liked": liked,
         "like_count": updated.get("like_count", 0),
+        "dislike_count": updated.get("dislike_count", 0),
     }
 
 
@@ -162,38 +318,61 @@ async def toggle_dislike(
     payload: dict = Depends(verify_token),
 ):
     user_id = payload.get("sub")
+    collection = None
+    oid = None
 
     try:
-        post = await request.app.db["social.posts"].find_one({"_id": ObjectId(post_id)})
+        oid = ObjectId(post_id)
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid post ID")
+        pass
 
-    if not post:
+    if oid:
+        post = await request.app.db["social.posts"].find_one({"_id": oid})
+        if post:
+            collection = "social.posts"
+
+    if not collection:
+        post = await request.app.db["posts.custom"].find_one({"_id": post_id})
+        if post:
+            collection = "posts.custom"
+
+    if not post or not collection:
         raise HTTPException(status_code=404, detail="Post not found")
 
+    find_id = oid if collection == "social.posts" else post_id
     dislikes = post.get("dislikes", [])
+    likes = post.get("likes", [])
+    inc_dislike = 0
+    inc_like = 0
+
     if user_id in dislikes:
-        await request.app.db["social.posts"].update_one(
-            {"_id": ObjectId(post_id)},
+        await request.app.db[collection].update_one(
+            {"_id": find_id},
             {"$pull": {"dislikes": user_id}, "$inc": {"dislike_count": -1}},
         )
         disliked = False
+        inc_dislike = -1
     else:
-        await request.app.db["social.posts"].update_one(
-            {"_id": ObjectId(post_id)},
-            {"$push": {"dislikes": user_id}, "$inc": {"dislike_count": 1}},
+        pull_like = {"$pull": {"likes": user_id}} if user_id in likes else {}
+        if user_id in likes:
+            inc_like = -1
+        await request.app.db[collection].update_one(
+            {"_id": find_id},
+            {"$push": {"dislikes": user_id}, "$inc": {"dislike_count": 1, "like_count": inc_like}, **pull_like},
         )
         disliked = True
+        inc_dislike = 1
 
-    updated = await request.app.db["social.posts"].find_one(
-        {"_id": ObjectId(post_id)},
-        {"dislike_count": 1, "dislikes": 1},
+    updated = await request.app.db[collection].find_one(
+        {"_id": find_id},
+        {"dislike_count": 1, "like_count": 1},
     )
 
     return {
         "ok": 1,
         "disliked": disliked,
         "dislike_count": updated.get("dislike_count", 0),
+        "like_count": updated.get("like_count", 0),
     }
 
 
@@ -203,31 +382,98 @@ async def increment_post_view(
     post_id: str,
     payload: dict = Depends(verify_token),
 ):
+    oid = None
     try:
+        oid = ObjectId(post_id)
+    except Exception:
+        pass
+
+    if oid:
         result = await request.app.db["social.posts"].update_one(
-            {"_id": ObjectId(post_id)},
+            {"_id": oid},
             {"$inc": {"views": 1}},
         )
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid post ID")
+        if result.matched_count > 0:
+            return {"ok": 1}
 
+    result = await request.app.db["posts.custom"].update_one(
+        {"_id": post_id},
+        {"$inc": {"views": 1}},
+    )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    updated = await request.app.db["social.posts"].find_one(
-        {"_id": ObjectId(post_id)},
-        {"views": 1},
-    )
-
-    return {"ok": 1, "views": updated.get("views", 0)}
+    return {"ok": 1}
 
 
 class CreateCustomPostRequest(BaseModel):
     title: str
     description: str
-    link: str
+    content: str
     thumbnail_url: Optional[str] = None
     writing_time: Optional[int] = None
+
+
+class UpdateCustomPostRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    content: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+
+
+@router.put("/posts/custom/{post_id}")
+async def update_custom_post(
+    request: Request,
+    post_id: str,
+    body: UpdateCustomPostRequest,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+
+    custom_post = await request.app.db["posts.custom"].find_one({"_id": post_id})
+    if not custom_post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    if custom_post.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="You can only edit your own posts")
+
+    update_fields: dict = {}
+    social_fields: dict = {}
+
+    if body.title is not None:
+        if len(body.title) > 200:
+            raise HTTPException(status_code=400, detail="Title must be 200 characters or fewer")
+        update_fields["title"] = body.title
+        social_fields["title"] = body.title
+    if body.description is not None:
+        if len(body.description) > 2000:
+            raise HTTPException(status_code=400, detail="Description must be 2000 characters or fewer")
+        update_fields["description"] = body.description
+        social_fields["caption"] = body.description
+    if body.content is not None:
+        update_fields["content"] = body.content
+        social_fields["content"] = body.content
+    if body.thumbnail_url is not None:
+        update_fields["thumbnail"] = body.thumbnail_url
+        social_fields["thumbnail_url"] = body.thumbnail_url
+
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    await request.app.db["posts.custom"].update_one(
+        {"_id": post_id},
+        {"$set": update_fields},
+    )
+
+    if social_fields:
+        await request.app.db["social.posts"].update_one(
+            {"custom_id": post_id},
+            {"$set": social_fields},
+        )
+
+    updated = await request.app.db["posts.custom"].find_one({"_id": post_id})
+
+    return {"ok": 1, "post": _serialize_post(updated)}
 
 
 @router.post("/posts/custom/thumbnail")
@@ -259,35 +505,44 @@ async def create_custom_post(
         raise HTTPException(status_code=400, detail="Title must be 200 characters or fewer")
     if len(body.description) > 2000:
         raise HTTPException(status_code=400, detail="Description must be 2000 characters or fewer")
-    if not body.link.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Link must be a valid URL")
 
     ip = request.headers.get("x-forwarded-for", request.client.host if request.client else None)
 
     post_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
-    post = {
+    custom_post = {
         "_id": post_id,
         "user_id": user_id,
         "title": body.title,
         "description": body.description,
-        "link": body.link,
-        "thumbnail_url": body.thumbnail_url,
+        "thumbnail": body.thumbnail_url,
         "writing_time": body.writing_time,
-        "likes": [],
-        "like_count": 0,
-        "views": 0,
         "ip": ip,
         "created_at": now,
     }
-    await request.app.db["posts.custom"].insert_one(post)
+    await request.app.db["posts.custom"].insert_one(custom_post)
 
-    post["_id"] = post_id
-    post["created_at"] = now.isoformat()
-    post.pop("likes", None)
+    site_link = f"{config.FRONTEND_DOMAIN}/posts?id={post_id}"
 
-    return {"ok": 1, "post": post}
+    card = {
+        "user_id": user_id,
+        "title": body.title,
+        "caption": body.description,
+        "link": site_link,
+        "thumbnail_url": body.thumbnail_url,
+        "content": body.content,
+        "custom_id": post_id,
+        "likes": [],
+        "like_count": 0,
+        "dislikes": [],
+        "dislike_count": 0,
+        "views": 0,
+        "created_at": now,
+    }
+    result = await request.app.db["social.posts"].insert_one(card)
+
+    return {"ok": 1, "post": {"_id": str(result.inserted_id), "custom_id": post_id, "created_at": now.isoformat()}}
 
 
 @router.get("/posts/custom")
@@ -341,6 +596,7 @@ async def get_custom_posts(
         doc["liked_by_me"] = current_user_id in doc.get("likes", [])
         doc["user"] = user_cache.get(uid, {})
         doc.pop("likes", None)
+        doc.pop("content", None)
         posts.append(doc)
 
     return {"ok": 1, "posts": posts}
@@ -355,6 +611,10 @@ async def get_custom_post(
     doc = await request.app.db["posts.custom"].find_one({"_id": post_id})
     if not doc:
         raise HTTPException(status_code=404, detail="Post not found")
+
+    card = await request.app.db["social.posts"].find_one({"custom_id": post_id})
+    if card:
+        doc["link"] = card.get("link")
 
     current_user_id = payload.get("sub")
     uid = doc.get("user_id", "")
