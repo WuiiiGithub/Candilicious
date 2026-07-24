@@ -192,13 +192,15 @@ class General(commands.Cog):
     async def vote(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            cmdLog.process(status_code=50, name="Vote Link", details="Handling request for voting information...")
+            cmdLog.process(status_code=50, name="Vote", details="Handling vote command request...")
             await inter.response.send_message(
                 embed=discord.Embed(
-                    description=f"The command is still under construction."
-                )
+                    description="This command will be available in the next release.",
+                    color=discord.Color.blurple()
+                ),
+                ephemeral=True
             )
-            cmdLog.process(status_code=100, name="Status Sent", details="Member notified that the voting system is under construction.")
+            cmdLog.process(status_code=100, name="Disabled", details="Vote command disabled — future release.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

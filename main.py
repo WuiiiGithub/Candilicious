@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
 from routes import (
     boards,
+    bulk,
     drops,
     logs,
     projects,
@@ -22,6 +23,7 @@ from routes import (
     servers,
     social,
     tasks,
+    uploads,
     users,
     auth,
     workspace,
@@ -328,6 +330,16 @@ app.include_router(
     router=reports.router,
     prefix="/api/reports",
     tags=["reports"]
+)
+app.include_router(
+    router=bulk.router,
+    prefix="/api/bulk",
+    tags=["bulk"]
+)
+app.include_router(
+    router=uploads.router,
+    prefix="/api/uploads",
+    tags=["uploads"]
 )
 
 async def load():

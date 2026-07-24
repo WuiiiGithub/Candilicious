@@ -17,6 +17,7 @@ DISCORD_CLIENT_SECRET = _getenv("DISCORD_CLIENT_SECRET")
 WEBSITE_DOMAIN = _getenv("WEBSITE_DOMAIN").strip('/')
 FRONTEND_DOMAIN=_getenv("FRONTEND_DOMAIN").strip('/')
 SECRET_KEY=_getenv("SECRET_KEY")
+CLOUDINARY_URL=_getenv("CLOUDINARY_URL")
 
 if SECRET_KEY and len(SECRET_KEY) < 32:
     logger.warning("SECRET_KEY is shorter than 32 characters! Please use a key with at least 32 bytes.")

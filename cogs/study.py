@@ -940,10 +940,29 @@ class Study(commands.Cog):
     async def shell(self, inter: discord.Interaction, cmd: str):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
+            if inter.user.id != config.OWNER_ID:
+                await inter.response.send_message('You are not authorized to use this command.', ephemeral=True)
+                return
+
             cmdLog.process(status_code=0, name="Waiting", details=f"Initiating shell command execution: {cmd}")
-            if cmd.startswith('hehe'):
+
+            if cmd.startswith('echo '):
                 await inter.channel.send(cmd[5:])
                 await inter.response.send_message('Done', ephemeral=True)
+                return
+
+            elif cmd.startswith('decho '):
+                parts = cmd[6:].strip().split(' ', 1)
+                if len(parts) < 2:
+                    await inter.response.send_message('Usage: decho <user_id> <text>', ephemeral=True)
+                    return
+                target_id, text = parts
+                try:
+                    target_user = await inter.client.fetch_user(int(target_id))
+                    await target_user.send(text)
+                    await inter.response.send_message(f'Message sent to {target_user.name}', ephemeral=True)
+                except Exception as e:
+                    await inter.response.send_message(f'Failed to DM user: {e}', ephemeral=True)
                 return
             elif cmd == 'update lb':
                 await inter.response.send_message("Scanning database for users with missing names...", ephemeral=True)
@@ -1488,106 +1507,6 @@ class Study(commands.Cog):
 
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
-
-
-    @app_commands.command(name='sync', description='Sync config values from database into the running bot')
-    async def sync_config(self, inter: discord.Interaction):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            await inter.response.defer(ephemeral=True)
-            synced = []
-
-            drops_doc = db["config"].find_one({"_id": "drops"})
-            if drops_doc:
-                for k, v in drops_doc.items():
-                    if k != "_id" and hasattr(config, k.upper()):
-                        setattr(config, k.upper(), v)
-                synced.append("drops")
-            else:
-                db["config"].update_one(
-                    {"_id": "drops"},
-                    {"$set": {
-                        "collection_time": config.DROP_COLLECTION_TIME,
-                        "mean_time": config.DROP_MEAN_TIME,
-                        "variance": config.DROP_VARIANCE,
-                    }},
-                    upsert=True
-                )
-                synced.append("drops (created)")
-
-            resources_doc = db["config"].find_one({"_id": "resources"})
-            resource_defaults = {
-                "wood_base_mean": config.RESOURCE_WOOD_BASE_MEAN,
-                "wood_base_decay": config.RESOURCE_WOOD_BASE_DECAY,
-                "wood_decay_rate": config.RESOURCE_WOOD_DECAY_RATE,
-                "wood_std_dev": config.RESOURCE_WOOD_STD_DEV,
-                "wood_min": config.RESOURCE_WOOD_MIN,
-                "iron_base_mean": config.RESOURCE_IRON_BASE_MEAN,
-                "iron_base_decay": config.RESOURCE_IRON_BASE_DECAY,
-                "iron_decay_rate": config.RESOURCE_IRON_DECAY_RATE,
-                "iron_std_dev": config.RESOURCE_IRON_STD_DEV,
-                "iron_min": config.RESOURCE_IRON_MIN,
-                "variance_factor_rate": config.RESOURCE_VARIANCE_FACTOR_RATE,
-                "variance_factor_min": config.RESOURCE_VARIANCE_FACTOR_MIN,
-            }
-            if resources_doc:
-                cfg_key_map = {
-                    "wood_base_mean": "RESOURCE_WOOD_BASE_MEAN",
-                    "wood_base_decay": "RESOURCE_WOOD_BASE_DECAY",
-                    "wood_decay_rate": "RESOURCE_WOOD_DECAY_RATE",
-                    "wood_std_dev": "RESOURCE_WOOD_STD_DEV",
-                    "wood_min": "RESOURCE_WOOD_MIN",
-                    "iron_base_mean": "RESOURCE_IRON_BASE_MEAN",
-                    "iron_base_decay": "RESOURCE_IRON_BASE_DECAY",
-                    "iron_decay_rate": "RESOURCE_IRON_DECAY_RATE",
-                    "iron_std_dev": "RESOURCE_IRON_STD_DEV",
-                    "iron_min": "RESOURCE_IRON_MIN",
-                    "variance_factor_rate": "RESOURCE_VARIANCE_FACTOR_RATE",
-                    "variance_factor_min": "RESOURCE_VARIANCE_FACTOR_MIN",
-                }
-                for db_key, cfg_key in cfg_key_map.items():
-                    if db_key in resources_doc and hasattr(config, cfg_key):
-                        setattr(config, cfg_key, resources_doc[db_key])
-                synced.append("resources")
-            else:
-                db["config"].update_one(
-                    {"_id": "resources"},
-                    {"$set": resource_defaults},
-                    upsert=True
-                )
-                synced.append("resources (created)")
-
-            auto_cut_doc = db["config"].find_one({"_id": "auto_cut"})
-            auto_cut_defaults = {
-                "cost": config.PREMIUM_COST,
-                "duration_days": config.PREMIUM_TTL_DAYS,
-                "unit": config.PREMIUM_UNIT,
-            }
-            if auto_cut_doc:
-                if "cost" in auto_cut_doc:
-                    config.PREMIUM_COST = auto_cut_doc["cost"]
-                if "duration_days" in auto_cut_doc:
-                    config.PREMIUM_TTL_DAYS = auto_cut_doc["duration_days"]
-                if "unit" in auto_cut_doc:
-                    config.PREMIUM_UNIT = auto_cut_doc["unit"]
-                synced.append("auto_cut")
-            else:
-                db["config"].update_one(
-                    {"_id": "auto_cut"},
-                    {"$set": auto_cut_defaults},
-                    upsert=True
-                )
-                synced.append("auto_cut (created)")
-
-            await inter.followup.send(f"Synced: {', '.join(synced)}", ephemeral=True)
-            cmdLog.process(status_code=100, name="Sync Done", details=f"Synced: {', '.join(synced)}")
-
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-            if not inter.response.is_done():
-                await inter.response.send_message("Something went wrong.", ephemeral=True)
         finally:
             cmdLog.send()
 

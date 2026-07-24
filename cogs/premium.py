@@ -121,124 +121,16 @@ class Premium(commands.Cog):
     async def subscribe(self, inter: discord.Interaction, code: Optional[str] = None):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            user_id = str(inter.user.id)
-
-            auto_cut = db["config"].find_one({"_id": "auto_cut"}) or {}
-            COST = auto_cut.get("cost", config.PREMIUM_COST)
-            DURATION = auto_cut.get("duration_days", config.PREMIUM_TTL_DAYS)
-
-            if code:
-                offer = premiumOffersCollection.find_one({"code": code})
-                if not offer:
-                    await inter.response.send_message("Invalid or expired premium code.", ephemeral=True)
-                    cmdLog.process(status_code=-100, name="Invalid Code")
-                    return
-
-                premium_type = offer.get("premium_type", "pro")
-                offer_cost = offer.get("cost", COST)
-                offer_duration = offer.get("duration_days", DURATION)
-                offered_by = offer.get("user_id")
-
-                existing = premiumCollection.find_one({"user_id": user_id})
-                if existing:
-                    await inter.response.send_message("You already have an active subscription!", ephemeral=True)
-                    cmdLog.process(status_code=-100, name="Already Subscribed")
-                    return
-
-                user_data = userCollection.find_one({"_id": user_id})
-                if not user_data:
-                    await inter.response.send_message("No account found. Visit the website first.", ephemeral=True)
-                    cmdLog.process(status_code=-100, name="No Account")
-                    return
-
-                resources = user_data.get("economy", {}).get("resources", {})
-                unit_data = resources.get(RESOURCE_UNIT, {})
-                unit_amount, unit_dt = degrade.apply(
-                    unit_data.get("amount", 0),
-                    unit_data.get("degraded_at"),
-                    0.03
-                )
-
-                if unit_amount < offer_cost:
-                    await inter.response.send_message(
-                        f"You need **{offer_cost} {UNIT_TITLE}**. You have **{unit_amount} {UNIT_TITLE}**.",
-                        ephemeral=True
-                    )
-                    cmdLog.process(status_code=-100, name=f"Insufficient {UNIT_TITLE}")
-                    return
-
-                now = datetime.now(timezone.utc)
-                expire_at = now + timedelta(days=offer_duration)
-
-                userCollection.update_one(
-                    {"_id": user_id},
-                    {"$set": {
-                        f"economy.resources.{RESOURCE_UNIT}.amount": unit_amount - offer_cost,
-                        f"economy.resources.{RESOURCE_UNIT}.degraded_at": unit_dt,
-                        "premium.type": premium_type,
-                        "premium.purchased_at": now,
-                        "premium.expire_at": expire_at,
-                    }}
-                )
-
-                premiumCollection.insert_one({
-                    "user_id": user_id,
-                    "type": premium_type,
-                    "purchased_at": now,
-                    "expire_at": expire_at,
-                })
-
-                offered_by_note = f"\nOffered by <@{offered_by}>" if offered_by else ""
-                await inter.response.send_message(
-                    f"You've redeemed a **{premium_type.title()}** subscription! \U0001f389\n**-{offer_cost}** {UNIT_EMOJI} {UNIT_TITLE}\nExpires: <t:{int(expire_at.timestamp())}:R>{offered_by_note}",
-                    ephemeral=True
-                )
-                cmdLog.process(status_code=100, name=f"Redeemed {premium_type} \u2014 {offer_cost} {UNIT_TITLE}")
-                return
-
-            existing = premiumCollection.find_one({"user_id": user_id})
-            desc = [
-                "```md",
-                "# \u2728 PREMIUM",
-                "\u2550" * 18,
-                "",
-                "## \U0001f31f Pro Plan",
-                f"{COST} {UNIT_TITLE} \u00b7 {DURATION} days",
-                "",
-                "### Perks",
-                "+ Premium Leaderboard Borders",
-                "+ Priority Support Access",
-                "+ Exclusive Features Access",
-                "+ Custom Profile Badge",
-                "+ Early Drop Collection",
-                "+ Ad-Free Experience",
-                "",
-                "\u2550" * 18,
-                "",
-            ]
-            if existing:
-                ts = int(existing["expire_at"].timestamp()) if existing.get("expire_at") else 0
-                desc.append("> Status: Active \u2705")
-                desc.append(f"> Expires <t:{ts}:R>")
-            else:
-                desc.append("> Status: Not Subscribed \u274c")
-                desc.append("> Press the button below to subscribe")
-            desc.append("```")
-
-            embed = discord.Embed(
-                title="\u2728 Premium",
-                description="\n".join(desc),
-                color=discord.Color.gold()
+            await inter.response.send_message(
+                embed=discord.Embed(
+                    description="This command will be available in the next release.",
+                    color=discord.Color.blurple()
+                ),
+                ephemeral=True
             )
-            embed.set_footer(text="this is placeholder text")
-            view = SubscribeView(user_id, COST, DURATION) if not existing else None
-            await inter.response.send_message(embed=embed, view=view, ephemeral=True)
-            cmdLog.process(status_code=100, name="Premium Info Shown")
-
+            cmdLog.process(status_code=100, name="Disabled", details="Subscribe command disabled — future release.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-            if not inter.response.is_done():
-                await inter.response.send_message("Something went wrong.", ephemeral=True)
         finally:
             cmdLog.send()
 
@@ -246,33 +138,16 @@ class Premium(commands.Cog):
     async def unsubscribe(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            user_id = str(inter.user.id)
-            existing = premiumCollection.find_one({"user_id": user_id})
-            if not existing:
-                await inter.response.send_message("You don't have an active subscription.", ephemeral=True)
-                cmdLog.process(status_code=-100, name="No Subscription")
-                return
-
-            premiumCollection.delete_one({"user_id": user_id})
-            userCollection.update_one(
-                {"_id": user_id},
-                {"$unset": {
-                    "premium.type": "",
-                    "premium.purchased_at": "",
-                    "premium.expire_at": "",
-                }}
-            )
-
             await inter.response.send_message(
-                f"Your **{existing['type'].title()}** subscription has been cancelled. \U0001f615",
+                embed=discord.Embed(
+                    description="This command will be available in the next release.",
+                    color=discord.Color.blurple()
+                ),
                 ephemeral=True
             )
-            cmdLog.process(status_code=100, name="Unsubscribed")
-
+            cmdLog.process(status_code=100, name="Disabled", details="Unsubscribe command disabled — future release.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-            if not inter.response.is_done():
-                await inter.response.send_message("Something went wrong.", ephemeral=True)
         finally:
             cmdLog.send()
 

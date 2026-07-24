@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Request, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Request, Depends, HTTPException, Form, UploadFile, File
 from pydantic import BaseModel
-import base64
 from typing import Optional
 from datetime import datetime, timezone
 import discord
+import cloudinary
+import cloudinary.uploader
 import config
 from . import verify_token
 
@@ -125,7 +126,7 @@ async def set_pfp(
         raise HTTPException(status_code=400, detail="Provide either a URL or an image file")
 
     if url:
-        if not url.startswith(("https://", "data:")):
+        if not url.startswith(("https://",)):
             raise HTTPException(status_code=400, detail="URL must start with https://")
         await request.app.db["users"].update_one(
             {"_id": user_id},
@@ -135,18 +136,30 @@ async def set_pfp(
 
     if file:
         contents = await file.read()
-        if len(contents) > 256 * 1024:
-            raise HTTPException(status_code=400, detail="File must be 256KB or smaller")
+        if len(contents) > 512 * 1024:
+            raise HTTPException(status_code=400, detail="File must be 512KB or smaller")
         if file.content_type and not file.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail="File must be an image")
-        b64 = base64.b64encode(contents).decode("utf-8")
-        mime = file.content_type or "image/png"
-        data_uri = f"data:{mime};base64,{b64}"
+
+        if not config.CLOUDINARY_URL:
+            raise HTTPException(status_code=500, detail="Cloudinary not configured")
+
+        cloudinary.config(secure=True)
+        try:
+            result = cloudinary.uploader.upload(
+                contents,
+                folder="candilicious/pfp",
+                resource_type="image",
+            )
+            avatar_url = result["secure_url"]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
         await request.app.db["users"].update_one(
             {"_id": user_id},
-            {"$set": {"profile_pfp": data_uri}},
+            {"$set": {"profile_pfp": avatar_url}},
         )
-        return {"ok": 1, "avatar_url": data_uri}
+        return {"ok": 1, "avatar_url": avatar_url}
 
 
 @router.delete("/me/pfp")

@@ -1,11 +1,14 @@
-import base64
 import uuid
+import asyncio
+import hashlib
+import time
 from fastapi import APIRouter, Request, Depends, HTTPException, Query, UploadFile, File, Form
 from bson import ObjectId
 from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
 from . import verify_token, optional_token
+from cogs.social import notify_followers_of_post
 import config
 
 router = APIRouter()
@@ -199,6 +202,17 @@ async def create_post(
 
     post["_id"] = str(result.inserted_id)
     post["created_at"] = post["created_at"].isoformat()
+
+    bot = request.app.state.bot
+    asyncio.create_task(notify_followers_of_post(
+        bot=bot,
+        author_id=user_id,
+        post_title=body.title,
+        post_caption=body.caption,
+        post_link=body.link,
+        thumbnail_url=body.thumbnail_url,
+        post_url=f"{config.FRONTEND_DOMAIN}/social/post/{post['_id']}",
+    ))
 
     return {"ok": 1, "post": post}
 
@@ -536,14 +550,27 @@ async def upload_custom_thumbnail(
     file: UploadFile = File(...),
 ):
     contents = await file.read()
-    if len(contents) > 128 * 1024:
-        raise HTTPException(status_code=400, detail="File must be 128KB or smaller")
+    if len(contents) > 512 * 1024:
+        raise HTTPException(status_code=400, detail="File must be 512KB or smaller")
     if file.content_type and not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
-    b64 = base64.b64encode(contents).decode("utf-8")
-    mime = file.content_type or "image/png"
-    data_uri = f"data:{mime};base64,{b64}"
-    return {"ok": 1, "thumbnail_url": data_uri}
+
+    if not config.CLOUDINARY_URL:
+        raise HTTPException(status_code=500, detail="Cloudinary not configured")
+
+    import cloudinary
+    import cloudinary.uploader
+
+    cloudinary.config()
+    try:
+        result = cloudinary.uploader.upload(
+            contents,
+            folder="candilicious/thumbnails",
+            resource_type="image",
+        )
+        return {"ok": 1, "thumbnail_url": result["secure_url"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
 @router.post("/posts/custom")
@@ -595,7 +622,19 @@ async def create_custom_post(
     }
     result = await request.app.db["social.posts"].insert_one(card)
 
-    return {"ok": 1, "post": {"_id": str(result.inserted_id), "custom_id": post_id, "created_at": now.isoformat()}}
+    social_post_id = str(result.inserted_id)
+    bot = request.app.state.bot
+    asyncio.create_task(notify_followers_of_post(
+        bot=bot,
+        author_id=user_id,
+        post_title=body.title,
+        post_caption=body.description,
+        post_link=site_link,
+        thumbnail_url=body.thumbnail_url,
+        post_url=f"{config.FRONTEND_DOMAIN}/social/post/{social_post_id}",
+    ))
+
+    return {"ok": 1, "post": {"_id": social_post_id, "custom_id": post_id, "created_at": now.isoformat()}}
 
 
 @router.get("/posts/custom")

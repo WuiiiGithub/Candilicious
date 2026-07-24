@@ -13,6 +13,68 @@ db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.DB_NAME]
 
 DEFAULT_BIO = "Hey! I'm a new user who just joined recently :)"
 
+async def notify_followers_of_post(
+    bot: commands.Bot,
+    author_id: str,
+    post_title: str,
+    post_caption: str,
+    post_link: str,
+    thumbnail_url: str | None = None,
+    post_url: str | None = None,
+):
+    try:
+        author = db["users"].find_one({"_id": author_id})
+        if not author:
+            return
+        follower_ids = author.get("followers", [])
+        if not follower_ids:
+            return
+
+        author_member = bot.get_user(int(author_id))
+        display_name = author_member.display_name if author_member else "Unknown"
+        avatar_url = author_member.display_avatar.url if author_member else None
+
+        for fid in follower_ids:
+            try:
+                follower_user = bot.get_user(int(fid))
+                if not follower_user:
+                    continue
+
+                embed = discord.Embed(
+                    title=post_title,
+                    description=post_caption,
+                    color=config.msgColor,
+                    url=post_url or post_link,
+                )
+                if thumbnail_url:
+                    embed.set_image(url=thumbnail_url)
+                if avatar_url:
+                    embed.set_thumbnail(url=avatar_url)
+                embed.set_footer(text=f"Posted by {display_name}", icon_url=avatar_url)
+                embed.timestamp = datetime.now(timezone.utc)
+
+                view = discord.ui.View()
+                if post_url:
+                    view.add_item(discord.ui.Button(
+                        style=discord.ButtonStyle.link,
+                        label="View Post",
+                        url=post_url,
+                    ))
+                if post_link:
+                    view.add_item(discord.ui.Button(
+                        style=discord.ButtonStyle.link,
+                        label="Open Link",
+                        url=post_link,
+                    ))
+
+                await follower_user.send(embed=embed, view=view)
+            except discord.Forbidden:
+                pass
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 def fetch_og_image(url: str) -> str | None:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -453,6 +515,17 @@ class Social(commands.Cog):
             ))
 
             await inter.followup.send(embed=embed, view=view)
+
+            await notify_followers_of_post(
+                bot=self.bot,
+                author_id=str(inter.user.id),
+                post_title=title,
+                post_caption=caption,
+                post_link=link,
+                thumbnail_url=thumbnail_url,
+                post_url=f"{config.FRONTEND_DOMAIN}/social/post/{post_id}",
+            )
+
             cmdLog.process(status_code=100, name="Post Created", details=f"Post {post_id} created by {inter.user.id}.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
