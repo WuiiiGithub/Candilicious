@@ -29,6 +29,23 @@ def verify_token(
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Unauthorized: {str(e)}")
 
+
+def optional_token(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict | None:
+    token = None
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+    else:
+        token = request.cookies.get("session_token")
+    if not token:
+        return None
+    try:
+        return _decode_token(token)
+    except jwt.PyJWTError:
+        return None
+
 class ExceptionRequest(BaseModel):
     type: str
     download: float

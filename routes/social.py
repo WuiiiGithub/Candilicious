@@ -5,7 +5,7 @@ from bson import ObjectId
 from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
-from . import verify_token
+from . import verify_token, optional_token
 import config
 
 router = APIRouter()
@@ -26,28 +26,66 @@ async def get_posts(
     skip: int = Query(0, ge=0),
     payload: dict = Depends(verify_token),
 ):
+    current_user_id = payload.get("sub")
     filter_query = {}
     if user_id:
         filter_query["user_id"] = user_id
 
-    cursor = (
-        request.app.db["social.posts"]
-        .find(filter_query)
-        .sort("created_at", -1)
-        .skip(skip)
-        .limit(limit)
-    )
-    current_user_id = payload.get("sub")
+    following_list = []
+    if not user_id and current_user_id:
+        me = await request.app.db["users"].find_one({"_id": current_user_id})
+        following_list = me.get("following", []) if me else []
+
+    if not user_id and following_list:
+        pipeline = [
+            {"$addFields": {"_followed": {"$in": ["$user_id", following_list]}}},
+            {"$sort": {"_followed": -1, "created_at": -1}},
+            {"$skip": skip},
+            {"$limit": limit},
+        ]
+        docs = await request.app.db["social.posts"].aggregate(pipeline).to_list(length=limit)
+    else:
+        cursor = (
+            request.app.db["social.posts"]
+            .find(filter_query)
+            .sort("created_at", -1)
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = [doc async for doc in cursor]
+
+    user_cache: dict[str, dict] = {}
     posts = []
-    async for doc in cursor:
+    for doc in docs:
         doc["_id"] = str(doc["_id"])
         if isinstance(doc.get("created_at"), datetime):
             doc["created_at"] = doc["created_at"].isoformat()
+        doc["is_custom"] = bool(doc.get("custom_id"))
         doc["liked_by_me"] = current_user_id in doc.get("likes", [])
         doc["disliked_by_me"] = current_user_id in doc.get("dislikes", [])
         doc.pop("likes", None)
         doc.pop("dislikes", None)
         doc.pop("content", None)
+
+        uid = doc.get("user_id", "")
+        if uid and uid not in user_cache:
+            u = await request.app.db["users"].find_one({"_id": uid})
+            if u:
+                name = u.get("name", "Unknown")
+                pfp = u.get("profile_pfp") or u.get("pfp")
+                avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(uid) % 5}.png"
+                if pfp:
+                    avatar_url = pfp if pfp.startswith(("https://", "data:")) else f"https://cdn.discordapp.com/avatars/{uid}/{pfp}.png"
+                user_cache[uid] = {
+                    "user_id": uid,
+                    "display_name": u.get("display_name") or name,
+                    "avatar_url": avatar_url,
+                    "username": name,
+                }
+            else:
+                user_cache[uid] = {"user_id": uid, "display_name": "Unknown", "avatar_url": f"https://cdn.discordapp.com/embed/avatars/{int(uid) % 5}.png", "username": "Unknown"}
+
+        doc["author"] = user_cache.get(uid, {"display_name": "Unknown", "avatar_url": f"https://cdn.discordapp.com/embed/avatars/0.png"})
         posts.append(doc)
 
     return {"ok": 1, "posts": posts}
@@ -57,9 +95,9 @@ async def get_posts(
 async def get_post(
     request: Request,
     post_id: str,
-    payload: dict = Depends(verify_token),
+    payload: dict = Depends(optional_token),
 ):
-    current_user_id = payload.get("sub")
+    current_user_id = payload.get("sub") if payload else None
     doc = None
     custom_doc = None
 
@@ -120,6 +158,7 @@ async def get_post(
         avatar_url = pfp if pfp.startswith(("https://", "data:")) else f"https://cdn.discordapp.com/avatars/{author_id}/{pfp}.png"
 
     doc["author"] = {
+        "user_id": author_id,
         "display_name": display_name,
         "avatar_url": avatar_url,
     }
@@ -394,7 +433,11 @@ async def increment_post_view(
             {"$inc": {"views": 1}},
         )
         if result.matched_count > 0:
-            return {"ok": 1}
+            updated = await request.app.db["social.posts"].find_one(
+                {"_id": oid},
+                {"views": 1},
+            )
+            return {"ok": 1, "views": updated.get("views", 1) if updated else 1}
 
     result = await request.app.db["posts.custom"].update_one(
         {"_id": post_id},
@@ -403,7 +446,17 @@ async def increment_post_view(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    return {"ok": 1}
+    await request.app.db["social.posts"].update_one(
+        {"custom_id": post_id},
+        {"$inc": {"views": 1}},
+    )
+
+    updated_social = await request.app.db["social.posts"].find_one(
+        {"custom_id": post_id},
+        {"views": 1},
+    )
+    views = updated_social.get("views", 1) if updated_social else 1
+    return {"ok": 1, "views": views}
 
 
 class CreateCustomPostRequest(BaseModel):
@@ -694,9 +747,14 @@ async def increment_custom_post_view(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    updated = await request.app.db["posts.custom"].find_one(
-        {"_id": post_id},
+    await request.app.db["social.posts"].update_one(
+        {"custom_id": post_id},
+        {"$inc": {"views": 1}},
+    )
+
+    updated_social = await request.app.db["social.posts"].find_one(
+        {"custom_id": post_id},
         {"views": 1},
     )
 
-    return {"ok": 1, "views": updated.get("views", 0)}
+    return {"ok": 1, "views": updated_social.get("views", 1) if updated_social else 1}
