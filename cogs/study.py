@@ -1,4 +1,4 @@
-import discord, os, asyncio, pymongo, traceback, json, io, qrcode, random, secrets
+import discord, os, asyncio, pymongo, traceback, json, io, qrcode, random, secrets, logging
 import config
 from dotenv import load_dotenv
 from datetime import (
@@ -16,6 +16,7 @@ from library.leaderboard import *
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -496,7 +497,7 @@ class Study(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         log = ListenerLogger(filename=filename, event_name="on_ready")
-        print("[Study] on_ready fired", flush=True)
+        logger.info("Study cog on_ready fired")
         try:
             log.process(status_code=0, message="Syncing", details="Trying to sync with Bot Tree...")
             await self.bot.tree.sync()
@@ -507,14 +508,12 @@ class Study(commands.Cog):
             log.send()
 
         try:
-            print("[Study] Waiting 3s for guilds to populate...", flush=True)
             # Wait for guild voice states to populate before recovery
             await asyncio.sleep(3)
             await self.recovery.recover()
             self.recovery.start_snapshot_task(interval_minutes=5)
         except Exception:
-            import traceback as _tb
-            print(f"[Recovery] FATAL recovery error: {_tb.format_exc()}", flush=True)
+            logger.exception("Recovery failed")
 
     @app_commands.command(name="config", description="Configure server settings")
     @app_commands.guild_only()

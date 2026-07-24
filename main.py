@@ -1,5 +1,6 @@
 import os, sys
 import asyncio
+import logging
 import discord
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -8,6 +9,8 @@ from contextlib import asynccontextmanager
 from discord.ext import commands
 import uvicorn, config
 from library.logging import SystemLogger, CogLogger
+
+logger = logging.getLogger(__name__)
 from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
 from routes import (
@@ -147,7 +150,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # stop with
-    print("...", "=" * 50, sep="\n")
+    logger.info("Shutting down...")
     try:
         recovery = getattr(bot, 'recovery', None)
         if recovery:
@@ -170,7 +173,7 @@ async def lifespan(app: FastAPI):
         status_code=0,
         details="The application has been stopped.",
     )
-    print("=" * 50)
+    logger.info("Shutdown complete")
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
@@ -368,5 +371,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("...")
-        print("=" * 50)
+        logger.info("Interrupted by user")

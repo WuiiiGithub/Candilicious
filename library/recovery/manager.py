@@ -2,10 +2,12 @@
 RecoveryManager — orchestrates snapshot creation and startup recovery.
 """
 import asyncio
+import logging
 import traceback
 from datetime import datetime, timezone, timedelta
 from library.logging import SystemLogger
 
+logger = logging.getLogger(__name__)
 log = SystemLogger(filename="Recovery")
 
 
@@ -89,7 +91,7 @@ class RecoveryManager:
         - Web sessions: check if any member has recent activity
         - Cleanup orphaned user.current_session references
         """
-        print("[Recovery] === RECOVERY START ===", flush=True)
+        logger.info("Recovery started")
 
         stats = {
             "resumed": 0,
@@ -100,14 +102,14 @@ class RecoveryManager:
 
         try:
             session_docs = list(self.db["sessions"].find({}))
-            print(f"[Recovery] Found {len(session_docs)} session(s) in DB", flush=True)
+            logger.info("Found %d session(s) in DB", len(session_docs))
 
             for session_doc in session_docs:
                 try:
                     await self._recover_session(session_doc, stats)
                 except Exception as e:
                     stats["errors"] += 1
-                    print(f"[Recovery] ERROR recovering session {session_doc.get('session_id')}: {e}", flush=True)
+                    logger.error("Error recovering session: %s", e)
 
             # Clean orphaned user.current_session refs
             self._clean_orphaned_user_refs(stats)
@@ -115,16 +117,14 @@ class RecoveryManager:
             # Clean stale drop offers
             self._clean_stale_drops()
 
-            print(
-                f"[Recovery] === RECOVERY DONE === "
-                f"Resumed: {stats['resumed']}, Cleaned: {stats['cleaned']}, "
-                f"Orphan refs cleared: {stats['orphan_refs_cleared']}, Errors: {stats['errors']}",
-                flush=True,
+            logger.info(
+                "Recovery done — resumed: %d, cleaned: %d, orphan refs cleared: %d, errors: %d",
+                stats["resumed"], stats["cleaned"], stats["orphan_refs_cleared"], stats["errors"],
             )
             return stats
 
         except Exception as e:
-            print(f"[Recovery] FATAL: {traceback.format_exc()}", flush=True)
+            logger.exception("Recovery fatal error")
             return stats
 
     async def _recover_session(self, session_doc: dict, stats: dict):
@@ -136,24 +136,24 @@ class RecoveryManager:
         owner_id = session_doc.get("owner_id")
 
         if not session_id:
-            print("[Recovery] Skipping session with no session_id", flush=True)
+            logger.warning("Skipping session with no session_id")
             return
 
-        print(f"[Recovery] Session {session_id}: guild={repr(guild_id)}, channel={repr(channel_id)}, members={len(members)}", flush=True)
+        logger.info("Recovering session with %d member(s)", len(members))
 
         # ── Discord VC session ──
         if guild_id and guild_id != "web" and not channel_id.startswith("w"):
-            print(f"[Recovery] → Routing to Discord recovery", flush=True)
+            logger.info("Routing to Discord recovery")
             await self._recover_discord_session(session_doc, stats)
             return
 
         # ── Web-only session ──
         if guild_id == "web" or channel_id.startswith("w"):
-            print(f"[Recovery] → Routing to Web recovery", flush=True)
+            logger.info("Routing to Web recovery")
             await self._recover_web_session(session_doc, stats)
             return
 
-        print(f"[Recovery] → SKIPPED (no matching recovery path! guild={repr(guild_id)}, channel={repr(channel_id)})", flush=True)
+        logger.warning("Skipped session — no matching recovery path")
 
     async def _recover_discord_session(self, session_doc: dict, stats: dict):
         """Recover a Discord voice channel session."""
@@ -162,10 +162,8 @@ class RecoveryManager:
         guild_id = session_doc.get("guild_id")
         members = session_doc.get("members", {})
 
-        print(f"[Recovery] Discord session {session_id}: guild={guild_id}, channel={channel_id}, members={list(members.keys())}", flush=True)
-
         if not self.bot:
-            print(f"[Recovery] No bot instance — cleaning", flush=True)
+            logger.warning("No bot instance — cleaning session")
             stats["cleaned"] += 1
             await self._cleanup_session(session_doc)
             return
@@ -173,13 +171,12 @@ class RecoveryManager:
         # Check if the voice channel still exists
         try:
             guild = self.bot.get_guild(int(guild_id))
-            print(f"[Recovery] get_guild({guild_id}) → {guild}", flush=True)
         except (ValueError, TypeError) as e:
-            print(f"[Recovery] get_guild failed: {e}", flush=True)
+            logger.error("get_guild failed: %s", e)
             guild = None
 
         if not guild:
-            print(f"[Recovery] Guild not found — cleaning session {session_id}", flush=True)
+            logger.info("Guild not found — cleaning session")
             stats["cleaned"] += 1
             await self._cleanup_session(session_doc)
             return
@@ -189,16 +186,15 @@ class RecoveryManager:
         channel = None
         try:
             channel = await guild.fetch_channel(int(channel_id))
-            print(f"[Recovery] fetch_channel({channel_id}) → {channel} (type={type(channel).__name__})", flush=True)
         except (ValueError, TypeError) as e:
-            print(f"[Recovery] fetch_channel failed (ValueError/TypeError): {e}", flush=True)
+            logger.error("fetch_channel failed: %s", e)
             channel = None
         except Exception as e:
-            print(f"[Recovery] fetch_channel failed: {e}", flush=True)
+            logger.error("fetch_channel failed: %s", e)
             channel = None
 
         if channel is None:
-            print(f"[Recovery] Channel not found — cleaning session {session_id}", flush=True)
+            logger.info("Channel not found — cleaning session")
             stats["cleaned"] += 1
             await self._cleanup_session(session_doc)
             return
@@ -206,24 +202,23 @@ class RecoveryManager:
         # VC exists — check if anyone is still in it
         try:
             vc_member_ids = {str(m.id) for m in channel.members if not m.bot}
-            print(f"[Recovery] channel.members → {len(channel.members)} total, {len(vc_member_ids)} non-bot: {vc_member_ids}", flush=True)
         except Exception as e:
-            print(f"[Recovery] Failed to read channel.members: {e}", flush=True)
+            logger.error("Failed to read channel members: %s", e)
             vc_member_ids = set()
 
         if vc_member_ids:
-            print(f"[Recovery] VC has members — resuming session {session_id}", flush=True)
+            logger.info("VC has members — resuming session")
             await self._resume_session(session_doc, channel, vc_member_ids, stats)
         else:
-            print(f"[Recovery] VC is empty — cleaning session {session_id}", flush=True)
+            logger.info("VC is empty — cleaning session")
             stats["cleaned"] += 1
             await self._cleanup_session(session_doc)
             # Also delete the orphaned VC channel
             try:
                 await channel.delete(reason="Recovery: empty study VC after bot restart")
-                print(f"[Recovery] Deleted orphaned VC channel {channel_id}", flush=True)
+                logger.info("Deleted orphaned VC channel")
             except Exception as e:
-                print(f"[Recovery] Failed to delete VC channel: {e}", flush=True)
+                logger.error("Failed to delete VC channel: %s", e)
 
     async def _resume_session(self, session_doc: dict, channel, vc_member_ids: set, stats: dict):
         """Resume a session that still has active members."""
@@ -362,7 +357,6 @@ class RecoveryManager:
         """Formally end a session: clear user refs, remove DB doc, remove from memory."""
         session_id = session_doc.get("session_id")
         members = session_doc.get("members", {})
-        print(f"[Recovery] _cleanup_session called for {session_id}", flush=True)
 
         # Clear current_session on all member user docs
         for uid in members:
@@ -371,9 +365,8 @@ class RecoveryManager:
                     {"_id": uid, "current_session": session_id},
                     {"$unset": {"current_session": "", "webToken": ""}},
                 )
-                print(f"[Recovery] Cleared current_session for user {uid}", flush=True)
             except Exception as e:
-                print(f"[Recovery] Failed to clear user {uid}: {e}", flush=True)
+                logger.error("Failed to clear user ref: %s", e)
 
         # Remove from SessionManager memory
         if self.session_manager:
@@ -382,7 +375,6 @@ class RecoveryManager:
                 if sess.drop_task and not sess.drop_task.done():
                     sess.drop_task.cancel()
                 del self.session_manager.active_sessions[session_id]
-                print(f"[Recovery] Removed from SessionManager active_sessions", flush=True)
 
             # Clean channel_sessions
             for ch, sid in list(self.session_manager.channel_sessions.items()):
@@ -397,17 +389,16 @@ class RecoveryManager:
         # Delete from DB
         try:
             result = self.db["sessions"].delete_one({"session_id": session_id})
-            print(f"[Recovery] DB delete_one result: deleted={result.deleted_count}", flush=True)
+            logger.info("Cleaned up session (deleted=%d)", result.deleted_count)
         except Exception as e:
-            print(f"[Recovery] DB delete failed: {e}", flush=True)
+            logger.error("DB delete failed: %s", e)
 
         # Publish session_closed event
         if self.event_bus:
             try:
                 await self.event_bus.publish(session_id, "session_closed", {})
-                print(f"[Recovery] Published session_closed event for {session_id}", flush=True)
             except Exception as e:
-                print(f"[Recovery] Failed to publish session_closed: {e}", flush=True)
+                logger.error("Failed to publish session_closed: %s", e)
 
     def _clean_orphaned_user_refs(self, stats: dict):
         """Remove current_session references on users that point to non-existent sessions."""

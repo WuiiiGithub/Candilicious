@@ -1,9 +1,12 @@
 import os, random
 import asyncio
+import logging
 import aiohttp
 import hashlib
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance, ImageFilter
+
+logger = logging.getLogger(__name__)
 
 CONFIG = {
     "IMG_SIZE": (858, 932),
@@ -222,5 +225,5 @@ async def getNovaLeaderboard(data, border_style: str = "gold"):
         return buf
 
     except Exception as e:
-        print(f"[Error] Leaderboard gen failed: {e}")
+        logger.error("Leaderboard generation failed")
         return None

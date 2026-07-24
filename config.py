@@ -1,6 +1,10 @@
 from os import getenv as _getenv
 from dotenv import load_dotenv as _load
+import logging
+
 _load()
+
+logger = logging.getLogger(__name__)
 
 OWNER_ID = 1490291458119307304
 
@@ -15,10 +19,7 @@ FRONTEND_DOMAIN=_getenv("FRONTEND_DOMAIN").strip('/')
 SECRET_KEY=_getenv("SECRET_KEY")
 
 if SECRET_KEY and len(SECRET_KEY) < 32:
-    print("\033[93m" + "!" * 50 + "\033[0m")
-    print("\033[93mWARNING: SECRET_KEY is shorter than 32 characters!\033[0m")
-    print("\033[93mFor security, please use a key with at least 32 bytes (e.g., secrets.token_hex(32)).\033[0m")
-    print("\033[93m" + "!" * 50 + "\033[0m")
+    logger.warning("SECRET_KEY is shorter than 32 characters! Please use a key with at least 32 bytes.")
 
 availableIn = {
     "guilds": [
@@ -75,6 +76,11 @@ ACTIVITY_TIERS = [
 PREMIUM_COST = 100
 PREMIUM_TTL_DAYS = 7
 PREMIUM_UNIT = "iron"
+
+# Level Up
+LEVEL_UP_XP_PER_MINUTE = 15
+LEVEL_UP_XP_THRESHOLD = 5000
+LEVEL_UP_WOOD_BASE = 100
 
 bot = None
 

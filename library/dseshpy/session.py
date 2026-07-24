@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import secrets
 import os
+import logging
 from datetime import datetime, timezone, timedelta
 from . import collections
 from . import checks
@@ -9,6 +10,8 @@ from discord import VoiceState, Member
 import discord
 import random
 import config
+
+logger = logging.getLogger(__name__)
 
 import pymongo
 session_collection = lambda: collections.get('session')
@@ -74,6 +77,14 @@ def _load_drop_config():
             config.PREMIUM_TTL_DAYS = float(premium["ttl_days"])
         if "unit" in premium:
             config.PREMIUM_UNIT = premium["unit"]
+    level_up = doc.get("level_up", {})
+    if level_up:
+        if "xp_per_minute" in level_up:
+            config.LEVEL_UP_XP_PER_MINUTE = int(level_up["xp_per_minute"])
+        if "xp_threshold" in level_up:
+            config.LEVEL_UP_XP_THRESHOLD = int(level_up["xp_threshold"])
+        if "wood_base" in level_up:
+            config.LEVEL_UP_WOOD_BASE = int(level_up["wood_base"])
 
 class Session:
     """
@@ -101,6 +112,13 @@ class Session:
         # session type: "cam", "ss", "cam+ss", "cam&ss", "cam+noact", "ss+noact", "*"
         session_type: str = "*",
         session_id: str = None,
+
+        # level up
+        started_at: str = None,
+        last_level_up_at: str = None,
+        pending_level_up: dict = None,
+        level_up_message_id: str = None,
+
         **kwargs
     ):
         self.session_id = session_id or generate_session_id(channel_id)
@@ -129,6 +147,11 @@ class Session:
         self.monitor_tasks = {}
         self.drop_task = None
         self.event_bus = None
+
+        self.started_at = started_at
+        self.last_level_up_at = last_level_up_at
+        self.pending_level_up = pending_level_up
+        self.level_up_message_id = level_up_message_id
         
     def to_dict(self):
         """Convert session state to dictionary for MongoDB."""
@@ -147,6 +170,10 @@ class Session:
             "routine_callback_mean_time": self.routine_callback_mean_time,
             "routines_fired_count": self.routines_fired_count,
             "session_type": self.session_type,
+            "started_at": self.started_at,
+            "last_level_up_at": self.last_level_up_at,
+            "pending_level_up": self.pending_level_up,
+            "level_up_message_id": self.level_up_message_id,
         }
         return d
 
@@ -193,8 +220,77 @@ class Session:
             except Exception:
                 pass
 
+    def _get_effective_xp(self) -> int:
+        """Compute effective XP since last level-up (or session start)."""
+        if not self.started_at:
+            return 0
+        started = datetime.fromisoformat(self.started_at) if isinstance(self.started_at, str) else self.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        ref_time = started
+        if self.last_level_up_at:
+            lu = datetime.fromisoformat(self.last_level_up_at) if isinstance(self.last_level_up_at, str) else self.last_level_up_at
+            if lu.tzinfo is None:
+                lu = lu.replace(tzinfo=timezone.utc)
+            ref_time = lu
+        elapsed_min = (datetime.now(timezone.utc) - ref_time).total_seconds() / 60.0
+        return int(elapsed_min * config.LEVEL_UP_XP_PER_MINUTE)
+
+    async def _check_level_up(self, channel=None):
+        """Check if XP threshold is crossed and trigger level-up if so."""
+        if self.pending_level_up:
+            return
+        if not self.started_at:
+            return
+
+        effective_xp = self._get_effective_xp()
+
+        if effective_xp < config.LEVEL_UP_XP_THRESHOLD:
+            return
+
+        new_level = self.vc_level + 1
+        wood_cost = config.LEVEL_UP_WOOD_BASE * new_level
+
+        self.pending_level_up = {
+            "new_level": new_level,
+            "wood_cost": wood_cost,
+            "paid_by": [],
+            "total_members": len(self.members),
+        }
+        self._sync_session_now()
+
+        await self._emit_event("level_up", {
+            "new_level": new_level,
+            "wood_cost": wood_cost,
+            "total_members": len(self.members),
+        })
+
+        if self.guild_id != "web" and channel:
+            domain = os.getenv("FRONTEND_DOMAIN", "")
+            if domain and not domain.endswith("/"):
+                domain += "/"
+            link = f"{domain}projects?level_up={self.session_id}"
+            embed = discord.Embed(
+                title="\u2b06\ufe0f Level Up Available!",
+                description=f"Level **{self.vc_level}** \u2192 **{new_level}**\nCost: **{wood_cost}** \U0001fab5 Wood per member\n\n0/{len(self.members)} paid",
+                color=discord.Color.green(),
+            )
+            view = discord.ui.View()
+            view.add_item(discord.ui.Button(
+                label=f"Pay {wood_cost} Wood",
+                style=discord.ButtonStyle.link,
+                url=link,
+                emoji="\U0001fab5",
+            ))
+            try:
+                msg = await channel.send(embed=embed, view=view)
+                self.level_up_message_id = str(msg.id)
+                self._sync_session_now()
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
     async def drop_routine(self, channel: discord.VoiceChannel):
-        print(f"[Drop] Routine STARTED for session {self.session_id} (guild={self.guild_id}, members={list(self.members.keys())})", flush=True)
+        logger.info("Drop routine started")
         try:
             while True:
                 try:
@@ -202,19 +298,18 @@ class Session:
                     v = config.DROP_VARIANCE
                     mean = config.DROP_MEAN_TIME
                     d_col = collections.get("drop.offers")
-                    print(f"[Drop] Session {self.session_id}: config loaded — mean={mean}min, variance={v}, drop_col={'YES' if d_col is not None else 'NO'}", flush=True)
+
+                    await self._check_level_up(channel)
+
                     interval = random.uniform(1 - v, 1 + v) * mean
                     sleep_sec = interval * 60
-                    print(f"[Drop] Session {self.session_id}: sleeping {sleep_sec:.0f}s ({interval:.1f}min)", flush=True)
                     await asyncio.sleep(sleep_sec)
 
                     if self.guild_id == "web":
                         if not self.members:
-                            print(f"[Drop] Session {self.session_id}: skipped — no members")
                             continue
                     else:
                         if not channel.members:
-                            print(f"[Drop] Session {self.session_id}: skipped — no VC members")
                             continue
 
                     token = secrets.token_urlsafe(32)
@@ -229,14 +324,13 @@ class Session:
                             "created_at": datetime.now(timezone.utc),
                             "expire_at": datetime.now(timezone.utc) + timedelta(seconds=config.DROP_COLLECTION_TIME + 5),
                         })
-                        print(f"[Drop] Session {self.session_id}: drop #{self.routines_fired_count + 1} INSERTED into drop.offers (token={token[:8]}...)", flush=True)
                     else:
-                        print(f"[Drop] Session {self.session_id}: ERROR — drop.offers collection not found in dseshpy collections!", flush=True)
+                        logger.error("drop.offers collection not found")
 
                     domain = os.getenv("FRONTEND_DOMAIN", "")
                     if domain and not domain.endswith("/"):
                         domain += "/"
-                    link = f"{domain}drops?token={token}"
+                    link = f"{domain}projects?drop_token={token}"
 
                     self.routines_fired_count += 1
                     self._sync_session_now()
@@ -247,24 +341,30 @@ class Session:
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "expire_at": (datetime.now(timezone.utc) + timedelta(seconds=config.DROP_COLLECTION_TIME)).isoformat(),
                     })
-                    print(f"[Drop] Session {self.session_id}: drop #{self.routines_fired_count} EMITTED via event_bus", flush=True)
 
                     if self.guild_id != "web" and channel:
                         embed = discord.Embed(
                             title="\U0001f381 Drops Have Landed!",
-                            description=f"Someone dropped goodies in the study VC!\n\U0001f4e6 **[__Collect yours here by clicking this text!__]({link})**",
+                            description="Someone dropped goodies in the study VC!\nOpen the site to claim yours before they vanish!",
                             color=discord.Color.gold()
                         )
                         embed.set_footer(text="*Hurry \u2014 everyone can claim once!*")
+                        view = discord.ui.View()
+                        view.add_item(discord.ui.Button(
+                            label="Claim Drop",
+                            style=discord.ButtonStyle.link,
+                            url=link,
+                            emoji="\U0001f381",
+                        ))
                         try:
-                            await channel.send(embed=embed, delete_after=config.DROP_COLLECTION_TIME)
+                            await channel.send(embed=embed, view=view, delete_after=config.DROP_COLLECTION_TIME)
                         except (discord.NotFound, discord.HTTPException):
                             pass
 
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    print(f"[Drop] Session {self.session_id}: ERROR — {e}", flush=True)
+                    logger.exception("Drop routine error")
 
         except asyncio.CancelledError:
             pass
@@ -494,6 +594,9 @@ class Session:
             self._update_members_count()
 
             if len(self.members) == 1 and (not self.drop_task or self.drop_task.done()):
+                if not self.started_at:
+                    self.started_at = datetime.now(timezone.utc).isoformat()
+                    self._sync_session_now()
                 self.drop_task = asyncio.create_task(self.drop_routine(channel))
             
             if not self._is_allowed(after_type):

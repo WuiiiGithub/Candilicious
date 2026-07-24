@@ -1,10 +1,14 @@
 import asyncio
 import json
+import logging
+import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from . import verify_token
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -90,6 +94,7 @@ def _session_response(session_doc: dict, members: list) -> dict:
             "vc_xp": session_doc.get("vc_xp", 0),
             "members_count": session_doc.get("members_count", {}),
             "members": members,
+            "pending_level_up": session_doc.get("pending_level_up"),
         },
     }
 
@@ -460,9 +465,9 @@ async def create_web_session(
         sm.user_sessions[user_id] = session_id
         import asyncio as _asyncio
         sess_obj.drop_task = _asyncio.create_task(sess_obj.drop_routine(None))
-        print(f"[Drop] Web session {session_id}: registered in SessionManager, drop_routine started (mean_time={int(_cfg.DROP_MEAN_TIME)}min)", flush=True)
+        logger.info("Web session registered in SessionManager")
     else:
-        print(f"[Drop] Web session {session_id}: WARNING — SessionManager not found on bot, drops will NOT fire", flush=True)
+        logger.warning("SessionManager not found — drops will not fire")
 
     user_data = await request.app.db["users"].find_one(
         {"_id": user_id},
@@ -503,7 +508,7 @@ async def stream_session_events(
             for uid in sess_obj.members:
                 sm.user_sessions[uid] = session_id
             sess_obj.drop_task = asyncio.create_task(sess_obj.drop_routine(None))
-            print(f"[Drop] SSE reconnect: re-created session {session_id} in SessionManager, drop_routine started", flush=True)
+            logger.info("SSE reconnect: re-created session in SessionManager")
 
     queue = await event_bus.subscribe(session_id)
 
@@ -535,3 +540,174 @@ async def stream_session_events(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/{session_id}/level-up/pay")
+async def pay_level_up(
+    request: Request,
+    session_id: str,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    bot = getattr(request.app.state, "bot", None)
+    sm = getattr(bot, "session_manager", None) if bot else None
+    sess = sm.active_sessions.get(session_id) if sm else None
+
+    if not sess:
+        doc = await request.app.db["sessions"].find_one({"session_id": session_id})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Session not found")
+        from library.dseshpy.session import Session
+        event_bus = getattr(request.app.state, "event_bus", None)
+        sess = Session.from_dict(doc)
+        if event_bus:
+            sess.event_bus = event_bus
+        if sm:
+            sm.active_sessions[session_id] = sess
+            sm.channel_sessions[sess.channel_id] = session_id
+            for uid in sess.members:
+                sm.user_sessions[uid] = session_id
+
+    if not sess.pending_level_up:
+        raise HTTPException(status_code=400, detail="No pending level-up")
+
+    if user_id not in sess.members:
+        raise HTTPException(status_code=403, detail="You must be a session member to pay")
+
+    paid_by = sess.pending_level_up.get("paid_by", [])
+    if user_id in paid_by:
+        return {
+            "ok": 1,
+            "new_level": sess.pending_level_up["new_level"],
+            "wood_cost": sess.pending_level_up["wood_cost"],
+            "paid_count": len(paid_by),
+            "total_members": len(sess.members),
+            "already_paid": True,
+        }
+
+    new_level = sess.pending_level_up["new_level"]
+    wood_cost = sess.pending_level_up["wood_cost"]
+
+    from library import degrade
+    user_data = await request.app.db["users"].find_one({"_id": user_id})
+    resources = (user_data or {}).get("economy", {}).get("resources", {})
+    wood_data = resources.get("wood", {})
+
+    rates_doc = await request.app.db["config"].find_one({"_id": "degradation_rates"})
+    wood_rate = rates_doc.get("wood", 0.05) if rates_doc else 0.05
+
+    existing_wood, wood_dt = degrade.apply(
+        wood_data.get("amount", 0), wood_data.get("degraded_at"), wood_rate
+    )
+
+    if existing_wood < wood_cost:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient wood ({existing_wood}/{wood_cost})",
+        )
+
+    await request.app.db["users"].update_one(
+        {"_id": user_id},
+        {"$set": {
+            "economy.resources.wood.amount": existing_wood - wood_cost,
+            "economy.resources.wood.degraded_at": wood_dt,
+        }},
+        upsert=True,
+    )
+
+    paid_by.append(user_id)
+    sess.pending_level_up["paid_by"] = paid_by
+    sess._sync_session_now()
+
+    current_member_ids = set(sess.members.keys())
+    all_paid = current_member_ids.issubset(set(paid_by))
+
+    paid_count = len(paid_by)
+    total_members = len(sess.members)
+
+    if sess.level_up_message_id and sess.guild_id != "web" and bot:
+        try:
+            import discord as _discord
+            channel = bot.get_channel(int(sess.channel_id))
+            if channel:
+                msg = await channel.fetch_message(int(sess.level_up_message_id))
+                domain = os.getenv("FRONTEND_DOMAIN", "")
+                if domain and not domain.endswith("/"):
+                    domain += "/"
+                link = f"{domain}projects?level_up={session_id}"
+                embed = _discord.Embed(
+                    title="\u2b06\ufe0f Level Up Available!",
+                    description=f"Level **{sess.vc_level}** \u2192 **{new_level}**\nCost: **{wood_cost}** \U0001fab5 Wood per member\n\n**{paid_count}/{total_members}** paid",
+                    color=_discord.Color.green(),
+                )
+                view = _discord.ui.View()
+                view.add_item(_discord.ui.Button(
+                    label=f"Pay {wood_cost} Wood",
+                    style=_discord.ButtonStyle.link,
+                    url=link,
+                    emoji="\U0001fab5",
+                ))
+                await msg.edit(embed=embed, view=view)
+        except Exception:
+            pass
+
+    await sess._emit_event("level_up_progress", {
+        "new_level": new_level,
+        "wood_cost": wood_cost,
+        "paid_by": paid_by,
+        "paid_count": paid_count,
+        "total_members": total_members,
+    })
+
+    if all_paid:
+        sess.vc_level = new_level
+        from datetime import datetime as _dt, timezone as _tz
+        sess.last_level_up_at = _dt.now(_tz.utc).isoformat()
+        sess.pending_level_up = None
+        sess._sync_session_now()
+
+        if sess.level_up_message_id and sess.guild_id != "web" and bot:
+            try:
+                import discord as _discord
+                channel = bot.get_channel(int(sess.channel_id))
+                if channel:
+                    msg = await channel.fetch_message(int(sess.level_up_message_id))
+                    await msg.delete()
+            except Exception:
+                pass
+
+            try:
+                import discord as _discord
+                channel = bot.get_channel(int(sess.channel_id))
+                if channel:
+                    paid_mentions = " ".join(
+                        f"<@{uid}>" for uid in paid_by if uid in sess.members
+                    )
+                    celeb_embed = _discord.Embed(
+                        title="\U0001f525 Level Up!",
+                        description=f"Level **{new_level}** achieved!\n\nContributors: {paid_mentions}",
+                        color=_discord.Color.gold(),
+                    )
+                    await channel.send(embed=celeb_embed, delete_after=30)
+            except Exception:
+                pass
+
+            sess.level_up_message_id = None
+            sess._sync_session_now()
+
+        await sess._emit_event("level_up_complete", {
+            "new_level": new_level,
+            "wood_cost": wood_cost,
+        })
+
+    return {
+        "ok": 1,
+        "new_level": new_level,
+        "wood_cost": wood_cost,
+        "paid_count": paid_count,
+        "total_members": total_members,
+        "all_paid": all_paid,
+    }

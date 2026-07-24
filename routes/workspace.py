@@ -56,11 +56,17 @@ class PremiumData(BaseModel):
     ttl_days: float = 7
     unit: str = "iron"
 
+class LevelUpData(BaseModel):
+    xp_per_minute: int = 15
+    xp_threshold: int = 5000
+    wood_base: int = 100
+
 class VariablesData(BaseModel):
     drops: DropsData = DropsData()
     resources: ResourcesData = ResourcesData()
     activity_tiers: list[list] = []
     premium: PremiumData = PremiumData()
+    level_up: LevelUpData = LevelUpData()
 
 
 VARIABLES_DEFAULTS = {
@@ -78,6 +84,7 @@ VARIABLES_DEFAULTS = {
         ["Cam + Stream", 2.5, 0.15],
     ],
     "premium": {"cost": 100, "ttl_days": 7, "unit": "iron"},
+    "level_up": {"xp_per_minute": 15, "xp_threshold": 5000, "wood_base": 100},
 }
 
 
@@ -269,6 +276,7 @@ async def save_variables(db, data: dict):
             "resources": merged["resources"],
             "activity_tiers": merged["activity_tiers"],
             "premium": merged["premium"],
+            "level_up": merged["level_up"],
         }},
         upsert=True
     )
@@ -309,6 +317,11 @@ def _apply_to_config(merged: dict):
     config.PREMIUM_COST = premium.get("cost", config.PREMIUM_COST)
     config.PREMIUM_TTL_DAYS = premium.get("ttl_days", config.PREMIUM_TTL_DAYS)
     config.PREMIUM_UNIT = premium.get("unit", config.PREMIUM_UNIT)
+
+    level_up = merged.get("level_up", {})
+    config.LEVEL_UP_XP_PER_MINUTE = level_up.get("xp_per_minute", config.LEVEL_UP_XP_PER_MINUTE)
+    config.LEVEL_UP_XP_THRESHOLD = level_up.get("xp_threshold", config.LEVEL_UP_XP_THRESHOLD)
+    config.LEVEL_UP_WOOD_BASE = level_up.get("wood_base", config.LEVEL_UP_WOOD_BASE)
 
 
 async def load_variables_from_db(db):
