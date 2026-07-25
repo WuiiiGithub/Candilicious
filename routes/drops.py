@@ -1,12 +1,13 @@
 import math
 import random
+import pymongo
 from fastapi import APIRouter, Request, Depends, HTTPException
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from typing import Optional
 import config
-from library import degrade
-from . import verify_token
+from library import degrade, is_muted
+from . import verify_token, limiter
 
 router = APIRouter()
 
@@ -48,6 +49,7 @@ async def check_drop(request: Request, token: str):
     return {"claimed": claimed is not None}
 
 @router.post("/claim/{token}")
+@limiter.limit("10/minute")
 async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
 
@@ -57,12 +59,6 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
 
     session_id = drop.get("session_id") or drop.get("channel_id")
     guild_id = drop["guild_id"]
-
-    existing = await request.app.db["activity.drops"].find_one({
-        "drop_token": token, "user_id": user_id
-    })
-    if existing:
-        raise HTTPException(status_code=400, detail="You already claimed this drop")
 
     session = await request.app.db["sessions"].find_one({"session_id": session_id})
     if not session:
@@ -111,25 +107,28 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
     else:
         respond_time = 0
 
-    await request.app.db["activity.drops"].insert_one({
-        "drop_token": token,
-        "user_id": user_id,
-        "guild_id": guild_id,
-        "session_id": session_id,
-        "respond_time": respond_time,
-        "ip": ip,
-        "user_agent": user_agent,
-        "screen_size": body.screen_size,
-        "avg_pointer_speed": body.avg_pointer_speed,
-        "avg_xyz_jerk": body.avg_xyz_jerk,
-        "study_type": body.study_type,
-        "study_type_amount": body.study_type_amount,
-        "claim_rate": claim_rate,
-        "wood": wood,
-        "iron": iron,
-        "activity_str": act_str,
-        "claimed_at": datetime.now(timezone.utc),
-    })
+    try:
+        await request.app.db["activity.drops"].insert_one({
+            "drop_token": token,
+            "user_id": user_id,
+            "guild_id": guild_id,
+            "session_id": session_id,
+            "respond_time": respond_time,
+            "ip": ip,
+            "user_agent": user_agent,
+            "screen_size": body.screen_size,
+            "avg_pointer_speed": body.avg_pointer_speed,
+            "avg_xyz_jerk": body.avg_xyz_jerk,
+            "study_type": body.study_type,
+            "study_type_amount": body.study_type_amount,
+            "claim_rate": claim_rate,
+            "wood": wood,
+            "iron": iron,
+            "activity_str": act_str,
+            "claimed_at": datetime.now(timezone.utc),
+        })
+    except pymongo.errors.DuplicateKeyError:
+        raise HTTPException(status_code=400, detail="You already claimed this drop")
 
     rates_doc = await request.app.db["config"].find_one({"_id": "degradation_rates"})
     wood_rate = rates_doc.get("wood", 0.05) if rates_doc else 0.05
@@ -158,8 +157,9 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
         channel = bot.get_channel(int(actual_channel_id))
         if channel:
             try:
+                who = f"<@{user_id}>" if not is_muted(user_id) else user_id
                 await channel.send(
-                    content=f"\U0001f381 <@{user_id}> collected the drop! +**{wood}** \U0001fab5 Wood +**{iron}** \U0001f529 Iron",
+                    content=f"\U0001f381 {who} collected the drop! +**{wood}** \U0001fab5 Wood +**{iron}** \U0001f529 Iron",
                     delete_after=config.DROP_COLLECTION_TIME,
                 )
             except Exception:

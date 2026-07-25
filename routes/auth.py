@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
-GUILD_ID = "1491471841716605062"
+GUILD_ID = str(config.availableIn["guilds"][0])
 
 router = APIRouter()
 

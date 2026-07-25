@@ -1,13 +1,12 @@
-import discord, config, pymongo, os, traceback
+import discord, config, os, traceback
 from discord import app_commands, ui
 from discord.ext import commands
 from library.logging import CogLogger, CommandLogger, ListenerLogger
+from library import db
 from datetime import datetime
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
-
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.DB_NAME]
 
 ITEMS_PER_PAGE = 5
 TASKS_PER_PAGE = 10

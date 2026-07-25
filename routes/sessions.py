@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from . import verify_token
+from library import is_muted
 
 logger = logging.getLogger(__name__)
 
@@ -114,12 +115,13 @@ async def _remove_user_from_session(request: Request, user_id: str, session_doc:
     elif user_act in ("cam", "ss", "noact"):
         inc_fields[f"members_count.{user_act}"] = -1
 
-    await request.app.db["sessions"].update_one(
+    updated_doc = await request.app.db["sessions"].find_one_and_update(
         {"session_id": session_id},
         {
             "$unset": {f"members.{user_id}": ""},
             "$inc": inc_fields,
         },
+        return_document=True,
     )
 
     owner_id = session_doc.get("owner_id")
@@ -128,8 +130,6 @@ async def _remove_user_from_session(request: Request, user_id: str, session_doc:
 
     if user_id == owner_id:
         new_owner_id = remaining[0] if remaining else None
-
-    updated_doc = await request.app.db["sessions"].find_one({"session_id": session_id})
     if not updated_doc:
         sm = getattr(getattr(request.app.state, "bot", None), "session_manager", None)
         if sm and session_id in sm.active_sessions:
@@ -599,9 +599,9 @@ async def pay_level_up(
     rates_doc = await request.app.db["config"].find_one({"_id": "degradation_rates"})
     wood_rate = rates_doc.get("wood", 0.05) if rates_doc else 0.05
 
-    existing_wood, wood_dt = degrade.apply(
-        wood_data.get("amount", 0), wood_data.get("degraded_at"), wood_rate
-    )
+    raw_amount = wood_data.get("amount", 0)
+    degraded_at = wood_data.get("degraded_at")
+    existing_wood, wood_dt = degrade.apply(raw_amount, degraded_at, wood_rate)
 
     if existing_wood < wood_cost:
         raise HTTPException(
@@ -609,14 +609,19 @@ async def pay_level_up(
             detail=f"Insufficient wood ({existing_wood}/{wood_cost})",
         )
 
-    await request.app.db["users"].update_one(
-        {"_id": user_id},
+    result = await request.app.db["users"].find_one_and_update(
+        {
+            "_id": user_id,
+            "economy.resources.wood.amount": raw_amount,
+        },
         {"$set": {
             "economy.resources.wood.amount": existing_wood - wood_cost,
             "economy.resources.wood.degraded_at": wood_dt,
         }},
-        upsert=True,
     )
+
+    if not result:
+        raise HTTPException(status_code=409, detail="Concurrent modification, please retry")
 
     paid_by.append(user_id)
     sess.pending_level_up["paid_by"] = paid_by
@@ -684,7 +689,7 @@ async def pay_level_up(
                 channel = bot.get_channel(int(sess.channel_id))
                 if channel:
                     paid_mentions = " ".join(
-                        f"<@{uid}>" for uid in paid_by if uid in sess.members
+                        f"<@{uid}>" for uid in paid_by if uid in sess.members and not is_muted(uid)
                     )
                     celeb_embed = _discord.Embed(
                         title="\U0001f525 Level Up!",

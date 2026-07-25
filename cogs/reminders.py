@@ -1,8 +1,9 @@
-import discord, pymongo, traceback, os, config, random, re, asyncio
+import discord, traceback, os, config, random, re, asyncio
 from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from discord import app_commands, ui
 from library.logging import *
+from library import is_muted, db
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -11,11 +12,10 @@ cogLog = CogLogger(filename=filename)
 
 load_dotenv()
 
-_db = pymongo.MongoClient(host=config.MONGODB_URI)[config.DB_NAME]
-serverCollection = _db["servers"]
-configCollection = _db["config"]
-userCollection = _db["users"]
-schedulerCollection = _db["schedulers"]
+serverCollection = db["servers"]
+configCollection = db["config"]
+userCollection = db["users"]
+schedulerCollection = db["schedulers"]
 
 STUDY_CALL_STATEMENTS = [
     # --- MOTIVATIONAL (30) ---
@@ -405,6 +405,8 @@ class Reminders(commands.Cog):
 
     async def _send_streak_break_dm(self, bot, user_id: str, old_streak: int):
         try:
+            if is_muted(user_id):
+                return
             user = await bot.fetch_user(int(user_id))
             if user is None:
                 return
@@ -653,7 +655,7 @@ class Reminders(commands.Cog):
 
                         all_members = [m for m in channel.guild.members if not m.bot]
                         tagged = data.get("tagged", [])
-                        untagged = [m for m in all_members if str(m.id) not in tagged]
+                        untagged = [m for m in all_members if str(m.id) not in tagged and not is_muted(str(m.id))]
 
                         if not untagged:
                             tagged = []
@@ -744,6 +746,8 @@ class Reminders(commands.Cog):
 
             sent_count = 0
             for uid, _ in sampled:
+                if is_muted(uid):
+                    continue
                 try:
                     user = await self.bot.fetch_user(int(uid))
                     if user is None:
@@ -829,6 +833,10 @@ class Reminders(commands.Cog):
                 old_streak = user_doc.get("streak", 0)
 
                 if old_streak <= 0:
+                    continue
+
+                if is_muted(uid):
+                    self._break_streak(uid)
                     continue
 
                 try:
@@ -1017,6 +1025,9 @@ class Reminders(commands.Cog):
             taskLog.before(status_code=50, message="Delaying", details=f"Beginning {time}s wait before delivering reminder to {user.name}")
             taskLog.send()
             await asyncio.sleep(time)
+
+            if is_muted(str(user.id)):
+                return
 
             resLog = TaskLogger(filename=filename, task_name="reminder_runner")
             await user.send(

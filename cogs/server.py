@@ -3,14 +3,15 @@ import config
 from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime
-import os, pymongo, traceback
+import traceback
 from library.logging import CogLogger, CommandLogger, ListenerLogger
+from library import db
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-serverCollection = pymongo.MongoClient(host=config.MONGODB_URI)[config.DB_NAME]['server']
-sessionsCollection = pymongo.MongoClient(host=config.MONGODB_URI)[config.DB_NAME]['sessions']
+serverCollection = db['server']
+sessionsCollection = db['sessions']
 
 class Server(commands.Cog):
     def __init__(self, bot):

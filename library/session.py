@@ -1,4 +1,5 @@
 import jwt
+import asyncio
 from library import (
     datetime, timedelta, UTC,
     os, discord, tasks, sleep,
@@ -45,16 +46,16 @@ class tempDataHandler:
     def add(self, data_id: str):
         self.data[data_id] = tasks.create_task(self.waitAndRemove(data_id))
 
-    def isInside(self, data_id):
+    async def isInside(self, data_id: str):
         isInList = data_id in self.data
-        doc = exceptionCollection.find_one({"user_id": data_id})
-        isInDB = False if doc == None else True
+        doc = await asyncio.to_thread(exceptionCollection.find_one, {"user_id": data_id})
+        isInDB = doc is not None
         return isInList or isInDB
     
-    def isNotInside(self, data_id):
-        return not self.isInside(data_id)
+    async def isNotInside(self, data_id: str):
+        return not await self.isInside(data_id)
     
-    async def waitAndRemove(self, data_id: int):
+    async def waitAndRemove(self, data_id: str):
         await sleep(300)
         self.data.pop(data_id, None)
    

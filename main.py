@@ -49,7 +49,7 @@ isNgrokSetup = False
 
 # setups
 if argLen > 1:
-    cmdLineArgs = sys.args[1:]
+    cmdLineArgs = sys.argv[1:]
     if "vpn" in cmdLineArgs:
         isVpnSetup = True
         import setup_vpn

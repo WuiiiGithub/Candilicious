@@ -3,14 +3,13 @@ import config
 from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime
-import os, pymongo, traceback, random
+import os, traceback, random
 from library.logging import CogLogger, CommandLogger, ListenerLogger
-from library import degrade
+from library import degrade, db
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.DB_NAME]
 userCollection = db["users"]
 
 FIND_COST = 25

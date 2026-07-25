@@ -24,5 +24,9 @@
         "<str:server_id>": {
             "time": "<float:total_study_time_seconds>"
         }
+    },
+    "muted": {
+        "until": "<datetime|null:mute_expiration, null for forever>",
+        "muted_at": "<datetime:when_mute_was_set>"
     }
 }

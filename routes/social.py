@@ -7,7 +7,7 @@ from bson import ObjectId
 from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
-from . import verify_token, optional_token
+from . import verify_token, optional_token, limiter
 from cogs.social import notify_followers_of_post
 import config
 
@@ -171,6 +171,7 @@ async def get_post(
 
 
 @router.post("/posts")
+@limiter.limit("5/minute")
 async def create_post(
     request: Request,
     body: CreatePostRequest,
@@ -300,6 +301,7 @@ def _serialize_post(post: dict) -> dict:
 
 
 @router.post("/posts/{post_id}/like")
+@limiter.limit("30/minute")
 async def toggle_like(
     request: Request,
     post_id: str,
@@ -330,26 +332,23 @@ async def toggle_like(
     find_id = oid if collection == "social.posts" else post_id
     likes = post.get("likes", [])
     dislikes = post.get("dislikes", [])
-    inc_like = 0
-    inc_dislike = 0
 
     if user_id in likes:
-        await request.app.db[collection].update_one(
-            {"_id": find_id},
+        result = await request.app.db[collection].update_one(
+            {"_id": find_id, "likes": user_id},
             {"$pull": {"likes": user_id}, "$inc": {"like_count": -1}},
         )
-        liked = False
-        inc_like = -1
+        liked = result.modified_count > 0
     else:
-        pull_dislike = {"$pull": {"dislikes": user_id}} if user_id in dislikes else {}
+        update: dict = {"$addToSet": {"likes": user_id}, "$inc": {"like_count": 1}}
         if user_id in dislikes:
-            inc_dislike = -1
-        await request.app.db[collection].update_one(
-            {"_id": find_id},
-            {"$push": {"likes": user_id}, "$inc": {"like_count": 1, "dislike_count": inc_dislike}, **pull_dislike},
+            update["$pull"] = {"dislikes": user_id}
+            update["$inc"]["dislike_count"] = -1
+        result = await request.app.db[collection].update_one(
+            {"_id": find_id, "likes": {"$ne": user_id}},
+            update,
         )
-        liked = True
-        inc_like = 1
+        liked = result.modified_count > 0
 
     updated = await request.app.db[collection].find_one(
         {"_id": find_id},
@@ -359,12 +358,13 @@ async def toggle_like(
     return {
         "ok": 1,
         "liked": liked,
-        "like_count": updated.get("like_count", 0),
-        "dislike_count": updated.get("dislike_count", 0),
+        "like_count": updated.get("like_count", 0) if updated else 0,
+        "dislike_count": updated.get("dislike_count", 0) if updated else 0,
     }
 
 
 @router.post("/posts/{post_id}/dislike")
+@limiter.limit("30/minute")
 async def toggle_dislike(
     request: Request,
     post_id: str,
@@ -395,26 +395,23 @@ async def toggle_dislike(
     find_id = oid if collection == "social.posts" else post_id
     dislikes = post.get("dislikes", [])
     likes = post.get("likes", [])
-    inc_dislike = 0
-    inc_like = 0
 
     if user_id in dislikes:
-        await request.app.db[collection].update_one(
-            {"_id": find_id},
+        result = await request.app.db[collection].update_one(
+            {"_id": find_id, "dislikes": user_id},
             {"$pull": {"dislikes": user_id}, "$inc": {"dislike_count": -1}},
         )
-        disliked = False
-        inc_dislike = -1
+        disliked = result.modified_count > 0
     else:
-        pull_like = {"$pull": {"likes": user_id}} if user_id in likes else {}
+        update: dict = {"$addToSet": {"dislikes": user_id}, "$inc": {"dislike_count": 1}}
         if user_id in likes:
-            inc_like = -1
-        await request.app.db[collection].update_one(
-            {"_id": find_id},
-            {"$push": {"dislikes": user_id}, "$inc": {"dislike_count": 1, "like_count": inc_like}, **pull_like},
+            update["$pull"] = {"likes": user_id}
+            update["$inc"]["like_count"] = -1
+        result = await request.app.db[collection].update_one(
+            {"_id": find_id, "dislikes": {"$ne": user_id}},
+            update,
         )
-        disliked = True
-        inc_dislike = 1
+        disliked = result.modified_count > 0
 
     updated = await request.app.db[collection].find_one(
         {"_id": find_id},
@@ -424,12 +421,13 @@ async def toggle_dislike(
     return {
         "ok": 1,
         "disliked": disliked,
-        "dislike_count": updated.get("dislike_count", 0),
-        "like_count": updated.get("like_count", 0),
+        "dislike_count": updated.get("dislike_count", 0) if updated else 0,
+        "like_count": updated.get("like_count", 0) if updated else 0,
     }
 
 
 @router.post("/posts/{post_id}/view")
+@limiter.limit("60/minute")
 async def increment_post_view(
     request: Request,
     post_id: str,
@@ -563,7 +561,8 @@ async def upload_custom_thumbnail(
 
     cloudinary.config()
     try:
-        result = cloudinary.uploader.upload(
+        result = await asyncio.to_thread(
+            cloudinary.uploader.upload,
             contents,
             folder="candilicious/thumbnails",
             resource_type="image",
@@ -574,6 +573,7 @@ async def upload_custom_thumbnail(
 
 
 @router.post("/posts/custom")
+@limiter.limit("5/minute")
 async def create_custom_post(
     request: Request,
     body: CreateCustomPostRequest,
@@ -748,17 +748,17 @@ async def toggle_custom_like(
 
     likes = post.get("likes", [])
     if user_id in likes:
-        await request.app.db["posts.custom"].update_one(
-            {"_id": post_id},
+        result = await request.app.db["posts.custom"].update_one(
+            {"_id": post_id, "likes": user_id},
             {"$pull": {"likes": user_id}, "$inc": {"like_count": -1}},
         )
-        liked = False
+        liked = result.modified_count > 0
     else:
-        await request.app.db["posts.custom"].update_one(
-            {"_id": post_id},
-            {"$push": {"likes": user_id}, "$inc": {"like_count": 1}},
+        result = await request.app.db["posts.custom"].update_one(
+            {"_id": post_id, "likes": {"$ne": user_id}},
+            {"$addToSet": {"likes": user_id}, "$inc": {"like_count": 1}},
         )
-        liked = True
+        liked = result.modified_count > 0
 
     updated = await request.app.db["posts.custom"].find_one(
         {"_id": post_id},
@@ -768,7 +768,7 @@ async def toggle_custom_like(
     return {
         "ok": 1,
         "liked": liked,
-        "like_count": updated.get("like_count", 0),
+        "like_count": updated.get("like_count", 0) if updated else 0,
     }
 
 
@@ -786,14 +786,4 @@ async def increment_custom_post_view(
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    await request.app.db["social.posts"].update_one(
-        {"custom_id": post_id},
-        {"$inc": {"views": 1}},
-    )
-
-    updated_social = await request.app.db["social.posts"].find_one(
-        {"custom_id": post_id},
-        {"views": 1},
-    )
-
-    return {"ok": 1, "views": updated_social.get("views", 1) if updated_social else 1}
+    return {"ok": 1}

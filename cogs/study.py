@@ -1,4 +1,4 @@
-import discord, os, asyncio, pymongo, traceback, json, io, qrcode, random, secrets, logging
+import discord, os, asyncio, traceback, json, io, qrcode, random, secrets, logging
 import config
 from dotenv import load_dotenv
 from datetime import (
@@ -13,6 +13,8 @@ from library.templates import *
 from library.logging import *
 from library.session import *
 from library.leaderboard import *
+from library import is_muted, db
+import pymongo
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
@@ -20,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.DB_NAME]
 serverCollection = db["servers"]
 userCollection = db["users"]
 boardsCollection = db["boards"]
@@ -718,7 +719,7 @@ class Study(commands.Cog):
             name='Waiting',
             details="Starting the background verification process for the study exception..."
         )
-        while (details:=self.bot.userNetworkConnection.get(str(inter.user.id), None))==None and (datetime.now() - t).total_seconds() <= 90:
+        while (details:=self.bot.userNetworkConnection.pop(str(inter.user.id), None))==None and (datetime.now() - t).total_seconds() <= 90:
             await asyncio.sleep(1)
 
         if details==None:
@@ -1251,7 +1252,7 @@ class Study(commands.Cog):
                                 session.monitor_tasks[str(vc_member.id)] = task
 
                     if non_compliant:
-                        mentions = " ".join(m.mention for m in non_compliant)
+                        mentions = " ".join(m.mention for m in non_compliant if not is_muted(str(m.id)))
                         await channel.send(
                             content=mentions,
                             embed=discord.Embed(

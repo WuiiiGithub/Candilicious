@@ -2,9 +2,10 @@ import discord
 import config
 from discord import app_commands
 from discord.ext import commands
-import os, pymongo, traceback, re, urllib.request
+import os, asyncio, traceback, re, urllib.request
 from datetime import datetime, timezone
 from library.logging import CogLogger, CommandLogger
+from library import is_muted, db
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
@@ -36,6 +37,8 @@ async def notify_followers_of_post(
 
         for fid in follower_ids:
             try:
+                if is_muted(fid):
+                    continue
                 follower_user = bot.get_user(int(fid))
                 if not follower_user:
                     continue
@@ -218,20 +221,21 @@ class Social(commands.Cog):
             await inter.response.send_message(embed=resp)
 
             try:
-                notify = discord.Embed(
-                    title="New Follower",
-                    description=f"{inter.user.mention} followed you!",
-                    color=config.msgColor
-                )
-                notify.set_thumbnail(url=inter.user.display_avatar.url)
-                notify.timestamp = datetime.now(timezone.utc)
-                notify_view = discord.ui.View()
-                notify_view.add_item(discord.ui.Button(
-                    style=discord.ButtonStyle.link,
-                    label="View Profile",
-                    url=f"{config.FRONTEND_DOMAIN}/profile?user_id={current_id}"
-                ))
-                await user.send(embed=notify, view=notify_view)
+                if not is_muted(target_id):
+                    notify = discord.Embed(
+                        title="New Follower",
+                        description=f"{inter.user.mention} followed you!",
+                        color=config.msgColor
+                    )
+                    notify.set_thumbnail(url=inter.user.display_avatar.url)
+                    notify.timestamp = datetime.now(timezone.utc)
+                    notify_view = discord.ui.View()
+                    notify_view.add_item(discord.ui.Button(
+                        style=discord.ButtonStyle.link,
+                        label="View Profile",
+                        url=f"{config.FRONTEND_DOMAIN}/profile?user_id={current_id}"
+                    ))
+                    await user.send(embed=notify, view=notify_view)
             except Exception:
                 pass
 
@@ -475,7 +479,7 @@ class Social(commands.Cog):
             if thumbnail:
                 thumbnail_url = thumbnail.url
             else:
-                thumbnail_url = fetch_og_image(link)
+                thumbnail_url = await asyncio.to_thread(fetch_og_image, link)
 
             post = {
                 "user_id": str(inter.user.id),

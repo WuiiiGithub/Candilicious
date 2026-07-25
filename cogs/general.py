@@ -1,15 +1,26 @@
 from discord import app_commands, Object
 from discord.ext import commands, tasks
-from datetime import datetime
-import os, pymongo, traceback, discord
+from datetime import datetime, timezone, timedelta
+import os, traceback, discord
 from library.logging import CogLogger, CommandLogger, ListenerLogger
+from library import is_muted, db
 import config
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.DB_NAME]
 selfCollection = db["Self"]
+userCollection = db["users"]
+
+MUTE_DURATIONS = {
+    "1hr": timedelta(hours=1),
+    "3hr": timedelta(hours=3),
+    "6hr": timedelta(hours=6),
+    "12hr": timedelta(hours=12),
+    "1d": timedelta(days=1),
+    "1w": timedelta(weeks=1),
+    "1mon": timedelta(days=30),
+}
 
 class General(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -201,6 +212,87 @@ class General(commands.Cog):
                 ephemeral=True
             )
             cmdLog.process(status_code=100, name="Disabled", details="Vote command disabled — future release.")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
+
+    @app_commands.command(name="mute", description="Mute bot notifications for yourself")
+    @app_commands.choices(duration=[
+        app_commands.Choice(name="1 Hour", value="1hr"),
+        app_commands.Choice(name="3 Hours", value="3hr"),
+        app_commands.Choice(name="6 Hours", value="6hr"),
+        app_commands.Choice(name="12 Hours", value="12hr"),
+        app_commands.Choice(name="1 Day", value="1d"),
+        app_commands.Choice(name="1 Week", value="1w"),
+        app_commands.Choice(name="1 Month", value="1mon"),
+        app_commands.Choice(name="Forever", value="forever"),
+    ])
+    async def mute(self, inter: discord.Interaction, duration: app_commands.Choice[str]):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            user_id = str(inter.user.id)
+            now = datetime.now(timezone.utc)
+            muted_doc = {"muted_at": now}
+
+            if duration.value == "forever":
+                muted_doc["until"] = None
+                label = "forever"
+            else:
+                delta = MUTE_DURATIONS[duration.value]
+                muted_doc["until"] = now + delta
+                label = duration.value
+
+            userCollection.update_one(
+                {"_id": user_id},
+                {"$set": {"muted": muted_doc}},
+                upsert=True,
+            )
+
+            await inter.response.send_message(
+                embed=discord.Embed(
+                    title="Notifications Muted",
+                    description=f"Bot notifications muted for **{label}**.\nYou won't receive any DMs or pings from the bot during this time.",
+                    color=discord.Color.greyple(),
+                ),
+                ephemeral=True,
+            )
+            cmdLog.process(status_code=100, name="Mute", details=f"User {user_id} muted for {label}")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
+
+    @app_commands.command(name="unmute", description="Unmute bot notifications")
+    async def unmute(self, inter: discord.Interaction):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            user_id = str(inter.user.id)
+            result = userCollection.update_one(
+                {"_id": user_id, "muted": {"$ne": None}},
+                {"$unset": {"muted": ""}},
+            )
+
+            if result.modified_count:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        title="Notifications Unmuted",
+                        description="Bot notifications have been restored.",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True,
+                )
+                cmdLog.process(status_code=100, name="Unmute", details=f"User {user_id} unmuted")
+            else:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        title="Not Muted",
+                        description="You don't have an active mute.",
+                        color=discord.Color.greyple(),
+                    ),
+                    ephemeral=True,
+                )
+                cmdLog.process(status_code=50, name="Unmute", details=f"User {user_id} was not muted")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

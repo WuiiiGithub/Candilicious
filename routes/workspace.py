@@ -111,11 +111,21 @@ async def workspace(
     elif body.action == "verify_otp":
         return await verify_otp(db, user_id, body.data or {})
     elif body.action == "revoke_session":
+        if user_id != owner_id:
+            raise HTTPException(status_code=403, detail="Only the bot owner can revoke sessions")
         return await revoke_session(db, user_id, body.data or {})
 
     if user_id != owner_id:
         session = await db["admin_sessions"].find_one({"_id": user_id})
-        if not session or session.get("expires_at", datetime.now(timezone.utc)) < datetime.now(timezone.utc):
+        now = datetime.now(timezone.utc)
+        expires_at = session.get("expires_at") if session else None
+        if not session:
+            raise HTTPException(status_code=403, detail="Only the bot owner can access the workspace")
+        if expires_at:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at < now:
+                raise HTTPException(status_code=403, detail="Only the bot owner can access the workspace")
             raise HTTPException(status_code=403, detail="Only the bot owner can access the workspace")
 
     if body.action == "get_policy":

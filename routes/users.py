@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Request, Depends, HTTPException, Form, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional
@@ -6,7 +7,8 @@ import discord
 import cloudinary
 import cloudinary.uploader
 import config
-from . import verify_token
+from . import verify_token, limiter
+from library import is_muted
 
 router = APIRouter()
 
@@ -146,7 +148,8 @@ async def set_pfp(
 
         cloudinary.config(secure=True)
         try:
-            result = cloudinary.uploader.upload(
+            result = await asyncio.to_thread(
+                cloudinary.uploader.upload,
                 contents,
                 folder="candilicious/pfp",
                 resource_type="image",
@@ -187,6 +190,7 @@ async def set_bio(request: Request, payload: dict = Depends(verify_token), bio: 
 
 
 @router.post("/follow")
+@limiter.limit("15/minute")
 async def toggle_follow(request: Request, body: FollowBody, payload: dict = Depends(verify_token)):
     current_user_id = payload.get("sub")
     target_id = body.user_id
@@ -199,45 +203,49 @@ async def toggle_follow(request: Request, body: FollowBody, payload: dict = Depe
         raise HTTPException(status_code=404, detail="User not found")
 
     followers = target_user.get("followers", [])
+    is_following = current_user_id in followers
 
-    if current_user_id in followers:
-        await request.app.db["users"].update_one(
-            {"_id": target_id},
+    if is_following:
+        result = await request.app.db["users"].update_one(
+            {"_id": target_id, "followers": current_user_id},
             {"$pull": {"followers": current_user_id}},
         )
-        await request.app.db["users"].update_one(
-            {"_id": current_user_id},
-            {"$pull": {"following": target_id}},
-        )
+        if result.modified_count > 0:
+            await request.app.db["users"].update_one(
+                {"_id": current_user_id, "following": target_id},
+                {"$pull": {"following": target_id}},
+            )
         return {"ok": 1, "following": False}
     else:
-        await request.app.db["users"].update_one(
-            {"_id": target_id},
-            {"$push": {"followers": current_user_id}},
+        result = await request.app.db["users"].update_one(
+            {"_id": target_id, "followers": {"$ne": current_user_id}},
+            {"$addToSet": {"followers": current_user_id}},
         )
-        await request.app.db["users"].update_one(
-            {"_id": current_user_id},
-            {"$push": {"following": target_id}},
-        )
+        if result.modified_count > 0:
+            await request.app.db["users"].update_one(
+                {"_id": current_user_id, "following": {"$ne": target_id}},
+                {"$addToSet": {"following": target_id}},
+            )
 
         try:
-            bot = request.app.state.bot
-            follower_user = await bot.fetch_user(int(current_user_id))
-            target_discord = await bot.fetch_user(int(target_id))
-            notify = discord.Embed(
-                title="New Follower",
-                description=f"{follower_user.mention} followed you!",
-                color=config.msgColor
-            )
-            notify.set_thumbnail(url=follower_user.display_avatar.url)
-            notify.timestamp = datetime.now(timezone.utc)
-            view = discord.ui.View()
-            view.add_item(discord.ui.Button(
-                style=discord.ButtonStyle.link,
-                label="View Profile",
-                url=f"{config.FRONTEND_DOMAIN}/profile?user_id={current_user_id}"
-            ))
-            await target_discord.send(embed=notify, view=view)
+            if not is_muted(target_id):
+                bot = request.app.state.bot
+                follower_user = await bot.fetch_user(int(current_user_id))
+                target_discord = await bot.fetch_user(int(target_id))
+                notify = discord.Embed(
+                    title="New Follower",
+                    description=f"{follower_user.mention} followed you!",
+                    color=config.msgColor
+                )
+                notify.set_thumbnail(url=follower_user.display_avatar.url)
+                notify.timestamp = datetime.now(timezone.utc)
+                view = discord.ui.View()
+                view.add_item(discord.ui.Button(
+                    style=discord.ButtonStyle.link,
+                    label="View Profile",
+                    url=f"{config.FRONTEND_DOMAIN}/profile?user_id={current_user_id}"
+                ))
+                await target_discord.send(embed=notify, view=view)
         except Exception:
             pass
 
@@ -337,6 +345,7 @@ async def get_following(request: Request, body: ListBody, payload: dict = Depend
 
 
 @router.post("/view")
+@limiter.limit("60/minute")
 async def increment_view(request: Request, body: ViewBody, payload: dict = Depends(verify_token)):
     current_user_id = payload.get("sub")
     target_id = body.user_id

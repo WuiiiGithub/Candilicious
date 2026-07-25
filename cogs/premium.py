@@ -3,13 +3,12 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 from library.logging import CogLogger, CommandLogger, ListenerLogger
-from library import degrade
+from library import degrade, db
 from datetime import datetime, timezone, timedelta
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
 
-db = pymongo.MongoClient(host=os.getenv("MONGODB_URI"))[config.DB_NAME]
 premiumCollection = db["premium"]
 premiumOffersCollection = db["premium.offers"]
 userCollection = db["users"]

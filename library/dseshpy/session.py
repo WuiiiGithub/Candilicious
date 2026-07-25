@@ -14,13 +14,13 @@ import config
 logger = logging.getLogger(__name__)
 
 import pymongo
+from library import is_muted
 session_collection = lambda: collections.get('session')
 
 
-def generate_session_id(channel_id: str) -> str:
-    """Generate a short, unique 16-char hex session ID from channel_id and timestamp."""
-    raw = f"{channel_id}:{datetime.now(timezone.utc).isoformat()}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+def generate_session_id(channel_id: str = "") -> str:
+    """Generate a cryptographically random 16-char hex session ID."""
+    return secrets.token_hex(8)
 
 def _get_activity_type(state: VoiceState) -> str:
     if state.self_video and state.self_stream:
@@ -193,8 +193,9 @@ class Session:
             after_type = _get_activity_type(member.voice)
             if not self._is_allowed(after_type):
                 try:
+                    who = member.display_name if is_muted(str(member.id)) else member.mention
                     embed = discord.Embed(
-                        description=f"{member.mention} You do not meet the session type requirements ({self._type_description()}). \U0001f6a8",
+                        description=f"{who} You do not meet the session type requirements ({self._type_description()}). \U0001f6a8",
                         color=0x3498DB,
                     )
                     await member.voice.channel.send(embed=embed, delete_after=20)
@@ -330,7 +331,7 @@ class Session:
                     domain = os.getenv("FRONTEND_DOMAIN", "")
                     if domain and not domain.endswith("/"):
                         domain += "/"
-                    link = f"{domain}projects?drop_token={token}"
+                    link = f"{domain}projects"
 
                     self.routines_fired_count += 1
                     self._sync_session_now()
@@ -623,31 +624,33 @@ class Session:
                     {"$set": {"webToken": web_token, "current_session": self.session_id}},
                     upsert=True
                 )
-                domain = os.getenv("WEBSITE_DOMAIN")
+                domain = os.getenv("FRONTEND_DOMAIN")
                 if domain and not domain.endswith('/'):
                     domain = domain + "/"
-                link = f"{domain}?webtoken={web_token}&session={self.session_id}"
+                link = f"{domain}projects?webtoken={web_token}&session={self.session_id}"
 
-                try:
-                    qr = qrcode.QRCode(box_size=10, border=8)
-                    qr.add_data(link)
-                    qr.make(fit=True)
-                    img = qr.make_image(fill="black", back_color="white")
+                if not is_muted(member_id):
+                    try:
+                        qr = qrcode.QRCode(box_size=10, border=8)
+                        qr.add_data(link)
+                        qr.make(fit=True)
+                        img = qr.make_image(fill="black", back_color="white")
 
-                    with io.BytesIO() as image_binary:
-                        img.save(image_binary, format="WEBP")
-                        image_binary.seek(0)
-                        await member.send(
-                            content=f"# **[__Productivity Access!__](<{link}>)**\nThis link is only valid while you are in the study voice channel.",
-                            file=discord.File(image_binary, "qrcode.png")
-                        )
-                    dm_status = True
-                except Exception:
-                    dm_status = False
+                        with io.BytesIO() as image_binary:
+                            img.save(image_binary, format="WEBP")
+                            image_binary.seek(0)
+                            await member.send(
+                                content=f"# **[__Productivity Access!__](<{link}>)**\nThis link is only valid while you are in the study voice channel.",
+                                file=discord.File(image_binary, "qrcode.png")
+                            )
+                        dm_status = True
+                    except Exception:
+                        dm_status = False
                 
+            who = member.display_name if is_muted(member_id) else member.mention
             embed = discord.Embed(
                 title=f"\U0001f389 {member.display_name} joined the session! \U0001f389",
-                description=f"Welcome {member.mention}!\nStudy time starts!",
+                description=f"Welcome {who}!\nStudy time starts!",
                 color=0x3498DB,
             )
             embed.set_thumbnail(url=member.display_avatar.url)
@@ -664,7 +667,7 @@ class Session:
                     inline=False
                 )
             try:
-                await channel.send(content=member.mention, embed=embed, delete_after=20)
+                await channel.send(content=who, embed=embed, delete_after=20)
             except (discord.NotFound, discord.HTTPException):
                 pass
             
@@ -718,9 +721,10 @@ class Session:
                 self.drop_task = None
             
             try:
+                who = member.display_name if is_muted(member_id) else member.mention
                 await channel.send(
                     embed=discord.Embed(
-                        description=f"{member.mention} might be on a break. \u2615",
+                        description=f"{who} might be on a break. \u2615",
                         color=0x3498DB,
                     ),
                     delete_after=90,
@@ -747,9 +751,10 @@ class Session:
                         task = asyncio.create_task(self.activity_monitor(member, exceptions_handler, session_category_id, ignore_channel_id))
                         self.monitor_tasks[member_id] = task
                         try:
+                            who = member.display_name if is_muted(member_id) else member.mention
                             await channel.send(
                                 embed=discord.Embed(
-                                    description=f"{member.mention} Your activity doesn't match this session's requirements ({self._type_description()}). \u26a0\ufe0f",
+                                    description=f"{who} Your activity doesn't match this session's requirements ({self._type_description()}). \u26a0\ufe0f",
                                     color=0x3498DB,
                                 ),
                                 delete_after=20,
@@ -767,9 +772,10 @@ class Session:
 
                 if self.session_type != "*":
                     try:
+                        who = member.display_name if is_muted(member_id) else member.mention
                         await channel.send(
                             embed=discord.Embed(
-                                description=f"{member.mention}'s Activity Detected! \u2705",
+                                description=f"{who}'s Activity Detected! \u2705",
                                 color=0x3498DB,
                             ),
                             delete_after=20,
@@ -778,12 +784,13 @@ class Session:
                         pass
                 
             elif checks.is_activity_stopped(before, after) and not self._is_allowed("noact"):
-                if not exceptions_handler or exceptions_handler.isNotInside(member_id):
+                if not exceptions_handler or await exceptions_handler.isNotInside(member_id):
                     self._update_user_time(member, old_type)
                     
+                    who = member.display_name if is_muted(member_id) else member.mention
                     embed = discord.Embed(
                         title="\u26a0\ufe0f Attention Required!",
-                        description=f"{member.mention}, you turned off your camera or screen share.\n"
+                        description=f"{who}, you turned off your camera or screen share.\n"
                         "Please turn it back on within **5 minutes**, or you will be removed.",
                         color=discord.Color.orange(),
                     )
