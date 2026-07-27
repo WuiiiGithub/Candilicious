@@ -118,6 +118,7 @@ class Session:
         last_level_up_at: str = None,
         pending_level_up: dict = None,
         level_up_message_id: str = None,
+        last_boost_at: str = None,
 
         **kwargs
     ):
@@ -152,6 +153,7 @@ class Session:
         self.last_level_up_at = last_level_up_at
         self.pending_level_up = pending_level_up
         self.level_up_message_id = level_up_message_id
+        self.last_boost_at = last_boost_at
         
     def to_dict(self):
         """Convert session state to dictionary for MongoDB."""
@@ -174,6 +176,7 @@ class Session:
             "last_level_up_at": self.last_level_up_at,
             "pending_level_up": self.pending_level_up,
             "level_up_message_id": self.level_up_message_id,
+            "last_boost_at": getattr(self, 'last_boost_at', None),
         }
         return d
 
@@ -221,75 +224,6 @@ class Session:
             except Exception:
                 pass
 
-    def _get_effective_xp(self) -> int:
-        """Compute effective XP since last level-up (or session start)."""
-        if not self.started_at:
-            return 0
-        started = datetime.fromisoformat(self.started_at) if isinstance(self.started_at, str) else self.started_at
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-        ref_time = started
-        if self.last_level_up_at:
-            lu = datetime.fromisoformat(self.last_level_up_at) if isinstance(self.last_level_up_at, str) else self.last_level_up_at
-            if lu.tzinfo is None:
-                lu = lu.replace(tzinfo=timezone.utc)
-            ref_time = lu
-        elapsed_min = (datetime.now(timezone.utc) - ref_time).total_seconds() / 60.0
-        return int(elapsed_min * config.LEVEL_UP_XP_PER_MINUTE)
-
-    async def _check_level_up(self, channel=None):
-        """Check if XP threshold is crossed and trigger level-up if so."""
-        if self.pending_level_up:
-            return
-        if not self.started_at:
-            return
-
-        effective_xp = self._get_effective_xp()
-
-        if effective_xp < config.LEVEL_UP_XP_THRESHOLD:
-            return
-
-        new_level = self.vc_level + 1
-        wood_cost = config.LEVEL_UP_WOOD_BASE * new_level
-
-        self.pending_level_up = {
-            "new_level": new_level,
-            "wood_cost": wood_cost,
-            "paid_by": [],
-            "total_members": len(self.members),
-        }
-        self._sync_session_now()
-
-        await self._emit_event("level_up", {
-            "new_level": new_level,
-            "wood_cost": wood_cost,
-            "total_members": len(self.members),
-        })
-
-        if self.guild_id != "web" and channel:
-            domain = os.getenv("FRONTEND_DOMAIN", "")
-            if domain and not domain.endswith("/"):
-                domain += "/"
-            link = f"{domain}projects?level_up={self.session_id}"
-            embed = discord.Embed(
-                title="\u2b06\ufe0f Level Up Available!",
-                description=f"Level **{self.vc_level}** \u2192 **{new_level}**\nCost: **{wood_cost}** \U0001fab5 Wood per member\n\n0/{len(self.members)} paid",
-                color=discord.Color.green(),
-            )
-            view = discord.ui.View()
-            view.add_item(discord.ui.Button(
-                label=f"Pay {wood_cost} Wood",
-                style=discord.ButtonStyle.link,
-                url=link,
-                emoji="\U0001fab5",
-            ))
-            try:
-                msg = await channel.send(embed=embed, view=view)
-                self.level_up_message_id = str(msg.id)
-                self._sync_session_now()
-            except (discord.NotFound, discord.HTTPException):
-                pass
-
     async def drop_routine(self, channel: discord.VoiceChannel):
         logger.info("Drop routine started")
         try:
@@ -299,8 +233,6 @@ class Session:
                     v = config.DROP_VARIANCE
                     mean = config.DROP_MEAN_TIME
                     d_col = collections.get("drop.offers")
-
-                    await self._check_level_up(channel)
 
                     interval = random.uniform(1 - v, 1 + v) * mean
                     sleep_sec = interval * 60
@@ -383,12 +315,15 @@ class Session:
         seg = self.members.get(member_id, {}).get("_seg")
         if not seg:
             return 0.0
+        now = datetime.now(timezone.utc)
         seg_time = datetime.fromisoformat(seg) if isinstance(seg, str) else seg
-        secs = (datetime.now() - seg_time).total_seconds()
+        if seg_time.tzinfo is None:
+            seg_time = seg_time.replace(tzinfo=timezone.utc)
+        secs = (now - seg_time).total_seconds()
         return max(0.0, secs)
 
     def _reset_seg(self, member_id: str):
-        self.members[member_id]["_seg"] = datetime.now().isoformat()
+        self.members[member_id]["_seg"] = datetime.now(timezone.utc).isoformat()
 
     def _is_allowed(self, activity_type: str) -> bool:
         if self.session_type == "*":

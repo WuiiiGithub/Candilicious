@@ -680,6 +680,7 @@ async def pay_level_up(
 
     if all_paid:
         sess.vc_level = new_level
+        sess.vc_xp = 0
         from datetime import datetime as _dt, timezone as _tz
         sess.last_level_up_at = _dt.now(_tz.utc).isoformat()
         sess.pending_level_up = None
@@ -731,8 +732,8 @@ async def pay_level_up(
 
 
 
-@router.post("/{session_id}/boost")
-async def boost_session(
+@router.post("/{session_id}/boostxp")
+async def boostxp_session(
     request: Request,
     session_id: str,
     payload: dict = Depends(verify_token),
@@ -765,42 +766,45 @@ async def boost_session(
     if user_id not in sess.members:
         raise HTTPException(status_code=403, detail="You must be a session member to boost")
 
-    member_data = sess.members[user_id]
-    if not isinstance(member_data, dict):
-        member_data = {}
-        sess.members[user_id] = member_data
+    if sess.pending_level_up:
+        raise HTTPException(status_code=400, detail="Level-up pending — pay wood first")
 
-    last_boost_at = member_data.get("last_boost_at")
-
-    if last_boost_at:
-        last_ts = datetime.fromisoformat(last_boost_at).timestamp() if isinstance(last_boost_at, str) else float(last_boost_at)
+    last_boost = getattr(sess, 'last_boost_at', None)
+    if last_boost:
+        last_ts = datetime.fromisoformat(last_boost).timestamp() if isinstance(last_boost, str) else float(last_boost)
     else:
-        last_ts = now
+        if sess.started_at:
+            last_ts = datetime.fromisoformat(sess.started_at).timestamp() if isinstance(sess.started_at, str) else float(sess.started_at)
+        else:
+            last_ts = now
 
     elapsed_sec = now - last_ts
     elapsed_min = elapsed_sec / 60.0
     xp_gain = max(1, int(elapsed_min * app_config.LEVEL_UP_XP_PER_MINUTE))
 
-    current_xp = sess.vc_xp
-    current_level = sess.vc_level
-
-    new_xp = current_xp + xp_gain
-
+    new_xp = sess.vc_xp + xp_gain
+    new_level = sess.vc_level
     level_up = False
-    new_level = current_level
-    xp_needed = current_level * 50
-    while new_xp >= xp_needed:
-        new_xp -= xp_needed
-        new_level += 1
+    pending_level_up_data = None
+
+    if new_xp >= app_config.LEVEL_UP_XP_THRESHOLD:
+        new_level = sess.vc_level + 1
+        wood_cost = app_config.LEVEL_UP_WOOD_BASE * new_level
+        pending_level_up_data = {
+            "new_level": new_level,
+            "wood_cost": wood_cost,
+            "paid_by": [],
+            "total_members": len(sess.members),
+        }
+        sess.pending_level_up = pending_level_up_data
         level_up = True
-        xp_needed = new_level * 50
 
     sess.vc_xp = new_xp
     sess.vc_level = new_level
-    member_data["last_boost_at"] = datetime.now(timezone.utc).isoformat()
+    sess.last_boost_at = datetime.now(timezone.utc).isoformat()
     sess._sync_session_now()
 
-    await sess._emit_event("vc_boost", {
+    await sess._emit_event("boostxp", {
         "user_id": user_id,
         "xp_gained": xp_gain,
         "new_xp": new_xp,
@@ -808,10 +812,44 @@ async def boost_session(
         "level_up": level_up,
     })
 
+    if level_up and pending_level_up_data:
+        await sess._emit_event("level_up", {
+            "new_level": new_level,
+            "wood_cost": pending_level_up_data["wood_cost"],
+            "total_members": pending_level_up_data["total_members"],
+        })
+
+        if sess.guild_id != "web" and bot:
+            try:
+                import discord as _discord
+                channel = bot.get_channel(int(sess.channel_id))
+                if channel:
+                    domain = os.getenv("FRONTEND_DOMAIN", "")
+                    if not domain.endswith("/"):
+                        domain += "/"
+                    link = f"{domain}projects?level_up={session_id}"
+                    embed = _discord.Embed(
+                        title="\u2b06\ufe0f Level Up Available!",
+                        description=f"Level **{sess.vc_level - 1}** \u2192 **{new_level}**\nCost: **{pending_level_up_data['wood_cost']}** \U0001fab5 Wood per member\n\n0/{len(sess.members)} paid",
+                        color=_discord.Color.green(),
+                    )
+                    view = _discord.ui.View()
+                    view.add_item(_discord.ui.Button(
+                        label=f"Pay {pending_level_up_data['wood_cost']} Wood",
+                        style=_discord.ButtonStyle.link,
+                        url=link,
+                        emoji="\U0001fab5",
+                    ))
+                    msg = await channel.send(embed=embed, view=view)
+                    sess.level_up_message_id = str(msg.id)
+                    sess._sync_session_now()
+            except Exception:
+                pass
+
     return {
         "ok": 1,
         "xp_gained": xp_gain,
-        "new_xp": new_xp,
-        "vc_level": new_level,
+        "new_xp": sess.vc_xp,
+        "vc_level": sess.vc_level,
         "level_up": level_up,
     }

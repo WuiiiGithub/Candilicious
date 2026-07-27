@@ -1290,9 +1290,9 @@ class Study(commands.Cog):
         finally:
             cmdLog.send()
 
-    @app_commands.command(name="boostvc", description="Boost the current study VC with XP")
+    @app_commands.command(name="boostxp", description="Boost the current study session with XP")
     @app_commands.guild_only()
-    async def boostvc(self, inter: discord.Interaction):
+    async def boostxp(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
             server_id = str(inter.guild_id)
@@ -1346,51 +1346,107 @@ class Study(commands.Cog):
                 return
 
             session_id = session_doc.get("session_id")
+            user_id = str(inter.user.id)
+
+            if user_id not in (session_doc.get("members") or {}):
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="You are not a member of this session.",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                return
+
+            if session_doc.get("pending_level_up"):
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="A level-up is pending — pay wood first!",
+                        color=config.msgColor,
+                    ),
+                    ephemeral=True, delete_after=10,
+                )
+                return
+
+            now = datetime.now(timezone.utc)
+            last_boost = session_doc.get("last_boost_at")
+            if last_boost:
+                last_ts = datetime.fromisoformat(last_boost) if isinstance(last_boost, str) else last_boost
+                if last_ts.tzinfo is None:
+                    last_ts = last_ts.replace(tzinfo=timezone.utc)
+            else:
+                started = session_doc.get("started_at")
+                if started:
+                    last_ts = datetime.fromisoformat(started) if isinstance(started, str) else started
+                    if last_ts.tzinfo is None:
+                        last_ts = last_ts.replace(tzinfo=timezone.utc)
+                else:
+                    last_ts = now
+
+            elapsed_min = (now - last_ts).total_seconds() / 60.0
+            xp_gain = max(1, int(elapsed_min * config.LEVEL_UP_XP_PER_MINUTE))
+
             current_xp = session_doc.get("vc_xp", 0)
             current_level = session_doc.get("vc_level", 1)
-
-            xp_gain = random.randint(5, 15)
             new_xp = current_xp + xp_gain
 
             level_up = False
             new_level = current_level
-            xp_needed = current_level * 50
-            if new_xp >= xp_needed:
-                new_xp -= xp_needed
+            pending_level_up_data = None
+
+            if new_xp >= config.LEVEL_UP_XP_THRESHOLD:
                 new_level = current_level + 1
+                wood_cost = config.LEVEL_UP_WOOD_BASE * new_level
+                pending_level_up_data = {
+                    "new_level": new_level,
+                    "wood_cost": wood_cost,
+                    "paid_by": [],
+                    "total_members": len(session_doc.get("members") or {}),
+                }
                 level_up = True
+
+            update_fields = {
+                "vc_xp": new_xp,
+                "vc_level": new_level,
+                "last_boost_at": now.isoformat(),
+            }
+            if pending_level_up_data:
+                update_fields["pending_level_up"] = pending_level_up_data
 
             db["sessions"].update_one(
                 {"session_id": session_id},
-                {"$set": {"vc_xp": new_xp, "vc_level": new_level}},
+                {"$set": update_fields},
             )
 
             if session_id in self.session_manager.active_sessions:
                 sess = self.session_manager.active_sessions[session_id]
                 sess.vc_xp = new_xp
                 sess.vc_level = new_level
+                sess.last_boost_at = now.isoformat()
+                if pending_level_up_data:
+                    sess.pending_level_up = pending_level_up_data
 
             embed = discord.Embed(
-                title="🚀 VC Boosted!",
+                title="🚀 Session Boosted!",
                 color=discord.Color.gold(),
-                timestamp=datetime.now(),
+                timestamp=now,
             )
             embed.add_field(name="XP Gained", value=f"+{xp_gain}", inline=True)
-            embed.add_field(name="Total XP", value=str(new_xp), inline=True)
+            embed.add_field(name="Total XP", value=f"{new_xp}/5000", inline=True)
             embed.add_field(name="VC Level", value=str(new_level), inline=True)
 
-            if level_up:
-                embed.description = "⭐ **LEVEL UP!** The mean of rewards has increased!"
-                embed.add_field(name="Effect", value="Reward mean increased — wood drops will be larger on average!", inline=False)
+            if level_up and pending_level_up_data:
+                embed.description = "⬆️ **LEVEL UP AVAILABLE!** All members must pay wood to level up."
+                embed.add_field(name="Wood Cost", value=f"{pending_level_up_data['wood_cost']} per member", inline=False)
 
             embed.add_field(
                 name="How It Works",
-                value="Level → higher **mean** reward  •  XP → tighter **variance** (more consistent drops)",
+                value="Boost to accumulate XP → 5000 XP triggers level-up → all members pay wood to proceed",
                 inline=False,
             )
 
             await inter.response.send_message(embed=embed, delete_after=30)
-            cmdLog.process(status_code=100, name="Executed", details=f"VC boosted: +{xp_gain} XP (Level {new_level}).")
+            cmdLog.process(status_code=100, name="Executed", details=f"Session boosted: +{xp_gain} XP (Level {new_level}).")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

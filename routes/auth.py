@@ -5,10 +5,11 @@ import jwt
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from starlette.responses import RedirectResponse
 from . import limiter
 import config
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,6 @@ async def callback(request: Request, code: str, state: str):
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    from urllib.parse import quote
     response = RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/#token={quote(encoded_jwt, safe='')}", status_code=302)
     response.set_cookie(
         key="session_token",
@@ -140,7 +140,6 @@ async def verify(token: str = None, request: Request = None):
 
 @router.post("/logout")
 async def logout():
-    from starlette.responses import JSONResponse
     response = JSONResponse(content={"ok": 1})
     response.delete_cookie(key="session_token", path="/")
     return response
@@ -200,7 +199,6 @@ async def exchange_web_token(request: Request, body: WebTokenRequest):
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    from fastapi.responses import JSONResponse
     response = JSONResponse(content={"ok": 1, "token": encoded_jwt})
     response.set_cookie(
         key="session_token",
