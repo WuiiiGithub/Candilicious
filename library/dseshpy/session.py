@@ -619,9 +619,16 @@ class Session:
             u_col = collections.get('user')
             if u_col is not None:
                 web_token = secrets.token_urlsafe(32)
+                avatar_url = member.display_avatar.url if member.display_avatar else ""
                 u_col.update_one(
                     {"_id": member_id},
-                    {"$set": {"webToken": web_token, "current_session": self.session_id}},
+                    {"$set": {
+                        "webToken": web_token,
+                        "current_session": self.session_id,
+                        "name": member.name,
+                        "display_name": member.display_name,
+                        "pfp": avatar_url,
+                    }},
                     upsert=True
                 )
                 domain = os.getenv("FRONTEND_DOMAIN")

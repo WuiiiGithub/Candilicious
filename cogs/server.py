@@ -83,7 +83,24 @@ class Server(commands.Cog):
                 cmdLog.send()
                 return
 
-            session_doc = sessionsCollection.find_one({"channel_id": str(inter.channel.id)})
+            channel_id_str = str(inter.channel.id)
+            session_doc = sessionsCollection.find_one({"channel_id": channel_id_str})
+
+            if not session_doc:
+                sm = getattr(self.bot, 'session_manager', None)
+                if sm:
+                    sid = sm.channel_sessions.get(channel_id_str)
+                    if sid and sid in sm.active_sessions:
+                        sess = sm.active_sessions[sid]
+                        session_doc = sm._get_collection().find_one({"session_id": sid})
+
+            if not session_doc:
+                session_doc = sessionsCollection.find_one({
+                    "guild_id": str(inter.guild.id) if inter.guild else "",
+                    "members": {"$exists": True, "$ne": {}},
+                    "channel_id": {"$regex": f"^{inter.channel.id}$|^w"}
+                })
+
             if not session_doc:
                 await inter.response.send_message(
                     embed=discord.Embed(

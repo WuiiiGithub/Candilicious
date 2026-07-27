@@ -83,6 +83,9 @@ LEVEL_UP_XP_PER_MINUTE = 15
 LEVEL_UP_XP_THRESHOLD = 5000
 LEVEL_UP_WOOD_BASE = 100
 
+# Streak DMs (daily study calls, streak break notifications)
+ENABLE_STREAK_DMS = False
+
 bot = None
 
 

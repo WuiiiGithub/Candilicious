@@ -138,6 +138,14 @@ async def verify(token: str = None, request: Request = None):
         return {"valid": False}
 
 
+@router.post("/logout")
+async def logout():
+    from starlette.responses import JSONResponse
+    response = JSONResponse(content={"ok": 1})
+    response.delete_cookie(key="session_token", path="/")
+    return response
+
+
 class WebTokenRequest(BaseModel):
     token: str
 

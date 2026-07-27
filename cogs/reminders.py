@@ -404,6 +404,8 @@ class Reminders(commands.Cog):
         )
 
     async def _send_streak_break_dm(self, bot, user_id: str, old_streak: int):
+        if not config.ENABLE_STREAK_DMS:
+            return
         try:
             if is_muted(user_id):
                 return
@@ -698,6 +700,8 @@ class Reminders(commands.Cog):
 
     @tasks.loop(minutes=15)
     async def daily_study_call(self):
+        if not config.ENABLE_STREAK_DMS:
+            return
         taskLog = TaskLogger(filename=filename, task_name="daily_study_call")
         try:
             now = datetime.now(timezone.utc)
@@ -824,6 +828,8 @@ class Reminders(commands.Cog):
 
     @tasks.loop(hours=1)
     async def streak_checker(self):
+        if not config.ENABLE_STREAK_DMS:
+            return
         taskLog = TaskLogger(filename=filename, task_name="streak_checker")
         try:
             broken_users = self._check_broken_streaks()

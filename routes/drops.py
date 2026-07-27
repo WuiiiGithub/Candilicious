@@ -155,6 +155,11 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
 
     if not is_web_session:
         channel = bot.get_channel(int(actual_channel_id))
+        if not channel:
+            try:
+                channel = await bot.fetch_channel(int(actual_channel_id))
+            except Exception:
+                channel = None
         if channel:
             try:
                 who = f"<@{user_id}>" if not is_muted(user_id) else user_id

@@ -2,12 +2,15 @@ import asyncio
 import json
 import logging
 import os
+import random
+import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from . import verify_token
 from library import is_muted
+import config as app_config
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +206,10 @@ async def _remove_user_from_session(request: Request, user_id: str, session_doc:
         if new_ch != old_ch:
             sm.channel_sessions.pop(old_ch, None)
             sm.channel_sessions[new_ch] = session_id
+        await request.app.db["sessions"].update_one(
+            {"session_id": session_id},
+            {"$set": {"members_count": sess.members_count}},
+        )
 
 
 @router.get("/{session_id}")
@@ -326,6 +333,10 @@ async def join_session(
         }
         sess._update_members_count()
         sm.user_sessions[user_id] = session_id
+        await request.app.db["sessions"].update_one(
+            {"session_id": session_id},
+            {"$set": {"members_count": sess.members_count}},
+        )
 
     updated_doc = await request.app.db["sessions"].find_one({"session_id": session_id})
     members = await _enrich_members(request, updated_doc)
@@ -715,4 +726,92 @@ async def pay_level_up(
         "paid_count": paid_count,
         "total_members": total_members,
         "all_paid": all_paid,
+    }
+
+
+
+
+@router.post("/{session_id}/boost")
+async def boost_session(
+    request: Request,
+    session_id: str,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    now = time.time()
+
+    bot = getattr(request.app.state, "bot", None)
+    sm = getattr(bot, "session_manager", None) if bot else None
+    sess = sm.active_sessions.get(session_id) if sm else None
+
+    if not sess:
+        doc = await request.app.db["sessions"].find_one({"session_id": session_id})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Session not found")
+        from library.dseshpy.session import Session
+        event_bus = getattr(request.app.state, "event_bus", None)
+        sess = Session.from_dict(doc)
+        if event_bus:
+            sess.event_bus = event_bus
+        if sm:
+            sm.active_sessions[session_id] = sess
+            sm.channel_sessions[sess.channel_id] = session_id
+            for uid in sess.members:
+                sm.user_sessions[uid] = session_id
+
+    if user_id not in sess.members:
+        raise HTTPException(status_code=403, detail="You must be a session member to boost")
+
+    member_data = sess.members[user_id]
+    if not isinstance(member_data, dict):
+        member_data = {}
+        sess.members[user_id] = member_data
+
+    last_boost_at = member_data.get("last_boost_at")
+
+    if last_boost_at:
+        last_ts = datetime.fromisoformat(last_boost_at).timestamp() if isinstance(last_boost_at, str) else float(last_boost_at)
+    else:
+        last_ts = now
+
+    elapsed_sec = now - last_ts
+    elapsed_min = elapsed_sec / 60.0
+    xp_gain = max(1, int(elapsed_min * app_config.LEVEL_UP_XP_PER_MINUTE))
+
+    current_xp = sess.vc_xp
+    current_level = sess.vc_level
+
+    new_xp = current_xp + xp_gain
+
+    level_up = False
+    new_level = current_level
+    xp_needed = current_level * 50
+    while new_xp >= xp_needed:
+        new_xp -= xp_needed
+        new_level += 1
+        level_up = True
+        xp_needed = new_level * 50
+
+    sess.vc_xp = new_xp
+    sess.vc_level = new_level
+    member_data["last_boost_at"] = datetime.now(timezone.utc).isoformat()
+    sess._sync_session_now()
+
+    await sess._emit_event("vc_boost", {
+        "user_id": user_id,
+        "xp_gained": xp_gain,
+        "new_xp": new_xp,
+        "vc_level": new_level,
+        "level_up": level_up,
+    })
+
+    return {
+        "ok": 1,
+        "xp_gained": xp_gain,
+        "new_xp": new_xp,
+        "vc_level": new_level,
+        "level_up": level_up,
     }
