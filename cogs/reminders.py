@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from discord.ext import commands, tasks
 from discord import app_commands, ui
 from library.logging import *
-from library import is_muted, db
+from library import is_muted, is_on_holiday, db
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -346,6 +346,9 @@ class Reminders(commands.Cog):
         )
 
     def _record_study(self, user_id: str, bot=None):
+        if is_on_holiday(user_id):
+            return
+
         now = datetime.now(timezone.utc)
         today = now.date().isoformat()
 
@@ -407,7 +410,7 @@ class Reminders(commands.Cog):
         if not config.ENABLE_STREAK_DMS:
             return
         try:
-            if is_muted(user_id):
+            if is_muted(user_id) or is_on_holiday(user_id):
                 return
             user = await bot.fetch_user(int(user_id))
             if user is None:
@@ -427,6 +430,9 @@ class Reminders(commands.Cog):
             pass
 
     def _is_streak_broken(self, user_id: str) -> bool:
+        if is_on_holiday(user_id):
+            return False
+
         now = datetime.now(timezone.utc)
         yesterday = (now - timedelta(days=1)).date().isoformat()
 
@@ -465,10 +471,12 @@ class Reminders(commands.Cog):
                     {"last_study_date": None},
                 ]
             },
-            {"_id": 1, "streak": 1, "name": 1}
+            {"_id": 1, "streak": 1, "name": 1, "holiday_until": 1}
         )
 
         for doc in cursor:
+            if is_on_holiday(doc["_id"]):
+                continue
             broken.append(doc)
 
         return broken
@@ -657,13 +665,13 @@ class Reminders(commands.Cog):
 
                         all_members = [m for m in channel.guild.members if not m.bot]
                         tagged = data.get("tagged", [])
-                        untagged = [m for m in all_members if str(m.id) not in tagged and not is_muted(str(m.id))]
+                        untagged = [m for m in all_members if str(m.id) not in tagged and not is_muted(str(m.id)) and not is_on_holiday(str(m.id))]
 
                         if not untagged:
                             tagged = []
                             untagged = all_members[:]
 
-                        picked = random.sample(untagged, min(len(untagged), 5))
+                        picked = random.sample(untagged, min(len(untagged), 1))
                         new_tagged = tagged + [str(m.id) for m in picked]
 
                         mentions = " ".join(m.mention for m in picked)
@@ -750,7 +758,7 @@ class Reminders(commands.Cog):
 
             sent_count = 0
             for uid, _ in sampled:
-                if is_muted(uid):
+                if is_muted(uid) or is_on_holiday(uid):
                     continue
                 try:
                     user = await self.bot.fetch_user(int(uid))
@@ -841,7 +849,7 @@ class Reminders(commands.Cog):
                 if old_streak <= 0:
                     continue
 
-                if is_muted(uid):
+                if is_muted(uid) or is_on_holiday(uid):
                     self._break_streak(uid)
                     continue
 
@@ -890,6 +898,30 @@ class Reminders(commands.Cog):
 
     @streak_checker.before_loop
     async def before_streak_checker(self):
+        await self.bot.wait_until_ready()
+
+    # ===================== HOLIDAY EXPIRY =====================
+
+    @tasks.loop(minutes=5)
+    async def holiday_expiry(self):
+        now = datetime.now(timezone.utc)
+        yesterday = (now - timedelta(days=1)).date().isoformat()
+        expired = userCollection.find(
+            {
+                "holiday_until": {"$ne": None, "$lte": now}
+            },
+            {"_id": 1, "streak": 1}
+        )
+        for doc in expired:
+            uid = doc["_id"]
+            streak = doc.get("streak", 0)
+            update = {"$unset": {"holiday_until": ""}}
+            if streak > 0:
+                update["$set"] = {"last_study_date": yesterday}
+            userCollection.update_one({"_id": uid}, update)
+
+    @holiday_expiry.before_loop
+    async def before_holiday_expiry(self):
         await self.bot.wait_until_ready()
 
     # ===================== CONTEXT MENUS =====================
@@ -1059,6 +1091,22 @@ class Reminders(commands.Cog):
     )
     async def streak(self, inter: discord.Interaction):
         user_id = str(inter.user.id)
+
+        if is_on_holiday(user_id):
+            user_doc = userCollection.find_one({"_id": user_id}, {"holiday_until": 1})
+            holiday_until = user_doc.get("holiday_until") if user_doc else None
+            if holiday_until:
+                if holiday_until.tzinfo is None:
+                    holiday_until = holiday_until.replace(tzinfo=timezone.utc)
+                remaining = holiday_until - datetime.now(timezone.utc)
+                hours = int(remaining.total_seconds() // 3600)
+                mins = int((remaining.total_seconds() % 3600) // 60)
+                embed = discord.Embed(
+                    title="🏖️ On Holiday",
+                    description=f"Your streak is frozen! Holiday ends in **{hours}h {mins}m**.",
+                    color=discord.Color.teal(),
+                )
+                return await inter.response.send_message(embed=embed, ephemeral=True)
 
         if self._is_streak_broken(user_id):
             user_doc = userCollection.find_one(

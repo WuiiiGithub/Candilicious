@@ -13,7 +13,7 @@ from library.templates import *
 from library.logging import *
 from library.session import *
 from library.leaderboard import *
-from library import is_muted, db
+from library import is_muted, is_on_holiday, degrade, db
 import pymongo
 
 filename = __name__.title()
@@ -1566,6 +1566,170 @@ class Study(commands.Cog):
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
             cmdLog.send()
+
+
+# ===================== HOLIDAY =====================
+
+HOLIDAY_COST_PER_DAY = 150
+
+
+class HolidayConfirmView(discord.ui.View):
+    def __init__(self, user_id: str, days: int, wood_cost: int, free_days_used: int, paid_days: int):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.days = days
+        self.wood_cost = wood_cost
+        self.free_days_used = free_days_used
+        self.paid_days = paid_days
+
+    @discord.ui.button(label="Confirm Holiday", style=discord.ButtonStyle.green, emoji="🏖️")
+    async def confirm(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.user_id:
+            return await inter.response.send_message("This isn't your holiday!", ephemeral=True)
+
+        await inter.response.defer(ephemeral=True)
+
+        user_data = userCollection.find_one({"_id": self.user_id})
+        if not user_data:
+            return await inter.followup.send("Account not found.", ephemeral=True)
+
+        free_days = user_data.get("holiday", 0)
+        now = datetime.now(timezone.utc)
+        holiday_end = now + timedelta(days=self.days)
+
+        update_ops = {"$set": {"holiday_until": holiday_end}}
+
+        if self.paid_days > 0:
+            resources = user_data.get("economy", {}).get("resources", {})
+            wood_data = resources.get("wood", {})
+            raw_amount = wood_data.get("amount", 0)
+            degraded_at = wood_data.get("degraded_at")
+            current_wood, wood_dt = degrade.apply(raw_amount, degraded_at, 0.05)
+
+            if current_wood < self.paid_days * HOLIDAY_COST_PER_DAY:
+                return await inter.followup.send("Not enough Wood. Try again.", ephemeral=True)
+
+            new_wood = current_wood - (self.paid_days * HOLIDAY_COST_PER_DAY)
+            update_ops["$set"]["economy.resources.wood.amount"] = new_wood
+            update_ops["$set"]["economy.resources.wood.degraded_at"] = wood_dt
+
+        if self.free_days_used > 0:
+            remaining_free = free_days - self.free_days_used
+            update_ops["$set"]["holiday"] = remaining_free
+
+        userCollection.update_one({"_id": self.user_id}, update_ops)
+
+        desc = f"Holiday activated for **{self.days} day{'s' if self.days > 1 else ''}**!\n"
+        desc += f"Expires: <t:{int(holiday_end.timestamp())}:R>\n\n"
+        if self.free_days_used > 0:
+            desc += f"Free days used: **{self.free_days_used}**\n"
+        if self.paid_days > 0:
+            desc += f"Wood spent: **{self.paid_days * HOLIDAY_COST_PER_DAY}** 🪵\n"
+        desc += "\nStreak frozen. Mentions and DMs paused."
+
+        embed = discord.Embed(
+            title="🏖️ Holiday Activated!",
+            description=desc,
+            color=discord.Color.teal(),
+        )
+        await inter.followup.send(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red, emoji="✖️")
+    async def cancel(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.user_id:
+            return
+        await inter.response.edit_message(content="Holiday cancelled.", embed=None, view=None)
+
+
+class Study(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        ...
+
+    @app_commands.command(
+        name="holiday",
+        description="Take a holiday to freeze your streak, mentions, and DMs."
+    )
+    @app_commands.describe(days="Number of days for your holiday (1-7).")
+    @app_commands.choices(days=[
+        app_commands.Choice(name=f"{d} Day{'s' if d > 1 else ''}", value=d) for d in range(1, 8)
+    ])
+    async def holiday(self, inter: discord.Interaction, days: int):
+        user_id = str(inter.user.id)
+
+        user_data = userCollection.find_one({"_id": user_id})
+        if not user_data:
+            return await inter.response.send_message(
+                embed=discord.Embed(description="No account found. Visit the website first.", color=discord.Color.red()),
+                ephemeral=True
+            )
+
+        holiday_until = user_data.get("holiday_until")
+        if holiday_until:
+            if holiday_until.tzinfo is None:
+                holiday_until = holiday_until.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) < holiday_until:
+                remaining = holiday_until - datetime.now(timezone.utc)
+                hours = int(remaining.total_seconds() // 3600)
+                return await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=f"🏖️ You're already on holiday! **{hours}h {int((remaining.total_seconds() % 3600) // 60)}m** remaining.",
+                        color=discord.Color.orange()
+                    ),
+                    ephemeral=True
+                )
+
+        free_days = user_data.get("holiday", 0)
+        free_days_used = min(free_days, days)
+        paid_days = days - free_days_used
+        total_wood_cost = paid_days * HOLIDAY_COST_PER_DAY
+
+        resources = user_data.get("economy", {}).get("resources", {})
+        wood_data = resources.get("wood", {})
+        current_wood, _ = degrade.apply(
+            wood_data.get("amount", 0),
+            wood_data.get("degraded_at"),
+            0.05
+        )
+
+        if paid_days > 0 and current_wood < total_wood_cost:
+            return await inter.response.send_message(
+                embed=discord.Embed(
+                    description=f"You need **{total_wood_cost} Wood** for {paid_days} day{'s' if paid_days > 1 else ''}. You have **{int(current_wood)} Wood**.\n\n"
+                                f"You have **{free_days}** free holiday day{'s' if free_days != 1 else ''} available.",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
+            )
+
+        embed = discord.Embed(
+            title="🏖️ Holiday",
+            description=f"Take a **{days} day{'s' if days > 1 else ''}** holiday?\n\n"
+                        f"Your streak will be frozen, and mentions/DMs will be paused.\n\n",
+            color=discord.Color.teal()
+        )
+
+        if free_days_used > 0:
+            embed.add_field(
+                name="Free Days",
+                value=f"**{free_days_used}** day{'s' if free_days_used > 1 else ''} (from your holiday balance)",
+                inline=True
+            )
+        if paid_days > 0:
+            embed.add_field(
+                name="Wood Cost",
+                value=f"**{total_wood_cost}** 🪵 ({paid_days} day{'s' if paid_days > 1 else ''} × {HOLIDAY_COST_PER_DAY})",
+                inline=True
+            )
+
+        view = HolidayConfirmView(
+            user_id=user_id,
+            days=days,
+            wood_cost=total_wood_cost,
+            free_days_used=free_days_used,
+            paid_days=paid_days,
+        )
+        await inter.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 async def setup(bot):

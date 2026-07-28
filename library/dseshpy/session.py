@@ -549,9 +549,8 @@ class Session:
                 "is_web_user": False,
             })
 
-            import secrets, os, qrcode, io
-            dm_status = False
             u_col = collections.get('user')
+            link = None
             if u_col is not None:
                 web_token = secrets.token_urlsafe(32)
                 avatar_url = member.display_avatar.url if member.display_avatar else ""
@@ -571,24 +570,6 @@ class Session:
                     domain = domain + "/"
                 link = f"{domain}projects?webtoken={web_token}&session={self.session_id}"
 
-                if not is_muted(member_id):
-                    try:
-                        qr = qrcode.QRCode(box_size=10, border=8)
-                        qr.add_data(link)
-                        qr.make(fit=True)
-                        img = qr.make_image(fill="black", back_color="white")
-
-                        with io.BytesIO() as image_binary:
-                            img.save(image_binary, format="WEBP")
-                            image_binary.seek(0)
-                            await member.send(
-                                content=f"# **[__Productivity Access!__](<{link}>)**\nThis link is only valid while you are in the study voice channel.",
-                                file=discord.File(image_binary, "qrcode.png")
-                            )
-                        dm_status = True
-                    except Exception:
-                        dm_status = False
-                
             who = member.display_name if is_muted(member_id) else member.mention
             embed = discord.Embed(
                 title=f"\U0001f389 {member.display_name} joined the session! \U0001f389",
@@ -596,11 +577,7 @@ class Session:
                 color=0x3498DB,
             )
             embed.set_thumbnail(url=member.display_avatar.url)
-            
-            if dm_status:
-                embed.add_field(name="Project Access", value="Secret access link has been sent to your DMs! :ninja:", inline=False)
-            else:
-                embed.add_field(name="Project Access", value="\u274c I couldn't DM you the access link. Please open your DMs and rejoin!", inline=False)
+            embed.add_field(name="Project Access", value="Click the button below to visit the session online!", inline=False)
 
             if not self._is_allowed(after_type):
                 embed.add_field(
@@ -609,7 +586,16 @@ class Session:
                     inline=False
                 )
             try:
-                await channel.send(content=who, embed=embed, delete_after=20)
+                view = None
+                if link:
+                    view = discord.ui.View()
+                    view.add_item(discord.ui.Button(
+                        label="Visit Site",
+                        style=discord.ButtonStyle.link,
+                        url=link,
+                        emoji="\U0001f310",
+                    ))
+                await channel.send(content=who, embed=embed, view=view, delete_after=20)
             except (discord.NotFound, discord.HTTPException):
                 pass
             

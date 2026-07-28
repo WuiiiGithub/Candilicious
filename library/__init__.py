@@ -15,6 +15,18 @@ recoveryCollection = db["recovery.log"]
 recoverySnapshotsCollection = db["recovery.snapshots"]
 
 
+def is_on_holiday(user_id: str) -> bool:
+    doc = userCollection.find_one({"_id": user_id}, {"holiday_until": 1})
+    if not doc:
+        return False
+    until = doc.get("holiday_until")
+    if until is None:
+        return False
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=UTC)
+    return datetime.now(UTC) < until
+
+
 def is_muted(user_id: str) -> bool:
     doc = userCollection.find_one({"_id": user_id}, {"muted": 1})
     if not doc:
