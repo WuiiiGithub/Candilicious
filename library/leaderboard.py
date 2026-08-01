@@ -200,7 +200,7 @@ async def getNovaLeaderboard(data, border_style: str = "gold"):
                 av = process_img(p_res[i], (cfg["r"]*2, cfg["r"]*2), circular=True)
                 img.paste(av, (cfg["cx"] - cfg["r"], cfg["cy"] - cfg["r"]), av)
                 draw.text((cfg["cx"], cfg["name_y"]), item["name"], fill=cfg["color"], anchor="mm", font=f_p_name)
-                draw.text((cfg["cx"], cfg["time_y"]), item["time"], fill=cfg["time_color"], anchor="mm", font=f_p_time)
+                draw.text((cfg["cx"], cfg["time_y"]), item["value"], fill=cfg["time_color"], anchor="mm", font=f_p_time)
 
         
         rc = CONFIG["LIST_ROWS"]
@@ -212,7 +212,7 @@ async def getNovaLeaderboard(data, border_style: str = "gold"):
             mid_y = curr_y + (rc["height"] // 2)
             draw.text((150, mid_y), str(item["rank"]), fill="white", anchor="mm", font=f_rank)
             draw.text((rc["name_x"], mid_y), item["name"], fill="white", anchor="lm", font=f_row)
-            draw.text((rc["time_end_x"], mid_y), item["time"], fill="white", anchor="rm", font=f_row)
+            draw.text((rc["time_end_x"], mid_y), item["value"], fill="white", anchor="rm", font=f_row)
 
         
         final_img = add_premium_border(img, style=border_style, padding=28)

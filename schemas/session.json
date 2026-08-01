@@ -1,0 +1,44 @@
+{
+    "session_id": "<str:session_id>",
+    "owner_id": "<str:owner_user_id>",
+    "guild_id": "<str:guild_id|'web'>",
+    "channel_id": "<str:voice_channel_id|'w<user_id>' for web sessions>",
+    "members": {
+        "<str:user_id>": {
+            "net_time": {
+                "cam": "<float:cam_seconds>",
+                "ss": "<float:screen_share_seconds>",
+                "noact": "<float:no_activity_seconds>",
+                "total": "<float:total_seconds>"
+            },
+            "last_activity": "<str:cam|ss|cam+ss|noact>",
+            "_seg": "<str:isoformat:segment_start_time>",
+            "is_web_user": "<bool:true_for_web_session_members>",
+            "log_id": "<ObjectId:session_log_id>"
+        }
+    },
+    "members_limit": "<int|null>",
+    "members_count": {
+        "total": "<int:total_members>",
+        "noact": "<int:no_activity_members>",
+        "ss": "<int:screen_sharing_members>",
+        "cam": "<int:camera_on_members>"
+    },
+    "vc_level": "<int:voice_channel_level>",
+    "vc_xp": "<int:voice_channel_xp>",
+    "rent_type": "<str:'free'|rental_type>",
+    "rent_amount": "<int:rent_amount>",
+    "routine_callback_mean_time": "<int:drop_mean_interval_minutes>",
+    "routines_fired_count": "<int:number_of_drops_fired>",
+    "session_type": "<str:'cam'|'ss'|'cam+ss'|'cam&ss'|'cam+noact'|'ss+noact'|'*'>",
+    "started_at": "<str:isoformat:session_start>",
+    "last_level_up_at": "<str:isoformat|null:last_level_up>",
+    "pending_level_up": {
+        "new_level": "<int:next_level>",
+        "wood_cost": "<int:wood_cost_per_member>",
+        "paid_by": ["<array:user_ids_who_paid>"],
+        "total_members": "<int:total_members>"
+    },
+    "level_up_message_id": "<str:discord_message_id|null>",
+    "last_boost_at": "<str:isoformat|null:last_xp_boost>"
+}

@@ -11,44 +11,28 @@ def leaderboard_template(toppers: list, view: str='display_name') -> str:
             v = v[:15] + "..."
         return v
 
+    def _score(u):
+        wood = u.get("wood") or u.get("value") or 0
+        return f"{int(wood):,}"
+
     header = """**`===================================`**
-**`| X  |        Name        | Score |`**
+**`| X  |        Name        | Wood  |`**
 **`-----------------------------------`**
 """
     name = _name(toppers[0])
-    seconds = toppers[0]['time']
-    mins = seconds//60
-    hours = seconds//3600
-    mins = mins%60
-    hours, mins = int(hours), int(mins)
-    first = f"**|**   :first_place: **`| {name.ljust(18)} |  "+ f"{hours}:{mins}".rjust(6)+"|`**\n"
+    first = f"**|**   :first_place: **`| {name.ljust(18)} |  "+ f"{_score(toppers[0]).rjust(6)}"+ "|`**\n"
 
     name = _name(toppers[1])
-    seconds = toppers[1]['time']
-    mins = seconds//60
-    hours = seconds//3600
-    mins = mins%60
-    hours, mins = int(hours), int(mins)
-    second = f"**|**   :second_place: **`| {name.ljust(18)} |  "+ f"{hours}:{mins}".rjust(6)+"|`**\n"
+    second = f"**|**   :second_place: **`| {name.ljust(18)} |  "+ f"{_score(toppers[1]).rjust(6)}"+ "|`**\n"
 
     name = _name(toppers[2])
-    seconds = toppers[2]['time']
-    mins = seconds//60
-    hours = seconds//3600
-    mins = mins%60
-    hours, mins = int(hours), int(mins)
-    third = f"**|**   :third_place: **`| {name.ljust(18)} |  "+ f"{hours}:{mins}".rjust(6)+"|`**\n"
+    third = f"**|**   :third_place: **`| {name.ljust(18)} |  "+ f"{_score(toppers[2]).rjust(6)}"+ "|`**\n"
 
     seperator = "**`-----------------------------------`**\n"
     top4plus = ''
     for idx in range(3,length):
         name = _name(toppers[idx])
-        seconds = toppers[idx]['time']
-        mins = seconds//60
-        hours = seconds//3600
-        mins = mins%60
-        hours, mins = int(hours), int(mins)
-        top4plus += f"**`| {str(idx+1).ljust(2)}| {name.ljust(18)} |  "+ f"{hours}:{mins}".rjust(6)+"|`**\n"
+        top4plus += f"**`| {str(idx+1).ljust(2)}| {name.ljust(18)} |  "+ f"{_score(toppers[idx]).rjust(6)}"+ "|`**\n"
 
     footer = "**`===================================`**\n"
 

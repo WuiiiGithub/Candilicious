@@ -1,9 +1,63 @@
 {
-    "_id": "reminders",
-    "gifs": [
-        "<str:reminder_gif_url>"
-    ],
-    "texts": [
-        "<str:reminder_text>"
-    ]
+    "_id": "<str:doc_id>",
+    "_documents": {
+        "reminders": {
+            "_id": "reminders",
+            "gifs": ["<array:reminder_gif_urls>"],
+            "texts": ["<array:reminder_texts>"]
+        },
+        "variables": {
+            "_id": "variables",
+            "drops": {
+                "mean_time": "<float:average_drop_interval_minutes>",
+                "variance": "<float:drop_interval_variance>",
+                "collection_time": "<float:drop_collection_window_seconds>"
+            },
+            "resources": {
+                "wood": {
+                    "base_mean": "<float:base_wood_mean>",
+                    "base_decay": "<float:base_wood_decay>",
+                    "decay_rate": "<float:wood_decay_rate>",
+                    "std_dev": "<float:wood_standard_deviation>",
+                    "min": "<float:minimum_wood>"
+                },
+                "iron": {
+                    "base_mean": "<float:base_iron_mean>",
+                    "base_decay": "<float:base_iron_decay>",
+                    "decay_rate": "<float:iron_decay_rate>",
+                    "std_dev": "<float:iron_standard_deviation>",
+                    "min": "<float:minimum_iron>"
+                },
+                "variance_factor_rate": "<float:variance_factor_rate>",
+                "variance_factor_min": "<float:variance_factor_min>"
+            },
+            "activity_tiers": [
+                ["<str:name>", "<float:multiplier>", "<float:bonus>"]
+            ],
+            "premium": {
+                "cost": "<float:premium_cost>",
+                "ttl_days": "<float:premium_duration_days>",
+                "unit": "<str:'wood'|'iron'>"
+            },
+            "level_up": {
+                "xp_per_minute": "<int:xp_per_minute>",
+                "xp_threshold": "<int:xp_required_for_level_up>",
+                "wood_base": "<int:base_wood_cost_per_level>"
+            }
+        },
+        "degradation_rates": {
+            "_id": "degradation_rates",
+            "wood": "<float:wood_degradation_rate_per_day>",
+            "iron": "<float:iron_degradation_rate_per_day>"
+        },
+        "bot": {
+            "_id": "bot",
+            "owner_id": "<str:bot_owner_id>",
+            "status": "<str:online|idle|dnd|offline|invisible>"
+        },
+        "study_calls": {
+            "_id": "study_calls",
+            "statements": ["<array:study_call_statements>"]
+        }
+    }
 }

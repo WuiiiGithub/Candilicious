@@ -2,29 +2,38 @@
     "_id": "<str:user_id>",
     "name": "<str:username>",
     "display_name": "<str:display_name>",
-    "pfp": "<str:avatar_url>",
-    "webToken": "<str:web_token>",
-    "projects": [
-        {
-            "name": "<str:project_name>",
-            "boards": [
-                {
-                    "id": "<str:board_id>",
-                    "name": "<str:board_name>",
-                    "progress": {
-                        "todo": "<int:how many started>",
-                        "cooking": "<int:how many in progress>",
-                        "done": "<int:how many completed in studying>"
-                    }
-                }
-            ]
-        }
-    ],
+    "pfp": "<str:discord_avatar_hash_or_url>",
+    "profile_pfp": "<str:custom_avatar_url|null:uploaded via /api/users/avatar>",
+    "webToken": "<str:web_token|null>",
+    "current_session": "<str:session_id|null>",
     "servers": {
         "<str:server_id>": {
             "time": "<float:total_study_time_seconds>"
         }
     },
+    "economy": {
+        "resources": {
+            "wood": {
+                "amount": "<float:current_wood_before_degradation>",
+                "degraded_at": "<datetime:last_degradation_check>"
+            },
+            "iron": {
+                "amount": "<float:current_iron_before_degradation>",
+                "degraded_at": "<datetime:last_degradation_check>"
+            }
+        }
+    },
+    "premium": {
+        "type": "<str:'pro'>",
+        "purchased_at": "<datetime:when_premium_was_bought>",
+        "expire_at": "<datetime:premium_expiration|null>"
+    },
+    "streak": "<int:current_study_streak>",
+    "last_study_date": "<datetime|null:last_day_the_user_studied>",
+    "holiday": "<int:free_holiday_days_remaining>",
+    "holiday_until": "<datetime|null:streak_freeze_expiration>",
+    "following": ["<array:user_ids_this_user_follows>"],
+    "followers": ["<array:user_ids_following_this_user>"],
     "muted": {
         "until": "<datetime|null:mute_expiration, null for forever>",
         "muted_at": "<datetime:when_mute_was_set>"

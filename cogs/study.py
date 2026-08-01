@@ -787,10 +787,9 @@ class Study(commands.Cog):
                 cmdLog.process(status_code=50, name="Pending")
                 return
 
-            guild_id = str(inter.guild_id)
             user_id = str(inter.user.id)
 
-            total_count = userCollection.count_documents({f"servers.{guild_id}.time": {"$gt": 0}})
+            total_count = userCollection.count_documents({"economy.resources.wood.amount": {"$gt": 0}})
 
             if total_count < 3:
                 await inter.response.send_message(
@@ -801,15 +800,15 @@ class Study(commands.Cog):
                 return
 
             pipeline = [
-                {"$match": {f"servers.{guild_id}.time": {"$gt": 0}}},
+                {"$match": {"economy.resources.wood.amount": {"$gt": 0}}},
                 {"$project": {
                     "_id": 1,
                     "name": {"$ifNull": ["$name", "$_id"]},
                     "display_name": {"$ifNull": ["$display_name", "$name", "$_id"]},
                     "pfp": {"$ifNull": ["$pfp", ""]},
-                    "time": {"$ifNull": [f"$servers.{guild_id}.time", 0]},
+                    "wood": {"$ifNull": ["$economy.resources.wood.amount", 0]},
                 }},
-                {"$sort": {"time": -1}},
+                {"$sort": {"wood": -1}},
             ]
             all_users = list(userCollection.aggregate(pipeline))
 
@@ -837,18 +836,15 @@ class Study(commands.Cog):
             if is_premium:
                 await inter.response.defer()
 
-                def fmt_time(seconds):
-                    m = seconds // 60
-                    h = seconds // 3600
-                    m = m % 60
-                    return f"{int(h)}h {int(m)}m"
+                def fmt_wood(amount):
+                    return f"{int(amount):,}"
 
                 podium_data = []
                 for u in top3:
                     podium_data.append({
                         "rank": u["_rank"],
                         "name": u.get(view, "Unknown"),
-                        "time": fmt_time(u["time"]),
+                        "value": fmt_wood(u["wood"]),
                         "avatar_url": u.get("pfp", ""),
                     })
 
@@ -857,7 +853,7 @@ class Study(commands.Cog):
                     rows_data.append({
                         "rank": u["_rank"],
                         "name": u.get(view, "Unknown"),
-                        "time": fmt_time(u["time"]),
+                        "value": fmt_wood(u["wood"]),
                         "avatar_url": u.get("pfp", ""),
                     })
 

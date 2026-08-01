@@ -1,12 +1,11 @@
 {
     "_id": "<str:server_id>",
-    "channel": "<str:study_channel_id>",
-    "drop": "<int:gold_drop_quantity>",
-    "interval": "<int:drop_interval_minutes>",
+    "category": "<str:category_id_where_study_vcs_are_created>",
+    "create_vc": "<str:voice_channel_id_users_join_to_start_a_study_session>",
     "reminders": {
-        "text": "<str:footer_text>",
-        "time": "<int:reminder_interval_minutes>",
         "channel": "<str:reminder_channel_id>",
+        "time": "<int:reminder_interval_minutes>",
+        "text": "<str:footer_text>",
         "last_sent": "<datetime:last_reminder_sent_time>",
         "tagged": ["<array:user_ids_already_pinged>"]
     }

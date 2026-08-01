@@ -1,12 +1,18 @@
 {
-    "_id": "<str:board_id>",
+    "_id": "<ObjectId:mongodb_id>",
     "user_id": "<str:user_id>",
-    "tasks": [
-        {
-            "id": "<str:task_id>",
+    "project_id": "<str:project_id>",
+    "board_id": "<str:board_id>",
+    "title": "<str:board_title>",
+    "description": "<str:board_description>",
+    "thumbnail_link": "<str:thumbnail_url>",
+    "tasks": {
+        "<str:task_id>": {
             "text": "<str:task_content>",
+            "priority": "<int:1|2|3>",
             "status": "<str:todo|cooking|done>",
-            "priority": "<str:red|yellow|green>"
+            "created_at": "<str:created_at_timestamp>"
         }
-    ]
+    },
+    "created_at": "<str:created_at_timestamp>"
 }
