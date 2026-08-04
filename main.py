@@ -18,6 +18,7 @@ from routes import (
     bulk,
     drops,
     logs,
+    notes,
     projects,
     reports,
     servers,
@@ -340,6 +341,11 @@ app.include_router(
     router=uploads.router,
     prefix="/api/uploads",
     tags=["uploads"]
+)
+app.include_router(
+    router=notes.router,
+    prefix="/api/notes",
+    tags=["notes"]
 )
 
 async def load():
