@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
 import re
 from datetime import datetime, timezone
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 router = APIRouter()
 
@@ -65,6 +65,7 @@ async def collect_descendant_ids(db, user_id: str, note_id: str) -> list[str]:
 
 
 @router.get("")
+@limiter.limit("60/minute", key_func=rate_limit_ip)
 async def get_notes(request: Request, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
     if not user_id:
@@ -88,6 +89,8 @@ async def get_notes(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.post("/folders")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("40/hour", key_func=rate_limit_user)
 async def create_folder(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -127,6 +130,8 @@ async def create_folder(request: Request, payload: dict = Depends(verify_token))
 
 
 @router.patch("/folders")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def rename_folder(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -154,6 +159,8 @@ async def rename_folder(request: Request, payload: dict = Depends(verify_token))
 
 
 @router.delete("/folders")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("40/hour", key_func=rate_limit_user)
 async def delete_folder(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -175,6 +182,8 @@ async def delete_folder(request: Request, payload: dict = Depends(verify_token))
 
 
 @router.post("/files")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def create_file(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -215,6 +224,7 @@ async def create_file(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.get("/files")
+@limiter.limit("60/minute", key_func=rate_limit_ip)
 async def get_file(request: Request, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
     note_id = request.query_params.get("note_id")
@@ -237,6 +247,8 @@ async def get_file(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.patch("/files")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def update_file(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -272,6 +284,8 @@ async def update_file(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.delete("/files")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("40/hour", key_func=rate_limit_user)
 async def delete_file(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -331,6 +345,8 @@ def unique_copy_name(name: str, taken: set[str]) -> str:
 
 
 @router.post("/copy")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def copy_note(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -383,6 +399,8 @@ async def copy_note(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.post("/move")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def move_note(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()

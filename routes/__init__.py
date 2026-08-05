@@ -1,3 +1,4 @@
+import os
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -7,7 +8,49 @@ from slowapi.util import get_remote_address
 import config
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
+
+
+def _client_ip(request: Request) -> str:
+    """Resolve the real client IP.
+
+    Only trusts X-Forwarded-For when the app is running behind a known proxy
+    (ngrok / reverse proxy). When exposed directly, X-Forwarded-For is spoofable
+    and is ignored so attackers cannot rotate it to bypass limits."""
+    if os.getenv("TRUST_PROXY_HEADERS", "").lower() in ("1", "true", "yes"):
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            return fwd.split(",")[0].strip()
+    return get_remote_address(request)
+
+
+def _rate_limit_key(request: Request) -> str:
+    """Per-request limiter key: real client IP, plus the authenticated user id
+    when a valid JWT is present. Binds limits to both IP and account."""
+    try:
+        token = request.cookies.get("session_token")
+        if not token:
+            auth = request.headers.get("authorization")
+            if auth and auth.lower().startswith("bearer "):
+                token = auth[7:].strip()
+        if token:
+            payload = _decode_token(token)
+            sub = payload.get("sub")
+            if sub:
+                return f"{_client_ip(request)}:{sub}"
+    except Exception:
+        pass
+    return _client_ip(request)
+
+
+def rate_limit_ip(request: Request) -> str:
+    return _client_ip(request)
+
+
+def rate_limit_user(request: Request) -> str:
+    return _rate_limit_key(request)
+
+
+limiter = Limiter(key_func=_client_ip)
 security = HTTPBearer(auto_error=False)
 
 def _decode_token(token: str) -> dict:
@@ -53,6 +96,8 @@ class ExceptionRequest(BaseModel):
     ping: float
 
 @router.post("/exception")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("20/hour", key_func=rate_limit_user)
 async def exception(
     data: ExceptionRequest,
     request: Request,
@@ -60,7 +105,7 @@ async def exception(
 ):
     if data.type != "low_network":
         raise HTTPException(status_code=400, detail="Invalid exception type")
-    
+
     user_id = payload.get("sub")
     request.app.state.bot.userNetworkConnection[user_id] = {
         "download": data.download,

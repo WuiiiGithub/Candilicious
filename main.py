@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from discord.ext import commands
 import uvicorn, config
 from library.logging import SystemLogger, CogLogger
-
 logger = logging.getLogger(__name__)
 from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
@@ -186,6 +185,116 @@ app.add_middleware(
    allow_methods=["*"],  
     allow_headers=["*"],  
 )
+
+
+class SecurityHeadersMiddleware:
+    """Apply basic hardening headers to every response.
+
+    A strict CSP is only attached to /api responses (which are JSON/SSE only);
+    FastAPI's own /docs UI is left untouched so it keeps working.
+    """
+
+    HEADERS = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "SAMEORIGIN",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "geolocation=()",
+        "Cache-Control": "no-store",
+    }
+
+    API_CSP = "default-src 'none'; frame-ancestors 'none'"
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        path = scope.get("path", "")
+        api_csp = path.startswith("/api")
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = message.get("headers", [])
+                header_map = {k.lower().decode("latin-1"): v for k, v in headers}
+                for key, value in self.HEADERS.items():
+                    if key.lower() not in header_map:
+                        headers.append(
+                            (key.encode("latin-1"), value.encode("latin-1"))
+                        )
+                if api_csp and "content-security-policy" not in header_map:
+                    headers.append(
+                        (b"content-security-policy", self.API_CSP.encode("latin-1"))
+                    )
+                message = dict(message, headers=headers)
+            return await send(message)
+
+        return await self.app(scope, receive, send_wrapper)
+
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+class RequestBodySizeMiddleware:
+    """Reject request bodies larger than MAX_BYTES.
+
+    Guards against memory exhaustion from huge JSON payloads. Checked against
+    the Content-Length header when present, and also while streaming the body,
+    so chunked/unguessed bodies are capped too."""
+
+    MAX_BYTES = 5 * 1024 * 1024  # 5 MB
+
+    def __init__(self, app):
+        self.app = app
+
+    async def _too_large(self, send):
+        body = b'{"detail":"Request body too large"}'
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("latin-1")),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        for key, value in scope.get("headers") or []:
+            if key == b"content-length":
+                try:
+                    if int(value) > self.MAX_BYTES:
+                        return await self._too_large(send)
+                except ValueError:
+                    pass
+                break
+
+        seen = 0
+
+        async def wrapped_receive():
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body", b"")) or 0
+                if seen > self.MAX_BYTES:
+                    raise _BodyTooLarge()
+            return message
+
+        wrapped_scope = dict(scope)
+        wrapped_scope["receive"] = wrapped_receive
+        try:
+            await self.app(wrapped_scope, receive, send)
+        except _BodyTooLarge:
+            await self._too_large(send)
+
+
+app.add_middleware(RequestBodySizeMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 # Bot Setup
 intents = discord.Intents.all()
 bot = commands.Bot(

@@ -8,29 +8,45 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user, _client_ip
 from library import is_muted
+from library.avatars import resolve_avatar_url, default_avatar
 import config as app_config
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# ── SSE connection caps (anti DDoS / socket-exhaustion) ──
+# Each open /stream connection holds a socket (and a Mongo queue subscription),
+# so a small number of clients can exhaust file descriptors. Cap concurrent
+# connections per client IP and per session.
+from collections import defaultdict
+
+_sse_by_ip: dict[str, int] = defaultdict(int)
+_sse_by_session: dict[str, int] = defaultdict(int)
+MAX_SSE_PER_IP = 5
+MAX_SSE_PER_SESSION = 10
+
 
 class JoinRequest(BaseModel):
     initial_time: dict | None = None
 
 
-def _build_avatar_url(user_id: str, user_data: dict) -> str:
-    profile_pfp = user_data.get("profile_pfp")
-    if profile_pfp:
-        return profile_pfp
-    pfp = user_data.get("pfp")
-    if pfp:
-        if pfp.startswith(("https://", "data:")):
-            return pfp
-        return f"https://cdn.discordapp.com/avatars/{user_id}/{pfp}.png"
-    return f"https://cdn.discordapp.com/embed/avatars/{int(user_id) % 5}.png"
+def _normalize_initial_time(raw: dict | None) -> dict:
+    """Whitelist initial_time so clients cannot smuggle arbitrary fields into
+    the members document."""
+    if not isinstance(raw, dict):
+        return {"cam": 0, "ss": 0, "noact": 0, "total": 0}
+    clean = {}
+    for key in ("cam", "ss", "noact", "total"):
+        try:
+            value = int(raw.get(key, 0))
+        except (TypeError, ValueError):
+            value = 0
+        clean[key] = max(0, value)
+    clean["total"] = clean["cam"] + clean["ss"] + clean["noact"]
+    return clean
 
 
 async def _enrich_members(request: Request, session_doc: dict) -> list:
@@ -52,7 +68,7 @@ async def _enrich_members(request: Request, session_doc: dict) -> list:
         uid = doc["_id"]
         username = doc.get("name", "Unknown")
         display_name = doc.get("display_name") or username
-        avatar_url = _build_avatar_url(uid, doc)
+        avatar_url = resolve_avatar_url(uid, doc)
         user_map[uid] = {
             "username": username,
             "display_name": display_name,
@@ -67,7 +83,7 @@ async def _enrich_members(request: Request, session_doc: dict) -> list:
         uinfo = user_map.get(uid, {
             "username": "Unknown",
             "display_name": "Unknown",
-            "avatar_url": f"https://cdn.discordapp.com/embed/avatars/{int(uid) % 5}.png",
+            "avatar_url": default_avatar(uid),
         })
         members.append({
             "user_id": uid,
@@ -213,6 +229,8 @@ async def _remove_user_from_session(request: Request, user_id: str, session_doc:
 
 
 @router.get("/{session_id}")
+@limiter.limit("60/minute", key_func=rate_limit_ip)
+@limiter.limit("120/hour", key_func=rate_limit_user)
 async def get_session_state(
     request: Request,
     session_id: str,
@@ -238,6 +256,8 @@ async def get_session_state(
 
 
 @router.post("/{session_id}/join")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("40/hour", key_func=rate_limit_user)
 async def join_session(
     request: Request,
     session_id: str,
@@ -277,7 +297,7 @@ async def join_session(
 
     now = datetime.now(timezone.utc)
 
-    initial_time = body.initial_time or {"cam": 0, "ss": 0, "noact": 0, "total": 0}
+    initial_time = _normalize_initial_time(body.initial_time)
 
     await request.app.db["sessions"].update_one(
         {"session_id": session_id},
@@ -305,11 +325,11 @@ async def join_session(
     )
     username = "Unknown"
     display_name = "Unknown"
-    avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(user_id) % 5}.png"
+    avatar_url = default_avatar(user_id)
     if user_data:
         username = user_data.get("name", "Unknown")
         display_name = user_data.get("display_name") or username
-        avatar_url = _build_avatar_url(user_id, user_data)
+        avatar_url = resolve_avatar_url(user_id, user_data)
 
     event_bus = getattr(request.app.state, "event_bus", None)
     if event_bus:
@@ -344,6 +364,8 @@ async def join_session(
 
 
 @router.post("/{session_id}/leave")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def leave_session(
     request: Request,
     session_id: str,
@@ -382,6 +404,8 @@ async def leave_session(
 
 
 @router.post("/create")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("20/hour", key_func=rate_limit_user)
 async def create_web_session(
     request: Request,
     payload: dict = Depends(verify_token),
@@ -486,25 +510,39 @@ async def create_web_session(
     )
     username = "Unknown"
     display_name = "Unknown"
-    avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(user_id) % 5}.png"
+    avatar_url = default_avatar(user_id)
     if user_data:
         username = user_data.get("name", "Unknown")
         display_name = user_data.get("display_name") or username
-        avatar_url = _build_avatar_url(user_id, user_data)
+        avatar_url = resolve_avatar_url(user_id, user_data)
 
     members = await _enrich_members(request, session_doc)
     return _session_response(session_doc, members)
 
 
 @router.get("/{session_id}/stream")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def stream_session_events(
     request: Request,
     session_id: str,
     payload: dict = Depends(verify_token),
 ):
+    client_ip = _client_ip(request)
+    _sse_by_ip[client_ip] += 1
+    _sse_by_session[session_id] += 1
+
+    def _release_slot():
+        _sse_by_ip[client_ip] -= 1
+        _sse_by_session[session_id] -= 1
+
+    if _sse_by_ip[client_ip] > MAX_SSE_PER_IP or _sse_by_session[session_id] > MAX_SSE_PER_SESSION:
+        _release_slot()
+        raise HTTPException(status_code=429, detail="Too many active stream connections")
 
     event_bus = getattr(request.app.state, "event_bus", None)
     if not event_bus:
+        _release_slot()
         raise HTTPException(status_code=503, detail="Event bus not available")
 
     sm = getattr(getattr(request.app.state, "bot", None), "session_manager", None)
@@ -521,7 +559,11 @@ async def stream_session_events(
             sess_obj.drop_task = asyncio.create_task(sess_obj.drop_routine(None))
             logger.info("SSE reconnect: re-created session in SessionManager")
 
-    queue = await event_bus.subscribe(session_id)
+    try:
+        queue = await event_bus.subscribe(session_id)
+    except Exception:
+        _release_slot()
+        raise
 
     async def event_generator():
         try:
@@ -541,6 +583,8 @@ async def stream_session_events(
             pass
         finally:
             await event_bus.unsubscribe(session_id, queue)
+            _sse_by_ip[client_ip] -= 1
+            _sse_by_session[session_id] -= 1
 
     return StreamingResponse(
         event_generator(),
@@ -554,6 +598,8 @@ async def stream_session_events(
 
 
 @router.post("/{session_id}/level-up/pay")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def pay_level_up(
     request: Request,
     session_id: str,
@@ -733,6 +779,8 @@ async def pay_level_up(
 
 
 @router.post("/{session_id}/boostxp")
+@limiter.limit("6/minute", key_func=rate_limit_ip)
+@limiter.limit("12/hour", key_func=rate_limit_user)
 async def boostxp_session(
     request: Request,
     session_id: str,

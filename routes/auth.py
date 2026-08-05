@@ -7,7 +7,8 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from starlette.responses import RedirectResponse
-from . import limiter
+from . import limiter, rate_limit_ip, rate_limit_user
+from library.avatars import extract_avatar_hash
 import config
 from urllib.parse import urlencode, quote
 
@@ -19,7 +20,7 @@ router = APIRouter()
 
 
 @router.get("/login")
-@limiter.limit("5/minute")
+@limiter.limit("5/minute", key_func=rate_limit_ip)
 async def login(request: Request):
     state = secrets.token_urlsafe(16)
     await request.app.db["oauth_pending_states"].insert_one({
@@ -38,6 +39,7 @@ async def login(request: Request):
 
 
 @router.get("/callback")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
 async def callback(request: Request, code: str, state: str):
     state_doc = await request.app.db["oauth_pending_states"].find_one_and_delete({"state": state})
     if not state_doc:
@@ -126,6 +128,7 @@ async def callback(request: Request, code: str, state: str):
 
 
 @router.get("/verify")
+@limiter.limit("120/minute", key_func=rate_limit_ip)
 async def verify(token: str = None, request: Request = None):
     if not token and request:
         token = request.cookies.get("session_token")
@@ -150,6 +153,8 @@ class WebTokenRequest(BaseModel):
 
 
 @router.post("/webtoken")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("30/hour", key_func=rate_limit_user)
 async def exchange_web_token(request: Request, body: WebTokenRequest):
     """
     Exchange a bot-generated web token for a JWT.
@@ -178,15 +183,7 @@ async def exchange_web_token(request: Request, body: WebTokenRequest):
             pass
 
     username = user_data.get("name", "Unknown")
-    avatar_hash = user_data.get("pfp", "")
-    avatar = ""
-    if avatar_hash:
-        if avatar_hash.startswith("https://") or avatar_hash.startswith("data:"):
-            avatar = ""
-        else:
-            ext = "gif" if avatar_hash.startswith("a_") else "png"
-            avatar_hash_clean = avatar_hash.split("/")[-1].split(".")[0] if "/" in avatar_hash else avatar_hash
-            avatar = avatar_hash_clean
+    avatar = extract_avatar_hash(user_data.get("pfp", ""))
 
     payload = {
         "sub": user_id,

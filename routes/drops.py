@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 import config
 from library import degrade, is_muted
-from . import verify_token, limiter
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 router = APIRouter()
 
@@ -44,12 +44,14 @@ def calculate_reward(activity_mult: float, iron_chance: float, vc_level: int, vc
     return wood, iron
 
 @router.get("/check/{token}")
+@limiter.limit("60/minute", key_func=rate_limit_ip)
 async def check_drop(request: Request, token: str):
     claimed = await request.app.db["activity.drops"].find_one({"drop_token": token})
     return {"claimed": claimed is not None}
 
 @router.post("/claim/{token}")
-@limiter.limit("10/minute")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("30/hour", key_func=rate_limit_user)
 async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
 

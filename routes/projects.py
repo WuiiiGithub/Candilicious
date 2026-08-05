@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
 from datetime import datetime, timezone
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 router = APIRouter()
 
 @router.get("")
+@limiter.limit("120/minute", key_func=rate_limit_ip)
 async def get_projects(request: Request, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
     if not user_id:
@@ -42,6 +43,8 @@ async def get_projects(request: Request, payload: dict = Depends(verify_token)):
         return response
 
 @router.post("")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def create_project(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -74,6 +77,8 @@ async def create_project(request: Request, payload: dict = Depends(verify_token)
     return {"status": "success", "project": new_project}
 
 @router.patch("")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def update_project(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -104,6 +109,8 @@ async def update_project(request: Request, payload: dict = Depends(verify_token)
     return {"status": "success"}
 
 @router.delete("")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("40/hour", key_func=rate_limit_user)
 async def delete_project(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()

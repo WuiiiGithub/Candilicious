@@ -5,7 +5,7 @@ from pydantic import BaseModel, ValidationError
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from hashlib import sha256
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 import config
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,9 @@ router = APIRouter()
 
 OTP_TTL_MINUTES = 5
 SESSION_TTL_SECONDS = 600
+MAX_OTP_ATTEMPTS = 5
+OTP_LOCKOUT_MINUTES = 15
+OTP_REQUEST_COOLDOWN_SECONDS = 30
 
 class WorkspaceRequest(BaseModel):
     action: str
@@ -97,6 +100,8 @@ async def get_owner_id(db) -> str:
 
 
 @router.post("")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("5/minute", key_func=rate_limit_user)
 async def workspace(
     body: WorkspaceRequest,
     request: Request,
@@ -126,7 +131,6 @@ async def workspace(
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             if expires_at < now:
                 raise HTTPException(status_code=403, detail="Only the bot owner can access the workspace")
-            raise HTTPException(status_code=403, detail="Only the bot owner can access the workspace")
 
     if body.action == "get_policy":
         doc_id = (body.data or {}).get("id", "")
@@ -149,16 +153,29 @@ async def request_otp(db, request, user_id: str, owner_id: str):
     if user_id != owner_id:
         raise HTTPException(status_code=403, detail="Only the bot owner can request an OTP")
 
+    existing = await db["admin_otp"].find_one({"_id": user_id})
+    now = datetime.now(timezone.utc)
+    last_sent = existing.get("last_sent_at") if existing else None
+    if last_sent:
+        if last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+        if now - last_sent < timedelta(seconds=OTP_REQUEST_COOLDOWN_SECONDS):
+            raise HTTPException(
+                status_code=429,
+                detail=f"Please wait {OTP_REQUEST_COOLDOWN_SECONDS}s before requesting another OTP.",
+            )
+
     otp = str(secrets.randbelow(900000) + 100000)
     otp_hash = sha256(otp.encode()).hexdigest()
-    now = datetime.now(timezone.utc)
 
     await db["admin_otp"].update_one(
         {"_id": user_id},
         {"$set": {
             "otp_hash": otp_hash,
             "created_at": now,
+            "last_sent_at": now,
             "expires_at": now + timedelta(minutes=OTP_TTL_MINUTES),
+            "attempts": 0,
         }},
         upsert=True,
     )
@@ -189,16 +206,36 @@ async def verify_otp(db, user_id: str, data: dict):
     if not stored:
         raise HTTPException(status_code=400, detail="No OTP requested. Please request an OTP first.")
 
-    if stored.get("expires_at", datetime.now(timezone.utc)) < datetime.now(timezone.utc):
+    now = datetime.now(timezone.utc)
+    expires_at = stored.get("expires_at", now)
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    lockout_until = stored.get("lockout_until")
+    if lockout_until:
+        if lockout_until.tzinfo is None:
+            lockout_until = lockout_until.replace(tzinfo=timezone.utc)
+        if lockout_until > now:
+            raise HTTPException(status_code=429, detail="Too many incorrect attempts. Please wait and request a new OTP.")
+
+    if expires_at < now:
         await db["admin_otp"].delete_one({"_id": user_id})
         raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
 
     if stored["otp_hash"] != otp_hash_attempt:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
+        attempts = int(stored.get("attempts", 0)) + 1
+        update = {"attempts": attempts}
+        if attempts >= MAX_OTP_ATTEMPTS:
+            update["lockout_until"] = now + timedelta(minutes=OTP_LOCKOUT_MINUTES)
+            update["attempts"] = 0
+        await db["admin_otp"].update_one({"_id": user_id}, {"$set": update})
+        remaining = max(0, MAX_OTP_ATTEMPTS - attempts)
+        raise HTTPException(
+            status_code=429 if attempts >= MAX_OTP_ATTEMPTS else 400,
+            detail="Invalid OTP" if remaining > 0 else "Too many incorrect attempts. Please wait and request a new OTP.",
+        )
 
     await db["admin_otp"].delete_one({"_id": user_id})
 
-    now = datetime.now(timezone.utc)
     await db["admin_sessions"].update_one(
         {"_id": user_id},
         {"$set": {

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 router = APIRouter()
 
@@ -21,6 +21,7 @@ async def recalculate_project_counts(request: Request, project_id: str):
     )
 
 @router.get("")
+@limiter.limit("120/minute", key_func=rate_limit_ip)
 async def get_boards(request: Request, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
     if not user_id:
@@ -80,6 +81,8 @@ async def get_boards(request: Request, payload: dict = Depends(verify_token)):
         return response
 
 @router.post("")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def create_board(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -118,6 +121,8 @@ async def create_board(request: Request, payload: dict = Depends(verify_token)):
     return {"status": "success", "board": new_board}
 
 @router.patch("")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def update_board(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -149,6 +154,8 @@ async def update_board(request: Request, payload: dict = Depends(verify_token)):
     return {"status": "success"}
 
 @router.delete("")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("40/hour", key_func=rate_limit_user)
 async def delete_board(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()

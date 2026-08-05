@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 router = APIRouter()
 
@@ -45,6 +45,7 @@ async def log_progress(
 
 
 @router.get("")
+@limiter.limit("120/minute", key_func=rate_limit_ip)
 async def get_tasks(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -87,6 +88,8 @@ async def get_tasks(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.post("")
+@limiter.limit("60/minute", key_func=rate_limit_ip)
+@limiter.limit("120/hour", key_func=rate_limit_user)
 async def create_task(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -157,6 +160,8 @@ async def create_task(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.patch("")
+@limiter.limit("60/minute", key_func=rate_limit_ip)
+@limiter.limit("120/hour", key_func=rate_limit_user)
 async def update_task(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()
@@ -243,6 +248,8 @@ async def update_task(request: Request, payload: dict = Depends(verify_token)):
 
 
 @router.delete("")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def delete_task(request: Request, payload: dict = Depends(verify_token)):
     try:
         body = await request.json()

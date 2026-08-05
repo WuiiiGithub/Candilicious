@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends, HTTPException
 from pydantic import BaseModel
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +132,8 @@ HANDLERS = {
 
 
 @router.post("")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def bulk_execute(
     request: Request,
     body: BulkRequest,

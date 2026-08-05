@@ -5,13 +5,20 @@ from fastapi import APIRouter, Request, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import config
-from . import verify_token
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 router = APIRouter()
 
 MAX_SIZES = {
     "pfp": 256 * 1024,
     "thumbnail": 128 * 1024,
+}
+
+ALLOWED_FOLDERS = {
+    "candilicious",
+    "candilicious/pfp",
+    "candilicious/thumbnails",
+    "candilicious/posts",
 }
 
 
@@ -21,6 +28,8 @@ class SignedParamsRequest(BaseModel):
 
 
 @router.post("/signed-params")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def get_signed_params(
     request: Request,
     body: SignedParamsRequest,
@@ -29,12 +38,16 @@ async def get_signed_params(
     if not config.CLOUDINARY_URL:
         raise HTTPException(status_code=500, detail="Cloudinary not configured")
 
+    folder = (body.folder or "").strip().strip("/")
+    if folder not in ALLOWED_FOLDERS:
+        raise HTTPException(status_code=400, detail="Folder not allowed")
+
     cloudinary.config()
     cloud_name = config.CLOUDINARY_URL.split("@")[-1] if "@" in config.CLOUDINARY_URL else ""
 
     timestamp = int(time.time())
     params_to_sign = {
-        "folder": body.folder,
+        "folder": folder,
         "timestamp": timestamp,
     }
 
@@ -66,6 +79,8 @@ async def get_signed_params(
 
 
 @router.delete("/destroy")
+@limiter.limit("20/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def destroy_asset(
     request: Request,
     body: dict,

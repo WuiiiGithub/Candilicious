@@ -7,9 +7,10 @@ import discord
 import cloudinary
 import cloudinary.uploader
 import config
-from . import verify_token, limiter
+from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 from library import is_muted
 from library.usersync import sync_user_from_discord
+from library.avatars import resolve_avatar_url, default_avatar
 
 router = APIRouter()
 
@@ -33,22 +34,16 @@ class ListBody(BaseModel):
 
 
 @router.get("/me")
+@limiter.limit("60/minute", key_func=rate_limit_ip)
 async def get_current_user(request: Request, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
     username = payload.get("username", "Unknown")
-    avatar_hash = payload.get("avatar", None)
-    avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png" if avatar_hash else f"https://cdn.discordapp.com/embed/avatars/{int(user_id) % 5}.png"
 
     user_data = await request.app.db["users"].find_one({"_id": user_id})
     bio = (user_data or {}).get("bio", "Hey! I'm a new user who just joined recently :)")
     profile_views = (user_data or {}).get("profile_views", 0)
-    profile_pfp = (user_data or {}).get("profile_pfp", None)
-    pfp = (user_data or {}).get("pfp", None)
     display_name = (user_data or {}).get("display_name") or username
-    if profile_pfp:
-        avatar_url = profile_pfp
-    elif pfp:
-        avatar_url = pfp if pfp.startswith(("https://", "data:")) else f"https://cdn.discordapp.com/avatars/{user_id}/{pfp}.png"
+    avatar_url = resolve_avatar_url(user_id, user_data)
 
     followers_count = len(user_data.get("followers", [])) if user_data else 0
     following_count = len(user_data.get("following", [])) if user_data else 0
@@ -81,13 +76,7 @@ async def get_user(request: Request, body: UserIdBody, payload: dict = Depends(v
         user_data = {}
 
     username = user_data.get("name", "Unknown")
-    profile_pfp = user_data.get("profile_pfp", None)
-    pfp = user_data.get("pfp", None)
-    avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(user_id) % 5}.png"
-    if profile_pfp:
-        avatar_url = profile_pfp
-    elif pfp:
-        avatar_url = pfp if pfp.startswith(("https://", "data:")) else f"https://cdn.discordapp.com/avatars/{user_id}/{pfp}.png"
+    avatar_url = resolve_avatar_url(user_id, user_data)
 
     bio = user_data.get("bio", "Hey! I'm a new user who just joined recently :)")
     profile_views = user_data.get("profile_views", 0)
@@ -120,6 +109,8 @@ async def get_user(request: Request, body: UserIdBody, payload: dict = Depends(v
 
 
 @router.put("/me/pfp")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("20/hour", key_func=rate_limit_user)
 async def set_pfp(
     request: Request,
     payload: dict = Depends(verify_token),
@@ -170,15 +161,15 @@ async def set_pfp(
 
 
 @router.delete("/me/pfp")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
 async def remove_pfp(request: Request, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
     await request.app.db["users"].update_one(
         {"_id": user_id},
         {"$unset": {"profile_pfp": ""}},
     )
-    avatar_hash = payload.get("avatar", None)
-    avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png" if avatar_hash else f"https://cdn.discordapp.com/embed/avatars/{int(user_id) % 5}.png"
-    return {"ok": 1, "avatar_url": avatar_url}
+    user_data = await request.app.db["users"].find_one({"_id": user_id})
+    return {"ok": 1, "avatar_url": resolve_avatar_url(user_id, user_data)}
 
 
 @router.put("/me/bio")
@@ -275,13 +266,7 @@ async def get_followers(request: Request, body: ListBody, payload: dict = Depend
         async for doc in cursor:
             uid = doc["_id"]
             name = doc.get("name", "Unknown")
-            profile_pfp = doc.get("profile_pfp", None)
-            pfp = doc.get("pfp", None)
-            avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(uid) % 5}.png"
-            if profile_pfp:
-                avatar_url = profile_pfp
-            elif pfp:
-                avatar_url = pfp if pfp.startswith(("https://", "data:")) else f"https://cdn.discordapp.com/avatars/{uid}/{pfp}.png"
+            avatar_url = resolve_avatar_url(uid, doc)
             user_map[uid] = {
                 "id": uid,
                 "username": name,
@@ -321,13 +306,7 @@ async def get_following(request: Request, body: ListBody, payload: dict = Depend
         async for doc in cursor:
             uid = doc["_id"]
             name = doc.get("name", "Unknown")
-            profile_pfp = doc.get("profile_pfp", None)
-            pfp = doc.get("pfp", None)
-            avatar_url = f"https://cdn.discordapp.com/embed/avatars/{int(uid) % 5}.png"
-            if profile_pfp:
-                avatar_url = profile_pfp
-            elif pfp:
-                avatar_url = pfp if pfp.startswith(("https://", "data:")) else f"https://cdn.discordapp.com/avatars/{uid}/{pfp}.png"
+            avatar_url = resolve_avatar_url(uid, doc)
             user_map[uid] = {
                 "id": uid,
                 "username": name,
