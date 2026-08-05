@@ -23,23 +23,6 @@ class Resources(commands.Cog):
         finally:
             log.send()
 
-    @app_commands.guild_only()
-    @app_commands.command(name='competitive', description='Provides resources for competitive exam.')
-    async def competitive(self, inter: discord.Interaction):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            cmdLog.process(status_code=0, name="Processing")
-            await inter.response.send_message(
-                embed=discord.Embed(
-                    description=f"The command is still under construction."
-                )
-            )
-            cmdLog.process(status_code=100, name="Success")
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
-
 async def setup(bot):
     Resources_cog = Resources(bot)
     await bot.add_cog(Resources_cog)

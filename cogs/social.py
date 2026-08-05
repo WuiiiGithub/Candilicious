@@ -7,6 +7,7 @@ import os, asyncio, traceback, re, urllib.request
 from datetime import datetime, timezone
 from library.logging import CogLogger, CommandLogger
 from library import is_muted, db
+from library.usersync import discord_user_doc
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
@@ -14,6 +15,47 @@ cogLog = CogLogger(filename=filename)
 db = pymongo.MongoClient(os.getenv("MONGODB_URI"))[config.DB_NAME]
 
 DEFAULT_BIO = "Hey! I'm a new user who just joined recently :)"
+
+
+class FollowBackView(discord.ui.View):
+    def __init__(self, target_id: str, follower_id: str, profile_url: str = None):
+        super().__init__(timeout=3600)
+        self.target_id = target_id
+        self.follower_id = follower_id
+        if profile_url:
+            self.add_item(discord.ui.Button(
+                style=discord.ButtonStyle.link,
+                label="View Profile",
+                url=profile_url
+            ))
+
+    @discord.ui.button(label="\U0001f49a Follow Back", style=discord.ButtonStyle.green)
+    async def follow_back_button(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.target_id:
+            return await inter.response.send_message("This isn't your notification.", ephemeral=True)
+
+        target_user = db["users"].find_one({"_id": self.target_id})
+        follower_user = db["users"].find_one({"_id": self.follower_id})
+        if not target_user or not follower_user:
+            return await inter.response.send_message("One of the accounts is missing.", ephemeral=True)
+
+        if self.target_id in follower_user.get("followers", []):
+            await inter.response.edit_message(content="You already follow them back!", view=None, embed=None)
+            return
+
+        db["users"].update_one({"_id": self.follower_id}, {"$push": {"followers": self.target_id}})
+        db["users"].update_one({"_id": self.target_id}, {"$push": {"following": self.follower_id}})
+        for item in self.children:
+            item.disabled = True
+        await inter.response.edit_message(
+            embed=discord.Embed(
+                title="Followed Back",
+                description="You are now following them back!",
+                color=discord.Color.green()
+            ),
+            view=self
+        )
+
 
 async def notify_followers_of_post(
     bot: commands.Bot,
@@ -121,6 +163,11 @@ class Social(commands.Cog):
             target = user or inter.user
 
             cmdLog.process(status_code=50, name="Data Fetch", details=f"Fetching profile for user {target.id}...")
+            db["users"].update_one(
+                {"_id": str(target.id)},
+                {"$set": discord_user_doc(target)},
+                upsert=True,
+            )
             user_data = db["users"].find_one({"_id": str(target.id)})
 
             if inter.user.id != target.id:
@@ -230,13 +277,10 @@ class Social(commands.Cog):
                     )
                     notify.set_thumbnail(url=inter.user.display_avatar.url)
                     notify.timestamp = datetime.now(timezone.utc)
-                    notify_view = discord.ui.View()
-                    notify_view.add_item(discord.ui.Button(
-                        style=discord.ButtonStyle.link,
-                        label="View Profile",
-                        url=f"{config.FRONTEND_DOMAIN}/profile?user_id={current_id}"
-                    ))
-                    await user.send(embed=notify, view=notify_view)
+                    await user.send(
+                        embed=notify,
+                        view=FollowBackView(target_id, current_id, f"{config.FRONTEND_DOMAIN}/profile?user_id={current_id}")
+                    )
             except Exception:
                 pass
 

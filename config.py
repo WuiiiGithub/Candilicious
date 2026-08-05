@@ -84,7 +84,7 @@ LEVEL_UP_XP_THRESHOLD = 5000
 LEVEL_UP_WOOD_BASE = 100
 
 # Streak DMs (daily study calls, streak break notifications)
-ENABLE_STREAK_DMS = False
+ENABLE_STREAK_DMS = True if  _getenv('ENABLE_STREAK_DMS') else False
 
 bot = None
 

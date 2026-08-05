@@ -14,6 +14,7 @@ from library.logging import *
 from library.session import *
 from library.leaderboard import *
 from library import is_muted, is_on_holiday, degrade, db
+from library.usersync import sync_member_from_discord
 import pymongo
 
 filename = __name__.title()
@@ -546,7 +547,9 @@ class Study(commands.Cog):
             if member.bot:
                 return
             server_id = str(member.guild.id)
-            
+
+            sync_member_from_discord(userCollection, str(member.id), member.guild)
+
             # Initial check
             study_data = serverCollection.find_one({"_id": server_id})
 
@@ -1422,6 +1425,53 @@ class Study(commands.Cog):
                 if pending_level_up_data:
                     sess.pending_level_up = pending_level_up_data
 
+            if session_id in self.session_manager.active_sessions:
+                sess = self.session_manager.active_sessions[session_id]
+                await sess._emit_event("boostxp", {
+                    "user_id": user_id,
+                    "xp_gained": xp_gain,
+                    "new_xp": new_xp,
+                    "vc_level": new_level,
+                    "level_up": level_up,
+                })
+
+            if level_up and pending_level_up_data:
+                if session_id in self.session_manager.active_sessions:
+                    sess = self.session_manager.active_sessions[session_id]
+                    await sess._emit_event("level_up", {
+                        "new_level": new_level,
+                        "wood_cost": pending_level_up_data["wood_cost"],
+                        "total_members": pending_level_up_data["total_members"],
+                    })
+
+                try:
+                    domain = os.getenv("FRONTEND_DOMAIN", "")
+                    if not domain.endswith("/"):
+                        domain += "/"
+                    link = f"{domain}projects?level_up={session_id}"
+                    channel = inter.user.voice.channel
+                    level_embed = discord.Embed(
+                        title="\u2b06\ufe0f Level Up Available!",
+                        description=f"Level **{current_level}** \u2192 **{new_level}**\nCost: **{pending_level_up_data['wood_cost']}** \U0001fab5 Wood per member\n\n0/{len(session_doc.get('members') or {})} paid",
+                        color=discord.Color.green(),
+                    )
+                    pay_view = discord.ui.View()
+                    pay_view.add_item(discord.ui.Button(
+                        label=f"Pay {pending_level_up_data['wood_cost']} Wood",
+                        style=discord.ButtonStyle.link,
+                        url=link,
+                        emoji="\U0001fab5",
+                    ))
+                    msg = await channel.send(embed=level_embed, view=pay_view)
+                    db["sessions"].update_one(
+                        {"session_id": session_id},
+                        {"$set": {"level_up_message_id": str(msg.id)}},
+                    )
+                    if session_id in self.session_manager.active_sessions:
+                        self.session_manager.active_sessions[session_id].level_up_message_id = str(msg.id)
+                except Exception:
+                    pass
+
             embed = discord.Embed(
                 title="🚀 Session Boosted!",
                 color=discord.Color.gold(),
@@ -1637,10 +1687,9 @@ class HolidayConfirmView(discord.ui.View):
         await inter.response.edit_message(content="Holiday cancelled.", embed=None, view=None)
 
 
-class Study(commands.Cog):
+class Holiday(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        ...
 
     @app_commands.command(
         name="holiday",
@@ -1730,4 +1779,6 @@ class Study(commands.Cog):
 
 async def setup(bot):
     Study_cog = Study(bot)
+    Holiday_cog = Holiday(bot)
     await bot.add_cog(Study_cog)
+    await bot.add_cog(Holiday_cog)

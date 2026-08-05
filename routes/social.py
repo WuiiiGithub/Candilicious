@@ -9,6 +9,7 @@ from typing import Optional
 from pydantic import BaseModel
 from . import verify_token, optional_token, limiter
 from cogs.social import notify_followers_of_post
+from library.usersync import sync_user_from_discord
 import config
 
 router = APIRouter()
@@ -73,6 +74,8 @@ async def get_posts(
         uid = doc.get("user_id", "")
         if uid and uid not in user_cache:
             u = await request.app.db["users"].find_one({"_id": uid})
+            if not u:
+                u = await sync_user_from_discord(request.app.state.bot, request.app.db["users"], uid)
             if u:
                 name = u.get("name", "Unknown")
                 pfp = u.get("profile_pfp") or u.get("pfp")

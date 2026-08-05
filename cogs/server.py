@@ -32,23 +32,6 @@ class Server(commands.Cog):
             log.send()
 
     @app_commands.guild_only()
-    @app_commands.command(name='attendence', description='Mark your attendence here :)')
-    async def attendence(self, inter: discord.Interaction):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            cmdLog.process(status_code=50, name="Attendance Stat", details="Handling request to mark attendance...")
-            await inter.response.send_message(
-                embed=discord.Embed(
-                    description=f"The command is still under construction."
-                )
-            )
-            cmdLog.process(status_code=100, name="Status Sent", details="Member notified that the attendance system is under construction.")
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
-    
-    @app_commands.guild_only()
     @app_commands.command(name='clean', description='Remove all inactive people in server.')
     async def clean(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
@@ -148,27 +131,6 @@ class Server(commands.Cog):
                 )
             )
             cmdLog.process(status_code=100, name="Status Sent", details="Member notified that the lookup system is under construction.")
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
-
-
-    @app_commands.guild_only()
-    @app_commands.command(
-        name="doubt", 
-        description="Flag this as a doubt."
-    )
-    async def doubt(self, inter: discord.Interaction):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            cmdLog.process(status_code=50, name="Doubt Flag", details="Handling request to flag a doubt...")
-            await inter.response.send_message(
-                embed=discord.Embed(
-                    description=f"The command is still under construction."
-                )
-            )
-            cmdLog.process(status_code=100, name="Status Sent", details="Member notified that the doubt flagging system is under construction.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:

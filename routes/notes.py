@@ -289,3 +289,130 @@ async def delete_file(request: Request, payload: dict = Depends(verify_token)):
 
     await request.app.db["notes.docs"].delete_one({"note_id": note_id})
     return {"status": "success"}
+
+
+async def collect_descendant_docs(db, user_id: str, note_id: str) -> list[dict]:
+    all_notes = await db["notes.docs"].find({"user_id": user_id}).to_list(length=None)
+    by_parent: dict[str | None, list[dict]] = {}
+    for n in all_notes:
+        by_parent.setdefault(n.get("parent_id"), []).append(n)
+
+    docs: list[dict] = []
+    stack = [note_id]
+    while stack:
+        current = stack.pop()
+        for child in by_parent.get(current, []):
+            docs.append(child)
+            stack.append(child.get("note_id"))
+    return docs
+
+
+async def validate_target_parent(db, user_id: str, parent_id: str | None) -> None:
+    if parent_id is None:
+        return
+    parent = await get_note(db, user_id, parent_id)
+    if not parent:
+        raise HTTPException(status_code=404, detail="Destination folder not found or unauthorized")
+    if parent.get("type") != "folder":
+        raise HTTPException(status_code=400, detail="Destination must be a folder")
+
+
+def unique_copy_name(name: str, taken: set[str]) -> str:
+    base, ext = name.rsplit(".", 1) if "." in name else (name, "")
+    candidate = name
+    i = 1
+    while candidate.lower() in taken:
+        suffix = f" copy"
+        if i > 1:
+            suffix = f" copy {i}"
+        candidate = f"{base}{suffix}" + (f".{ext}" if ext else "")
+        i += 1
+    return candidate
+
+
+@router.post("/copy")
+async def copy_note(request: Request, payload: dict = Depends(verify_token)):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    user_id = payload.get("sub")
+    note_id = body.get("note_id")
+    target_parent_id = body.get("target_parent_id") or None
+
+    source = await get_note(request.app.db, user_id, note_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="Note not found or unauthorized")
+
+    await validate_target_parent(request.app.db, user_id, target_parent_id)
+
+    if target_parent_id == note_id or target_parent_id in [
+        d.get("note_id") for d in await collect_descendant_docs(request.app.db, user_id, note_id)
+    ]:
+        raise HTTPException(status_code=400, detail="Can't copy a folder into itself")
+
+    siblings = await get_children(request.app.db, user_id, target_parent_id)
+    taken = {s.get("name", "").lower() for s in siblings}
+
+    new_name = unique_copy_name(source.get("name", ""), taken)
+
+    now = datetime.now(timezone.utc).isoformat()
+    id_map = {note_id: str(uuid.uuid4())}
+
+    new_root = dict(source)
+    new_root["note_id"] = id_map[note_id]
+    new_root["parent_id"] = target_parent_id
+    new_root["name"] = new_name
+    new_root["created_at"] = now
+    new_root["updated_at"] = now
+    new_root.pop("_id", None)
+    await request.app.db["notes.docs"].insert_one(new_root)
+
+    for child in await collect_descendant_docs(request.app.db, user_id, note_id):
+        new_child = dict(child)
+        new_child["note_id"] = str(uuid.uuid4())
+        new_child["parent_id"] = id_map.get(child.get("parent_id"))
+        new_child["created_at"] = now
+        new_child["updated_at"] = now
+        new_child.pop("_id", None)
+        await request.app.db["notes.docs"].insert_one(new_child)
+        id_map[child.get("note_id")] = new_child["note_id"]
+
+    return {"status": "success", "note_id": id_map[note_id]}
+
+
+@router.post("/move")
+async def move_note(request: Request, payload: dict = Depends(verify_token)):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    user_id = payload.get("sub")
+    note_id = body.get("note_id")
+    target_parent_id = body.get("target_parent_id") or None
+
+    note = await get_note(request.app.db, user_id, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found or unauthorized")
+
+    if note.get("parent_id") == target_parent_id:
+        return {"status": "success", "moved": False}
+
+    await validate_target_parent(request.app.db, user_id, target_parent_id)
+
+    if note.get("type") == "folder":
+        if target_parent_id == note_id or target_parent_id in [
+            d.get("note_id") for d in await collect_descendant_docs(request.app.db, user_id, note_id)
+        ]:
+            raise HTTPException(status_code=400, detail="Can't move a folder into itself")
+
+    if await sibling_name_taken(request.app.db, user_id, target_parent_id, note.get("name", "")):
+        raise HTTPException(status_code=400, detail="A note with that name already exists in the destination")
+
+    await request.app.db["notes.docs"].update_one(
+        {"note_id": note_id},
+        {"$set": {"parent_id": target_parent_id, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"status": "success", "moved": True}

@@ -9,6 +9,7 @@ import cloudinary.uploader
 import config
 from . import verify_token, limiter
 from library import is_muted
+from library.usersync import sync_user_from_discord
 
 router = APIRouter()
 
@@ -73,6 +74,9 @@ async def get_current_user(request: Request, payload: dict = Depends(verify_toke
 async def get_user(request: Request, body: UserIdBody, payload: dict = Depends(verify_token)):
     user_id = body.user_id
     user_data = await request.app.db["users"].find_one({"_id": user_id})
+    if not user_data:
+        bot = getattr(request.app.state, "bot", None)
+        user_data = await sync_user_from_discord(bot, request.app.db["users"], user_id)
     if not user_data:
         user_data = {}
 
