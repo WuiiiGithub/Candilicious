@@ -29,7 +29,12 @@
         "expire_at": "<datetime:premium_expiration|null>"
     },
     "streak": "<int:current_study_streak>",
-    "last_study_date": "<datetime|null:last_day_the_user_studied>",
+    "last_study_time": "<datetime|null:last_time_the_user_studied (replaces last_study_date)>",
+    "last_study_date": "<datetime|null|LEGACY:old last-study day field, read for backwards compatibility>",
+    "last_login": "<datetime:last_oauth_login>",
+    "ip_addresses": {
+        "<str:ip_address>": "<int:number_of_successful_logins_from_this_ip>"
+    },
     "holiday": "<int:free_holiday_days_remaining>",
     "holiday_until": "<datetime|null:streak_freeze_expiration>",
     "following": ["<array:user_ids_this_user_follows>"],

@@ -117,6 +117,12 @@ class RecoveryManager:
             # Clean stale drop offers
             self._clean_stale_drops()
 
+            # After a healthy recovery, snapshots from the previous run are
+            # stale (sessions were resumed or cleaned). Prune them so the next
+            # crash doesn't restore outdated state.
+            if stats["errors"] == 0:
+                self._prune_snapshots(stats)
+
             logger.info(
                 "Recovery done — resumed: %d, cleaned: %d, orphan refs cleared: %d, errors: %d",
                 stats["resumed"], stats["cleaned"], stats["orphan_refs_cleared"], stats["errors"],
@@ -455,3 +461,22 @@ class RecoveryManager:
                 )
         except Exception:
             pass
+
+    def _prune_snapshots(self, stats: dict):
+        """Delete all recovery snapshots once sessions recovered cleanly.
+
+        Snapshots exist to restore state after an unexpected crash. Once the bot
+        starts up and recovery completes with no errors, every session is either
+        resumed in memory or cleaned from the DB, so the snapshots are stale.
+        """
+        try:
+            result = self.snapshots.delete_many({})
+            if result.deleted_count > 0:
+                stats["snapshots_pruned"] = result.deleted_count
+                log.process(
+                    status_code=50,
+                    message="Snapshots Pruned",
+                    details=f"Removed {result.deleted_count} recovery snapshot(s) after healthy recovery",
+                )
+        except Exception as e:
+            logger.error("Failed to prune recovery snapshots: %s", e)

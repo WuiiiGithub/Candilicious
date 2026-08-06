@@ -17,6 +17,34 @@ configCollection = db["config"]
 userCollection = db["users"]
 schedulerCollection = db["schedulers"]
 
+def _get_last_study_date(user_doc: dict) -> Optional[str]:
+    """Return the last study day as 'YYYY-MM-DD'.
+
+    Prefers the single `last_study_time` datetime field (the date is already
+    contained in it). Falls back to the legacy `last_study_date` field so
+    documents written before the schema consolidation keep working.
+    """
+    if not user_doc:
+        return None
+
+    last_time = user_doc.get("last_study_time")
+    if last_time:
+        if isinstance(last_time, str):
+            try:
+                return datetime.fromisoformat(last_time).date().isoformat()
+            except (ValueError, TypeError):
+                pass
+        elif hasattr(last_time, "date"):
+            return last_time.date().isoformat()
+
+    last_date = user_doc.get("last_study_date")
+    if last_date:
+        if isinstance(last_date, str):
+            return last_date
+        return last_date.date().isoformat() if hasattr(last_date, "date") else str(last_date)
+    return None
+
+
 STUDY_CALL_STATEMENTS = [
     # --- MOTIVATIONAL (30) ---
     "The secret of getting ahead is getting started. Let's study! 📚",
@@ -259,7 +287,7 @@ class Reminders(commands.Cog):
             {"_id": user_id},
             {
                 "$setOnInsert": {
-                    "active_hours": [],
+                    "active_hours": {},
                     "last_seen_online": None,
                     "last_dm_sent": None,
                     "last_study_time": None,
@@ -271,20 +299,83 @@ class Reminders(commands.Cog):
 
     def _update_user_presence(self, user_id: str):
         now = datetime.now(timezone.utc)
-        hour = now.hour
+        hour = str(now.hour)
         self._ensure_user_scheduler(user_id)
 
+        # Count presence events per hour ({hour: count}) instead of keeping the
+        # last 168 raw entries. Legacy array documents are converted in-place,
+        # and the counts reset once the user has been away for 7+ days.
+        cutoff = now - timedelta(days=7)
         schedulerCollection.update_one(
             {"_id": user_id},
-            {
-                "$set": {"last_seen_online": now},
-                "$push": {
+            [
+                {"$set": {
+                    "last_seen_online": now,
                     "active_hours": {
-                        "$each": [hour],
-                        "$slice": -168
+                        "$let": {
+                            "vars": {
+                                "stale": {
+                                    "$or": [
+                                        {"$eq": ["$last_seen_online", None]},
+                                        {"$and": [
+                                            {"$ne": ["$last_seen_online", None]},
+                                            {"$eq": [{"$type": "$last_seen_online"}, "date"]},
+                                            {"$lte": ["$last_seen_online", cutoff]},
+                                        ]},
+                                    ]
+                                }
+                            },
+                            "in": {
+                                "$let": {
+                                    "vars": {
+                                        "base": {
+                                            "$cond": [
+                                                "$$stale",
+                                                {},
+                                                {"$cond": [
+                                                    {"$eq": [{"$type": "$active_hours"}, "array"]},
+                                                    {"$arrayToObject": {"$map": {
+                                                        "input": {"$setUnion": ["$active_hours"]},
+                                                        "as": "uniq",
+                                                        "in": {
+                                                            "k": {"$toString": "$$uniq"},
+                                                            "v": {"$size": {"$filter": {
+                                                                "input": "$active_hours",
+                                                                "as": "x",
+                                                                "cond": {"$eq": ["$$x", "$$uniq"]},
+                                                            }}},
+                                                        },
+                                                    }}},
+                                                    {"$ifNull": ["$active_hours", {}]},
+                                                ]},
+                                            ]
+                                        }
+                                    },
+                                    "in": {
+                                        "$setField": {
+                                            "field": {"$literal": hour},
+                                            "input": "$$base",
+                                            "value": {
+                                                "$add": [
+                                                    {"$ifNull": [
+                                                        {"$getField": {
+                                                            "field": {"$literal": hour},
+                                                            "input": "$$base",
+                                                        }},
+                                                        0
+                                                    ]},
+                                                    1
+                                                ]
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
-            }
+                }}
+            ],
+            upsert=True,
         )
 
     def _get_user_active_window(self, user_id: str) -> Optional[int]:
@@ -299,23 +390,33 @@ class Reminders(commands.Cog):
         if last_seen is None:
             return None
 
+        if isinstance(last_seen, str):
+            try:
+                last_seen = datetime.fromisoformat(last_seen)
+            except (ValueError, TypeError):
+                return None
         if last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=timezone.utc)
 
         if (datetime.now(timezone.utc) - last_seen).total_seconds() > 7 * 86400:
             return None
 
-        hours = doc.get("active_hours", [])
-        if not hours:
+        hours = doc.get("active_hours") or {}
+        if isinstance(hours, list):
+            from collections import Counter
+            counts = Counter(hours)
+        elif isinstance(hours, dict):
+            counts = hours
+        else:
+            counts = {}
+        if not counts:
             return None
 
-        from collections import Counter
-        hour_counts = Counter(hours)
-        if hour_counts:
-            most_common_hour = hour_counts.most_common(1)[0][0]
-            return most_common_hour
-
-        return None
+        best_hour = max(counts, key=counts.get)
+        try:
+            return int(best_hour)
+        except (ValueError, TypeError):
+            return None
 
     def _should_dm_user(self, user_id: str) -> bool:
         doc = schedulerCollection.find_one(
@@ -354,24 +455,16 @@ class Reminders(commands.Cog):
 
         user_doc = userCollection.find_one(
             {"_id": user_id},
-            {"streak": 1, "last_study_date": 1}
+            {"streak": 1, "last_study_time": 1, "last_study_date": 1}
         )
 
-        current_streak = 0
-        last_study_date = None
-        if user_doc:
-            current_streak = user_doc.get("streak", 0)
-            last_study = user_doc.get("last_study_date")
-            if last_study:
-                if isinstance(last_study, str):
-                    last_study_date = last_study
-                else:
-                    last_study_date = last_study.date().isoformat() if hasattr(last_study, 'date') else str(last_study)
+        current_streak = user_doc.get("streak", 0) if user_doc else 0
+        last_study_date = _get_last_study_date(user_doc)
 
         if last_study_date == today:
             userCollection.update_one(
                 {"_id": user_id},
-                {"$set": {"last_study_time": now, "last_study_date": today}},
+                {"$set": {"last_study_time": now}},
                 upsert=True
             )
             schedulerCollection.update_one(
@@ -395,7 +488,6 @@ class Reminders(commands.Cog):
                 "$set": {
                     "streak": new_streak,
                     "last_study_time": now,
-                    "last_study_date": today,
                 }
             },
             upsert=True
@@ -438,53 +530,43 @@ class Reminders(commands.Cog):
 
         user_doc = userCollection.find_one(
             {"_id": user_id},
-            {"streak": 1, "last_study_date": 1}
+            {"streak": 1, "last_study_time": 1, "last_study_date": 1}
         )
         if not user_doc:
             return False
 
         streak = user_doc.get("streak", 0)
-        last_study = user_doc.get("last_study_date")
-
-        if streak <= 0 or last_study is None:
+        if streak <= 0:
             return False
 
-        if isinstance(last_study, str):
-            last_study_date = last_study
-        else:
-            last_study_date = last_study.date().isoformat() if hasattr(last_study, 'date') else str(last_study)
+        last_study_date = _get_last_study_date(user_doc)
+        if last_study_date is None:
+            return False
 
         return last_study_date < yesterday
 
     def _check_broken_streaks(self):
-        now = datetime.now(timezone.utc)
-        today = now.date()
-        yesterday = (now - timedelta(days=1)).date()
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
 
         broken = []
         cursor = userCollection.find(
-            {
-                "streak": {"$gt": 0},
-                "$or": [
-                    {"last_study_date": {"$lt": yesterday.isoformat()}},
-                    {"last_study_date": {"$exists": False}},
-                    {"last_study_date": None},
-                ]
-            },
-            {"_id": 1, "streak": 1, "name": 1, "holiday_until": 1}
+            {"streak": {"$gt": 0}},
+            {"_id": 1, "streak": 1, "name": 1, "holiday_until": 1, "last_study_time": 1, "last_study_date": 1}
         )
 
         for doc in cursor:
             if is_on_holiday(doc["_id"]):
                 continue
-            broken.append(doc)
+            last_study_date = _get_last_study_date(doc)
+            if last_study_date is None or last_study_date < yesterday:
+                broken.append(doc)
 
         return broken
 
     def _break_streak(self, user_id: str):
         userCollection.update_one(
             {"_id": user_id},
-            {"$set": {"streak": 0, "last_study_date": None}}
+            {"$set": {"streak": 0, "last_study_time": None, "last_study_date": None}}
         )
 
     def _load_study_calls(self):
@@ -917,7 +999,10 @@ class Reminders(commands.Cog):
             streak = doc.get("streak", 0)
             update = {"$unset": {"holiday_until": ""}}
             if streak > 0:
-                update["$set"] = {"last_study_date": yesterday}
+                update["$set"] = {
+                    "last_study_time": now - timedelta(days=1),
+                    "last_study_date": yesterday,
+                }
             userCollection.update_one({"_id": uid}, update)
 
     @holiday_expiry.before_loop
@@ -1132,11 +1217,11 @@ class Reminders(commands.Cog):
 
         user_doc = userCollection.find_one(
             {"_id": user_id},
-            {"streak": 1, "last_study_date": 1}
+            {"streak": 1, "last_study_time": 1, "last_study_date": 1}
         )
 
         streak_val = user_doc.get("streak", 0) if user_doc else 0
-        last_study = user_doc.get("last_study_date") if user_doc else None
+        last_study = _get_last_study_date(user_doc)
 
         if streak_val > 0:
             emoji = "🔥" if streak_val >= 10 else "⚡" if streak_val >= 5 else "🌱"

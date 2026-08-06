@@ -1,0 +1,10 @@
+{
+    "_id": "<str:user_id>",
+    "active_hours": {
+        "<str:hour_0_23>": "<int:presence_event_count_in_that_hour>"
+    },
+    "last_seen_online": "<datetime|null:last_presence_update>",
+    "last_dm_sent": "<datetime|null:last_reminder_dm>",
+    "last_study_time": "<datetime|null:last_time_the_user_studied>",
+    "dm_paused": "<bool:whether_reminder_dms_are_paused>"
+}

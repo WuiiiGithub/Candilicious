@@ -558,6 +558,7 @@ class Session:
                     {"_id": member_id},
                     {"$set": {
                         "webToken": web_token,
+                        "webTokenExpiresAt": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
                         "current_session": self.session_id,
                         "name": member.name,
                         "display_name": member.display_name,
@@ -568,7 +569,8 @@ class Session:
                 domain = os.getenv("FRONTEND_DOMAIN")
                 if domain and not domain.endswith('/'):
                     domain = domain + "/"
-                link = f"{domain}projects?webtoken={web_token}&session={self.session_id}"
+                # Posted in a public Discord channel — must never carry the webToken credential.
+                link = f"{domain}projects?session={self.session_id}"
 
             who = member.display_name if is_muted(member_id) else member.mention
             embed = discord.Embed(

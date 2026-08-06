@@ -9,7 +9,8 @@ router = APIRouter()
 async def log_task_event(
     request: Request, user_id: str, project_id: str, board_id: str,
     event_name: str, avg_jerk: list | None = None,
-    avg_pointer_speed: float | None = None
+    avg_pointer_speed: float | None = None,
+    session_id: str | None = None
 ):
     await request.app.db["tasks.log"].insert_one({
         "user_id": user_id,
@@ -19,12 +20,14 @@ async def log_task_event(
         "occured_at": datetime.now(timezone.utc),
         "project_id": project_id,
         "board_id": board_id,
+        "session_id": session_id,
     })
 
 
 async def log_progress(
     request: Request, user_id: str, project_id: str, project: dict,
-    avg_jerk: list | None = None, avg_pointer_speed: float | None = None
+    avg_jerk: list | None = None, avg_pointer_speed: float | None = None,
+    session_id: str | None = None
 ):
     counts = project.get("boards", {})
     total = sum(counts.values())
@@ -41,6 +44,7 @@ async def log_progress(
         "progress_percent": progress,
         "total_tasks": total,
         "done_tasks": done,
+        "session_id": session_id,
     })
 
 
@@ -132,6 +136,7 @@ async def create_task(request: Request, payload: dict = Depends(verify_token)):
         request, user_id, project_id, board_id, "task_created",
         avg_jerk=body.get("avg_jerk"),
         avg_pointer_speed=body.get("avg_pointer_speed"),
+        session_id=body.get("session_id"),
     )
 
     project = await request.app.db["projects.docs"].find_one({"project_id": project_id})
@@ -154,6 +159,7 @@ async def create_task(request: Request, payload: dict = Depends(verify_token)):
                 request, user_id, project_id, project,
                 avg_jerk=body.get("avg_jerk"),
                 avg_pointer_speed=body.get("avg_pointer_speed"),
+                session_id=body.get("session_id"),
             )
 
     return {"status": "success", "task_id": task_id, "task": new_task}
@@ -209,18 +215,21 @@ async def update_task(request: Request, payload: dict = Depends(verify_token)):
                 request, user_id, project_id, board_id, "task_renamed",
                 avg_jerk=body.get("avg_jerk"),
                 avg_pointer_speed=body.get("avg_pointer_speed"),
+                session_id=body.get("session_id"),
             )
         if "priority" in body:
             await log_task_event(
                 request, user_id, project_id, board_id, "task_priority_changed",
                 avg_jerk=body.get("avg_jerk"),
                 avg_pointer_speed=body.get("avg_pointer_speed"),
+                session_id=body.get("session_id"),
             )
         if "status" in body:
             await log_task_event(
                 request, user_id, project_id, board_id, "task_status_changed",
                 avg_jerk=body.get("avg_jerk"),
                 avg_pointer_speed=body.get("avg_pointer_speed"),
+                session_id=body.get("session_id"),
             )
 
         # Recalculate project counts if status changed
@@ -242,6 +251,7 @@ async def update_task(request: Request, payload: dict = Depends(verify_token)):
                     request, user_id, project_id, project,
                     avg_jerk=body.get("avg_jerk"),
                     avg_pointer_speed=body.get("avg_pointer_speed"),
+                    session_id=body.get("session_id"),
                 )
 
     return {"status": "success"}
@@ -286,6 +296,7 @@ async def delete_task(request: Request, payload: dict = Depends(verify_token)):
         request, user_id, project_id, board_id, "task_deleted",
         avg_jerk=body.get("avg_jerk"),
         avg_pointer_speed=body.get("avg_pointer_speed"),
+        session_id=body.get("session_id"),
     )
 
     # Recalculate project counts after deletion
@@ -306,6 +317,7 @@ async def delete_task(request: Request, payload: dict = Depends(verify_token)):
             request, user_id, project_id, project,
             avg_jerk=body.get("avg_jerk"),
             avg_pointer_speed=body.get("avg_pointer_speed"),
+            session_id=body.get("session_id"),
         )
 
     return {"status": "success"}

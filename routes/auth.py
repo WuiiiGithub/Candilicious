@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from starlette.responses import RedirectResponse
-from . import limiter, rate_limit_ip, rate_limit_user
+from . import limiter, rate_limit_ip, rate_limit_user, _client_ip
 from library.avatars import extract_avatar_hash
 import config
 from urllib.parse import urlencode, quote
@@ -17,6 +17,41 @@ logger = logging.getLogger(__name__)
 GUILD_ID = str(config.availableIn["guilds"][0])
 
 router = APIRouter()
+
+
+async def record_ip(db, user_id: str, ip: str):
+    """Record a successful login IP on the user document as a count map.
+
+    Stores `ip_addresses: {ip: count}`. The IP is baked into the pipeline as a
+    literal constant so each counter is updated atomically and concurrent
+    logins from the same address never lose a count.
+    """
+    if not ip:
+        return
+    await db["users"].update_one(
+        {"_id": user_id},
+        [
+            {"$set": {
+                "ip_addresses": {
+                    "$setField": {
+                        "field": ip,
+                        "input": {"$ifNull": ["$ip_addresses", {}]},
+                        "value": {"$add": [
+                            {"$ifNull": [
+                                {"$getField": {
+                                    "field": ip,
+                                    "input": {"$ifNull": ["$ip_addresses", {}]},
+                                }},
+                                0
+                            ]},
+                            1
+                        ]},
+                    }
+                }
+            }}
+        ],
+        upsert=True,
+    )
 
 
 @router.get("/login")
@@ -103,6 +138,8 @@ async def callback(request: Request, code: str, state: str):
         upsert=True,
     )
 
+    await record_ip(request.app.db, user_id, _client_ip(request))
+
     payload = {
         "sub": user_id,
         "username": user_info.get("username"),
@@ -158,17 +195,27 @@ class WebTokenRequest(BaseModel):
 async def exchange_web_token(request: Request, body: WebTokenRequest):
     """
     Exchange a bot-generated web token for a JWT.
-    The bot creates webToken when a user joins a voice channel.
-    Only valid while the user is still in the VC (bot removes token on leave).
+    Single-use: the token is burned atomically on exchange.
+    The bot sets webTokenExpiresAt when generating the token.
     """
-    user_data = await request.app.db["users"].find_one(
+    user_data = await request.app.db["users"].find_one_and_update(
         {"webToken": body.token},
-        {"name": 1, "display_name": 1, "pfp": 1, "profile_pfp": 1},
+        {"$unset": {"webToken": "", "webTokenExpiresAt": ""}},
+        projection={"name": 1, "display_name": 1, "pfp": 1, "profile_pfp": 1, "webTokenExpiresAt": 1},
     )
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid or expired web token")
 
+    expires_at = user_data.get("webTokenExpiresAt")
+    try:
+        if not expires_at or datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+            raise HTTPException(status_code=401, detail="Invalid or expired web token")
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid or expired web token")
+
     user_id = user_data["_id"]
+
+    await record_ip(request.app.db, user_id, _client_ip(request))
 
     bot = request.app.state.bot
     in_guild = False

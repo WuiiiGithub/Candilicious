@@ -57,11 +57,11 @@ async def _handle_patch_task(request: Request, user_id: str, body: dict):
         )
 
         if "text" in body:
-            await _log_task_event(request, user_id, project_id, board_id, "task_renamed")
+            await _log_task_event(request, user_id, project_id, board_id, "task_renamed", body.get("session_id"))
         if "priority" in body:
-            await _log_task_event(request, user_id, project_id, board_id, "task_priority_changed")
+            await _log_task_event(request, user_id, project_id, board_id, "task_priority_changed", body.get("session_id"))
         if "status" in body:
-            await _log_task_event(request, user_id, project_id, board_id, "task_status_changed")
+            await _log_task_event(request, user_id, project_id, board_id, "task_status_changed", body.get("session_id"))
 
         if "status" in body:
             await _recalculate_counts(request, project_id)
@@ -90,13 +90,13 @@ async def _handle_delete_task(request: Request, user_id: str, body: dict):
         {"$unset": {f"tasks.{task_id}": ""}}
     )
 
-    await _log_task_event(request, user_id, project_id, board_id, "task_deleted")
+    await _log_task_event(request, user_id, project_id, board_id, "task_deleted", body.get("session_id"))
     await _recalculate_counts(request, project_id)
 
 
 async def _log_task_event(
     request: Request, user_id: str, project_id: str,
-    board_id: str, event_name: str
+    board_id: str, event_name: str, session_id: str | None = None
 ):
     await request.app.db["tasks.log"].insert_one({
         "user_id": user_id,
@@ -106,6 +106,7 @@ async def _log_task_event(
         "occured_at": datetime.now(timezone.utc),
         "project_id": project_id,
         "board_id": board_id,
+        "session_id": session_id,
     })
 
 
