@@ -2,6 +2,7 @@ import os, sys
 import asyncio
 import logging
 import discord
+import discord.app_commands as app_commands
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,12 +17,14 @@ from routes import (
     boards,
     bulk,
     drops,
+    insights,
     logs,
     notes,
     projects,
     reports,
     servers,
     social,
+    stats,
     tasks,
     uploads,
     users,
@@ -297,12 +300,93 @@ app.add_middleware(RequestBodySizeMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 # Bot Setup
 intents = discord.Intents.all()
+
+class EntryPointAwareTree(app_commands.CommandTree):
+    """Command tree that skips Entry Point command interactions (type 4).
+
+    Entry Point commands are registered via the REST API only and are not part
+    of the tree, so the tree would otherwise raise AppCommandType(4) -> ValueError.
+    They are handled separately in the on_interaction listener below.
+    """
+
+    def _from_interaction(self, interaction: discord.Interaction) -> None:
+        data = getattr(interaction, "data", None)
+        if data and data.get("type") == 4:
+            return
+        super()._from_interaction(interaction)
+
+    async def sync(self, *, guild: discord.abc.Snowflake | None = None):
+        """Sync the tree, preserving the app's Entry Point command.
+
+        Discord rejects a global bulk update that omits the app's Entry Point
+        command (error 50240), so the existing Entry Point command is fetched
+        and included in the global sync payload.
+        """
+        if guild is not None:
+            return await super().sync(guild=guild)
+
+        if self.client.application_id is None:
+            raise app_commands.MissingApplicationID
+
+        commands = self._get_all_commands(guild=None)
+        if self.translator:
+            payload = [await c.get_translated_payload(self, self.translator) for c in commands]
+        else:
+            payload = [c.to_dict(self) for c in commands]
+
+        try:
+            existing = await self._http.get_global_commands(self.client.application_id)
+        except discord.HTTPException:
+            existing = []
+        keep_fields = {
+            "id", "name", "name_localizations", "description", "description_localizations",
+            "type", "handler", "contexts", "integration_types",
+            "default_member_permissions", "dm_permission", "nsfw",
+        }
+        for command in existing:
+            if command.get("type") == 4:
+                payload.append({k: v for k, v in command.items() if k in keep_fields})
+
+        try:
+            data = await self._http.bulk_upsert_global_commands(self.client.application_id, payload=payload)
+        except discord.HTTPException as e:
+            if e.status == 400 and e.code == 50035:
+                raise app_commands.CommandSyncFailure(e, commands) from None
+            raise
+
+        return [app_commands.AppCommand(data=d, state=self._state) for d in data]
+
 bot = commands.Bot(
     command_prefix=".",
     intents=intents,
     help_command=None,
     application_id=DISCORD_CLIENT_ID,
+    tree_cls=EntryPointAwareTree,
 )
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type is not discord.InteractionType.application_command:
+        return
+    data = getattr(interaction, "data", None)
+    if not data or data.get("type") != 4:
+        return
+    log = SystemLogger(filename=filename)
+    try:
+        await interaction.response.launch_activity()
+        log.complete(
+            status_code=100,
+            message="Activity Launched",
+            details=f"Entry Point command invoked by {interaction.user}",
+        )
+    except discord.InteractionResponded:
+        pass
+    except discord.HTTPException as e:
+        log.error(
+            status_code=-50,
+            message="Launch Fail",
+            details=f"Failed to launch activity from Entry Point command: {e}",
+        )
 
 @bot.event
 async def on_ready():
@@ -456,6 +540,16 @@ app.include_router(
     prefix="/api/notes",
     tags=["notes"]
 )
+app.include_router(
+    router=stats.router,
+    prefix="/api/stats",
+    tags=["stats"]
+)
+app.include_router(
+    router=insights.router,
+    prefix="/api/stats",
+    tags=["stats"]
+)
 
 async def load():
     log = SystemLogger(filename=filename)
@@ -487,9 +581,10 @@ async def backend():
     await uvicorn.Server(config_uv).serve()
 
 async def main():
+    await bot.login(os.getenv("TOKEN"))
     await asyncio.gather(
-        load(), 
-        bot.start(os.getenv("TOKEN")),
+        load(),
+        bot.connect(),
         backend()
     )
 

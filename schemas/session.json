@@ -40,5 +40,14 @@
         "total_members": "<int:total_members>"
     },
     "level_up_message_id": "<str:discord_message_id|null>",
-    "last_boost_at": "<str:isoformat|null:last_xp_boost>"
+    "last_boost_at": "<str:isoformat|null:last_xp_boost>",
+    "pomodoro_enabled": "<bool:whether_pomodoro_feature_is_on>",
+    "pomodoro_running": "<bool:whether_timer_is_currently_running>",
+    "pomodoro_state": "<str:'focus'|'break'|'idle':current_phase>",
+    "pomodoro_focus_min": "<int:focus_phase_duration_minutes>",
+    "pomodoro_break_min": "<int:break_phase_duration_minutes>",
+    "pomodoro_ends_at": "<str:isoformat|null:when_current_phase_ends>",
+    "pomodoro_cycles": "<int:completed_focus_cycles>",
+    "pomodoro_message_ids": "<array:str:discord_message_ids:sticky_panel_messages>",
+    "pomodoro_message_id": "<str:discord_message_id|null:sticky_panel_message_legacy>"
 }

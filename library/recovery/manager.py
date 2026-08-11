@@ -269,6 +269,15 @@ class RecoveryManager:
             except Exception:
                 pass
 
+        # Restart pomodoro if it was running and re-post the sticky panel
+        if sess.pomodoro_enabled:
+            try:
+                if sess.pomodoro_running:
+                    sess.pomodoro_task = asyncio.create_task(sess._pomodoro_loop(channel))
+                await sess._refresh_pomodoro_message(channel)
+            except Exception:
+                pass
+
         # Sync back to DB (pruned members)
         self.session_manager.sync(sess)
 

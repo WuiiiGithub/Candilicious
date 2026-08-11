@@ -1,9 +1,18 @@
 from datetime import datetime
 
-def leaderboard_template(toppers: list, view: str='display_name') -> str:
+RESOURCE_LABELS = {
+    "wood": ("\U0001fab5", "Wood"),
+    "iron": ("\U0001f529", "Iron"),
+}
+
+
+def leaderboard_template(toppers: list, view: str = 'display_name', resource: str = 'wood') -> str:
     length = len(toppers)
     if length < 3:
         return "Sorry, very less people to rank"
+
+    emoji, label = RESOURCE_LABELS.get(resource, RESOURCE_LABELS["wood"])
+    title = f"{emoji} {label}"
 
     def _name(u):
         v = u.get(view) or u.get("name") or u.get("_id", "Unknown")
@@ -12,11 +21,11 @@ def leaderboard_template(toppers: list, view: str='display_name') -> str:
         return v
 
     def _score(u):
-        wood = u.get("wood") or u.get("value") or 0
-        return f"{int(wood):,}"
+        amount = u.get("amount") or u.get("value") or 0
+        return f"{int(amount):,}"
 
-    header = """**`===================================`**
-**`| X  |        Name        | Wood  |`**
+    header = f"""**`===================================`**
+**`| X  |        Name        | {title.rjust(8)} |`**
 **`-----------------------------------`**
 """
     name = _name(toppers[0])

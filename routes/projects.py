@@ -29,7 +29,14 @@ async def get_projects(request: Request, payload: dict = Depends(verify_token)):
     else:
         cursor = request.app.db["projects.docs"].find({"user_id": user_id}).sort("created_at", -1)
         projects_list = await cursor.to_list(length=None)
-        
+
+        board_counts = {p.get("project_id"): 0 for p in projects_list}
+        boards_cursor = request.app.db["boards.docs"].find({"user_id": user_id}, {"project_id": 1})
+        async for b in boards_cursor:
+            pid = b.get("project_id")
+            if pid in board_counts:
+                board_counts[pid] += 1
+
         response = []
         for p in projects_list:
             response.append({
@@ -38,6 +45,7 @@ async def get_projects(request: Request, payload: dict = Depends(verify_token)):
                 "description": p.get("description"),
                 "thumbnail_link": p.get("thumbnail_link"),
                 "boards": p.get("boards", {"todo": 0, "cooking": 0, "done": 0}),
+                "board_count": board_counts.get(p.get("project_id"), 0),
                 "created_at": p.get("created_at")
             })
         return response

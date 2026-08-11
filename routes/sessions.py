@@ -115,6 +115,15 @@ def _session_response(session_doc: dict, members: list) -> dict:
             "members_count": session_doc.get("members_count", {}),
             "members": members,
             "pending_level_up": session_doc.get("pending_level_up"),
+            "pomodoro": {
+                "enabled": session_doc.get("pomodoro_enabled", False),
+                "running": session_doc.get("pomodoro_running", False),
+                "state": session_doc.get("pomodoro_state", "idle"),
+                "focus_min": session_doc.get("pomodoro_focus_min", 25),
+                "break_min": session_doc.get("pomodoro_break_min", 5),
+                "ends_at": session_doc.get("pomodoro_ends_at"),
+                "cycles": session_doc.get("pomodoro_cycles", 0),
+            },
         },
     }
 

@@ -4,6 +4,7 @@ from discord.ext import commands, tasks
 from discord import app_commands, ui
 from library.logging import *
 from library import is_muted, is_on_holiday, db
+from library.gifs import fix_gif_url, resolve_gif_url, repair_reminder_gifs, is_usable_image_url
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -636,12 +637,22 @@ class Reminders(commands.Cog):
             conf = configCollection.find_one({"_id": "reminders"})
             if conf:
                 self.texts = conf.get("texts", ["Keep studying!"])
-                self.gifs = conf.get(
+                raw_gifs = conf.get(
                     "gifs",
                     [
-                        "https://images-ext-1.discordapp.net/external/urjscwFcuDFRDEaUyi4CIuMKyP-HdabaYLF8_iB3sno/https/media.tenor.com/dS1sKvQgD4AAAAPo/hamster-ayasan.mp4"
+                        "https://media.tenor.com/dS1sKvQgD4AAAAPo/hamster-ayasan.gif"
                     ],
                 )
+
+                # Repair any stored GIF URLs that are broken (proxy links, page
+                # links, query-string tracking URLs, expired attachment links).
+                try:
+                    fixed = await repair_reminder_gifs(configCollection, urls=raw_gifs)
+                    self.gifs = fixed.get("gifs") or []
+                except Exception:
+                    self.gifs = [g for g in (fix_gif_url(g) for g in raw_gifs) if g and is_usable_image_url(g)]
+                if not self.gifs:
+                    self.gifs = ["https://media.tenor.com/dS1sKvQgD4AAAAPo/hamster-ayasan.gif"]
 
             self._load_study_calls()
         except Exception:
@@ -1044,13 +1055,26 @@ class Reminders(commands.Cog):
                 cmdLog.process(status_code=-25, name="Missing", details="No GIF URL could be extracted from the message.")
                 return
 
+            # Normalize the URL so it actually renders inside Discord embeds.
+            fixed_url = fix_gif_url(gif_url)
+            if fixed_url and not is_usable_image_url(fixed_url):
+                fixed_url = await resolve_gif_url(fixed_url)
+            if not fixed_url or not is_usable_image_url(fixed_url):
+                await inter.response.send_message(
+                    "That GIF link isn't a direct image URL and can't be used in reminders. "
+                    "Try sending the GIF file itself or a direct media.tenor.com link.",
+                    ephemeral=True
+                )
+                cmdLog.process(status_code=-25, name="Rejected", details=f"Unusable GIF URL: {gif_url}")
+                return
+
             embed = discord.Embed(
                 title="Confirm Adding this GIF?",
                 color=discord.Color.yellow()
             )
-            embed.set_image(url=gif_url)
+            embed.set_image(url=fixed_url)
 
-            view = ConfirmGifView(gif_url=gif_url, author_id=inter.user.id)
+            view = ConfirmGifView(gif_url=fixed_url, author_id=inter.user.id)
             await inter.response.send_message(embed=embed, view=view)
             cmdLog.process(status_code=100, name="Executed", details="Confirmation prompt for GIF addition has been sent.")
         except Exception:

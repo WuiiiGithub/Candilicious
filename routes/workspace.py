@@ -280,12 +280,22 @@ async def get_reminders(db):
 
 
 async def save_reminders(db, data: RemindersData):
+    from library.gifs import resolve_gif_url, is_usable_image_url
+
+    cleaned_gifs = []
+    for raw in data.gifs:
+        if not isinstance(raw, str):
+            continue
+        resolved = await resolve_gif_url(raw)
+        if resolved and is_usable_image_url(resolved):
+            cleaned_gifs.append(resolved)
+
     await db["config"].update_one(
         {"_id": "reminders"},
-        {"$set": {"gifs": data.gifs, "texts": data.texts}},
+        {"$set": {"gifs": cleaned_gifs, "texts": data.texts}},
         upsert=True
     )
-    return {"status": "saved"}
+    return {"status": "saved", "gifs": cleaned_gifs}
 
 
 def merge_defaults(raw: dict) -> dict:

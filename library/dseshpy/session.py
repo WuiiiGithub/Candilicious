@@ -120,6 +120,17 @@ class Session:
         level_up_message_id: str = None,
         last_boost_at: str = None,
 
+        # pomodoro
+        pomodoro_enabled: bool = False,
+        pomodoro_running: bool = False,
+        pomodoro_state: str = "idle",  # "focus" | "break" | "idle"
+        pomodoro_focus_min: int = 25,
+        pomodoro_break_min: int = 5,
+        pomodoro_ends_at: str = None,
+        pomodoro_cycles: int = 0,
+        pomodoro_message_id: str = None,
+        pomodoro_message_ids: list = None,
+
         **kwargs
     ):
         self.session_id = session_id or generate_session_id(channel_id)
@@ -154,6 +165,18 @@ class Session:
         self.pending_level_up = pending_level_up
         self.level_up_message_id = level_up_message_id
         self.last_boost_at = last_boost_at
+
+        self.pomodoro_enabled = pomodoro_enabled
+        self.pomodoro_running = pomodoro_running
+        self.pomodoro_state = pomodoro_state
+        self.pomodoro_focus_min = pomodoro_focus_min
+        self.pomodoro_break_min = pomodoro_break_min
+        self.pomodoro_ends_at = pomodoro_ends_at
+        self.pomodoro_cycles = pomodoro_cycles
+        self.pomodoro_message_ids = list(pomodoro_message_ids or ())
+        if not self.pomodoro_message_ids and pomodoro_message_id:
+            self.pomodoro_message_ids = [pomodoro_message_id]
+        self.pomodoro_task = None
         
     def to_dict(self):
         """Convert session state to dictionary for MongoDB."""
@@ -177,6 +200,15 @@ class Session:
             "pending_level_up": self.pending_level_up,
             "level_up_message_id": self.level_up_message_id,
             "last_boost_at": getattr(self, 'last_boost_at', None),
+            "pomodoro_enabled": self.pomodoro_enabled,
+            "pomodoro_running": self.pomodoro_running,
+            "pomodoro_state": self.pomodoro_state,
+            "pomodoro_focus_min": self.pomodoro_focus_min,
+            "pomodoro_break_min": self.pomodoro_break_min,
+            "pomodoro_ends_at": self.pomodoro_ends_at,
+            "pomodoro_cycles": self.pomodoro_cycles,
+            "pomodoro_message_ids": self.pomodoro_message_ids,
+            "pomodoro_message_id": self.pomodoro_message_ids[0] if self.pomodoro_message_ids else None,
         }
         return d
 
@@ -353,6 +385,252 @@ class Session:
             "ss+noact": "screen sharing or no activity",
         }
         return descriptions.get(self.session_type, "any activity type")
+
+    # ============================= POMODORO =============================
+
+    def _pomodoro_end_dt(self):
+        if not self.pomodoro_ends_at:
+            return None
+        try:
+            dt = self.pomodoro_ends_at
+            if isinstance(dt, str):
+                dt = datetime.fromisoformat(dt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            return None
+
+    def _pomodoro_panel(self, channel):
+        """Build the sticky pomodoro embed + view for the study VC."""
+        embed = discord.Embed(
+            title="\U0001f345 Pomodoro Timer",
+            color=0xFF6B6B,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        if self.pomodoro_running and self.pomodoro_state in ("focus", "break"):
+            end_dt = self._pomodoro_end_dt() or datetime.now(timezone.utc)
+            end_ts = int(end_dt.timestamp())
+            if self.pomodoro_state == "focus":
+                break_ts = int((end_dt + timedelta(minutes=self.pomodoro_break_min)).timestamp())
+                embed.description = (
+                    "\U0001f534 **Focus Session**\n\n"
+                    f"Focus ends in <t:{end_ts}:R>\n"
+                    f"\u2615 Break starts at <t:{break_ts}:t>\n\n"
+                    f"Cycle **{self.pomodoro_cycles + 1}**"
+                )
+            else:
+                focus_ts = int((end_dt + timedelta(minutes=self.pomodoro_focus_min)).timestamp())
+                embed.description = (
+                    "\U0001f7e2 **Break Time** \u2615\n\n"
+                    f"Break ends in <t:{end_ts}:R>\n"
+                    f"\U0001f4da Next focus at <t:{focus_ts}:t>\n\n"
+                    f"Completed **{self.pomodoro_cycles}** focus cycles"
+                )
+        else:
+            embed.description = (
+                "\u23f8\ufe0f **Timer Idle**\n\n"
+                "The pomodoro panel is ready.\n"
+                "Press **Start** to begin a focus session."
+            )
+
+        embed.set_footer(text=f"{self.pomodoro_focus_min} min focus \u00b7 {self.pomodoro_break_min} min break")
+        return embed, PomodoroPanelView(self)
+
+    async def _refresh_pomodoro_message(self, channel):
+        """Create (or update) the sticky pomodoro message in the VC.
+
+        Tracks *all* known panel message ids so a second enable can never
+        duplicate the panel — any existing message gets edited in place.
+        """
+        if channel is None:
+            return
+        try:
+            embed, view = self._pomodoro_panel(channel)
+            alive = []
+            for mid in list(self.pomodoro_message_ids):
+                try:
+                    msg = await channel.fetch_message(int(mid))
+                    await msg.edit(embed=embed, view=view)
+                    alive.append(mid)
+                except (discord.NotFound, discord.HTTPException, ValueError):
+                    pass
+            self.pomodoro_message_ids = alive[-3:]
+            if not alive:
+                msg = await channel.send(embed=embed, view=view)
+                self.pomodoro_message_ids = [str(msg.id)]
+            self._sync_session_now()
+        except Exception:
+            pass
+
+    async def _pomodoro_tick(self, channel):
+        """Flip focus -> break -> focus and refresh the sticky message."""
+        if not self.pomodoro_running:
+            return
+        now = datetime.now(timezone.utc)
+        if self.pomodoro_state == "focus":
+            self.pomodoro_state = "break"
+            end = now + timedelta(minutes=self.pomodoro_break_min)
+            note = "\u2615 **Break time!**"
+        else:
+            self.pomodoro_state = "focus"
+            self.pomodoro_cycles += 1
+            end = now + timedelta(minutes=self.pomodoro_focus_min)
+            note = f"\U0001f345 **Focus session {self.pomodoro_cycles} started!**"
+        self.pomodoro_ends_at = end.isoformat()
+        self._sync_session_now()
+        await self._emit_event("pomodoro_state", {
+            "state": self.pomodoro_state,
+            "ends_at": self.pomodoro_ends_at,
+            "focus_min": self.pomodoro_focus_min,
+            "break_min": self.pomodoro_break_min,
+            "cycles": self.pomodoro_cycles,
+        })
+        await self._refresh_pomodoro_message(channel)
+        end_ts = int((self._pomodoro_end_dt() or now).timestamp())
+        await self._announce_pomodoro(channel, f"{note} Ends <t:{end_ts}:R>", color=0x57F287)
+
+    async def _pomodoro_loop(self, channel):
+        """Background loop that sleeps until the current phase ends.
+
+        Sleeps in 60s chunks so cancellation is responsive, but only flips the
+        phase (and refreshes the panel) once the phase end time has actually
+        passed.
+        """
+        try:
+            while self.pomodoro_running:
+                end_dt = self._pomodoro_end_dt()
+                if end_dt is None:
+                    break
+                remaining = (end_dt - datetime.now(timezone.utc)).total_seconds()
+                if remaining <= 0:
+                    await self._pomodoro_tick(channel)
+                else:
+                    await asyncio.sleep(min(remaining, 60))
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Pomodoro loop error")
+
+    def _cancel_pomodoro_task(self):
+        if self.pomodoro_task and not self.pomodoro_task.done():
+            self.pomodoro_task.cancel()
+        self.pomodoro_task = None
+
+    async def set_pomodoro_times(self, channel, focus_min: int, break_min: int):
+        """Update focus/break durations and refresh the sticky panel.
+
+        Only affects phases that start after the change; an already running
+        phase keeps its current end time.
+        """
+        focus_min = int(focus_min)
+        break_min = int(break_min)
+        if focus_min < 1 or break_min < 1:
+            return
+        self.pomodoro_focus_min = focus_min
+        self.pomodoro_break_min = break_min
+        self._sync_session_now()
+        await self._emit_event("pomodoro_state", {
+            "state": self.pomodoro_state,
+            "ends_at": self.pomodoro_ends_at,
+            "focus_min": self.pomodoro_focus_min,
+            "break_min": self.pomodoro_break_min,
+            "cycles": self.pomodoro_cycles,
+        })
+        await self._refresh_pomodoro_message(channel)
+
+    async def enable_pomodoro(self, channel, focus_min=None, break_min=None):
+        """Turn the pomodoro feature on and post the sticky panel (idle)."""
+        if focus_min is not None and focus_min > 0:
+            self.pomodoro_focus_min = focus_min
+        if break_min is not None and break_min > 0:
+            self.pomodoro_break_min = break_min
+        self.pomodoro_enabled = True
+        self._sync_session_now()
+        await self._refresh_pomodoro_message(channel)
+
+    async def disable_pomodoro(self, channel):
+        """Turn the pomodoro feature off and remove the sticky panel."""
+        self.pomodoro_enabled = False
+        self.pomodoro_running = False
+        self.pomodoro_state = "idle"
+        self.pomodoro_ends_at = None
+        self._cancel_pomodoro_task()
+        still_alive = []
+        for mid in list(self.pomodoro_message_ids):
+            try:
+                msg = await channel.fetch_message(int(mid))
+                await msg.delete()
+            except Exception:
+                still_alive.append(mid)
+        self.pomodoro_message_ids = still_alive
+        self._sync_session_now()
+
+    async def _announce_pomodoro(self, channel, message: str, color: int = 0xFF6B6B):
+        """Post a short VC announcement mentioning all session members."""
+        try:
+            mentions = " ".join(
+                m.mention for m in channel.members
+                if not m.bot and str(m.id) in self.members
+            )
+            await channel.send(
+                content=mentions or None,
+                embed=discord.Embed(description=message, color=color),
+                delete_after=15,
+            )
+        except Exception:
+            pass
+
+    async def start_pomodoro(self, channel):
+        """Start a focus session and spawn the phase loop."""
+        self.pomodoro_enabled = True
+        self.pomodoro_running = True
+        self.pomodoro_state = "focus"
+        self.pomodoro_ends_at = (
+            datetime.now(timezone.utc) + timedelta(minutes=self.pomodoro_focus_min)
+        ).isoformat()
+        self._sync_session_now()
+        await self._emit_event("pomodoro_state", {
+            "state": self.pomodoro_state,
+            "ends_at": self.pomodoro_ends_at,
+            "focus_min": self.pomodoro_focus_min,
+            "break_min": self.pomodoro_break_min,
+            "cycles": self.pomodoro_cycles,
+        })
+        self._cancel_pomodoro_task()
+        self.pomodoro_task = asyncio.create_task(self._pomodoro_loop(channel))
+        end_ts = int((self._pomodoro_end_dt() or datetime.now(timezone.utc)).timestamp())
+        await self._announce_pomodoro(
+            channel,
+            f"\U0001f345 **Focus session started!** Ends <t:{end_ts}:R>",
+        )
+
+    async def stop_pomodoro(self, channel):
+        """Stop the running timer and put the panel back to idle."""
+        self.pomodoro_running = False
+        self.pomodoro_state = "idle"
+        self.pomodoro_ends_at = None
+        self._cancel_pomodoro_task()
+        self._sync_session_now()
+        await self._emit_event("pomodoro_state", {
+            "state": self.pomodoro_state,
+            "ends_at": None,
+            "focus_min": self.pomodoro_focus_min,
+            "break_min": self.pomodoro_break_min,
+            "cycles": self.pomodoro_cycles,
+        })
+
+    async def reset_pomodoro(self, channel):
+        """Reset cycle count and, if running, restart the current phase."""
+        self.pomodoro_cycles = 0
+        if self.pomodoro_running:
+            self.pomodoro_ends_at = (
+                datetime.now(timezone.utc) + timedelta(minutes=self.pomodoro_focus_min)
+            ).isoformat()
+        else:
+            self.pomodoro_ends_at = None
+        self._sync_session_now()
 
     def _accrue_time(self, member_id: str, activity_type: str, seconds: float):
         if member_id not in self.members:
@@ -643,8 +921,13 @@ class Session:
                 self.guild_id = "web"
                 self._sync_session_now()
 
-                if self.drop_task and not self.drop_task.done():
-                    pass
+                # No one is in the Discord VC anymore — retire the pomodoro panel.
+                self.pomodoro_enabled = False
+                self.pomodoro_running = False
+                self.pomodoro_state = "idle"
+                self.pomodoro_ends_at = None
+                self._cancel_pomodoro_task()
+                self.pomodoro_message_ids = []
             
             if len(self.members) == 0 and self.drop_task:
                 self.drop_task.cancel()
@@ -902,3 +1185,62 @@ class SessionManager:
         col.delete_one({"session_id": session.session_id})
         if session.drop_task and not session.drop_task.done():
             session.drop_task.cancel()
+        session._cancel_pomodoro_task()
+
+
+class PomodoroPanelView(discord.ui.View):
+    """Sticky pomodoro panel posted in the study VC with Start/Stop/Reset/Off."""
+
+    def __init__(self, session: Session):
+        super().__init__(timeout=None)
+        self.session = session
+        self.start.disabled = session.pomodoro_running
+        self.stop.disabled = not session.pomodoro_running
+        self.reset.disabled = not session.pomodoro_running
+
+    def _is_authorized(self, interaction) -> bool:
+        sid = str(interaction.user.id)
+        return sid == self.session.owner_id or sid in self.session.members
+
+    async def _denied(self, interaction):
+        await interaction.response.send_message(
+            "Only session members can control this pomodoro.", ephemeral=True
+        )
+
+    @discord.ui.button(label="Start", style=discord.ButtonStyle.green, emoji="\u25b6\ufe0f", row=0)
+    async def start(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._is_authorized(interaction):
+            return await self._denied(interaction)
+        await interaction.response.defer()
+        await self.session.start_pomodoro(interaction.channel)
+        embed, view = self.session._pomodoro_panel(interaction.channel)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+    @discord.ui.button(label="Stop", style=discord.ButtonStyle.red, emoji="\u23f9\ufe0f", row=0)
+    async def stop(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._is_authorized(interaction):
+            return await self._denied(interaction)
+        await interaction.response.defer()
+        await self.session.stop_pomodoro(interaction.channel)
+        embed, view = self.session._pomodoro_panel(interaction.channel)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+    @discord.ui.button(label="Reset", style=discord.ButtonStyle.grey, emoji="\U0001f504", row=0)
+    async def reset(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._is_authorized(interaction):
+            return await self._denied(interaction)
+        await interaction.response.defer()
+        await self.session.reset_pomodoro(interaction.channel)
+        embed, view = self.session._pomodoro_panel(interaction.channel)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+    @discord.ui.button(label="Off", style=discord.ButtonStyle.secondary, emoji="\u2716\ufe0f", row=1)
+    async def off(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._is_authorized(interaction):
+            return await self._denied(interaction)
+        await interaction.response.defer()
+        await self.session.disable_pomodoro(interaction.channel)
+        try:
+            await interaction.delete_original_response()
+        except Exception:
+            pass

@@ -474,6 +474,403 @@ class ActionView(ui.View):
         await interaction.response.edit_message(embed=embed, view=None)
 
 
+class EchoModal(ui.Modal, title="Echo"):
+    def __init__(self, mode: str, target=None):
+        super().__init__()
+        self.mode = mode
+        self.target = target
+        self.add_item(ui.TextInput(
+            label="Text",
+            placeholder="Enter the text to send...",
+            required=True,
+            max_length=2000,
+            style=discord.TextStyle.paragraph,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        text = self.children[0].value
+        await interaction.response.defer(ephemeral=True)
+        try:
+            if self.mode == "say":
+                await interaction.channel.send(text)
+                await interaction.followup.send("Done", ephemeral=True)
+            elif self.mode == "announce":
+                await self.target.send(text)
+                await interaction.followup.send(
+                    f"Announced in {self.target.mention}.", ephemeral=True
+                )
+            elif self.mode == "dm":
+                await self.target.send(text)
+                await interaction.followup.send(
+                    f"Message sent to {self.target.name}.", ephemeral=True
+                )
+        except Exception as e:
+            await interaction.followup.send(f"Failed to send: {e}", ephemeral=True)
+
+
+class EchoChannelSelect(ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="Select a channel...",
+            channel_types=[discord.ChannelType.text, discord.ChannelType.news],
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        modal = EchoModal(mode="announce", target=self.values[0])
+        await interaction.response.send_modal(modal)
+
+
+class EchoChannelPickView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(EchoChannelSelect())
+
+
+class EchoUserSelect(ui.UserSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="Select a user...",
+            min_values=1,
+            max_values=1,
+            row=0,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        modal = EchoModal(mode="dm", target=self.values[0])
+        await interaction.response.send_modal(modal)
+
+
+class EchoUserPickView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+        self.add_item(EchoUserSelect())
+
+
+class EchoView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=120)
+
+    @ui.button(label="\U0001f4e3 Announce", style=discord.ButtonStyle.green)
+    async def announce(self, interaction: discord.Interaction, button: ui.Button):
+        embed = discord.Embed(
+            title="\U0001f4e3 Announce",
+            description="Select the channel to announce in.",
+            color=config.msgColor,
+        )
+        await interaction.response.edit_message(embed=embed, view=EchoChannelPickView())
+
+    @ui.button(label="\U0001f4ac Say", style=discord.ButtonStyle.grey)
+    async def say(self, interaction: discord.Interaction, button: ui.Button):
+        modal = EchoModal(mode="say")
+        await interaction.response.send_modal(modal)
+
+    @ui.button(label="\U0001f5e8\ufe0f DM", style=discord.ButtonStyle.blurple)
+    async def dm(self, interaction: discord.Interaction, button: ui.Button):
+        embed = discord.Embed(
+            title="\U0001f5e8\ufe0f DM",
+            description="Select the user to message.",
+            color=config.msgColor,
+        )
+        await interaction.response.edit_message(embed=embed, view=EchoUserPickView())
+
+
+# ===================== VC SETTINGS UI =====================
+
+TYPE_NAMES = {
+    "*": "All Types Allowed",
+    "cam": "CAM Only",
+    "ss": "Screen Share Only",
+    "cam+ss": "CAM or Screen Share Allowed",
+    "cam&ss": "CAM & Screen Share Allowed",
+    "cam+noact": "CAM or No Activity Allowed",
+    "ss+noact": "Screen Share or No Activity Allowed",
+}
+
+
+def find_session_for_interaction(inter: discord.Interaction, session_manager):
+    """Resolve the session the user is currently in, along with its VC."""
+    if not inter.user.voice or not inter.user.voice.channel:
+        return None, None
+    channel = inter.user.voice.channel
+    ch_id = str(channel.id)
+    sid = session_manager.channel_sessions.get(ch_id)
+    session = session_manager.active_sessions.get(sid) if sid else None
+    if session is None:
+        for sess in session_manager.active_sessions.values():
+            if sess.channel_id == ch_id:
+                session = sess
+                break
+    return session, channel
+
+
+async def _channel_status(channel: discord.VoiceChannel):
+    """Read the current VC status. discord.py doesn't expose it on the object,
+    so fetch the raw channel payload from the API."""
+    try:
+        return getattr(channel, "status", None)
+    except Exception:
+        pass
+    try:
+        raw = await channel._state.http.get_channel(channel.id)
+        if isinstance(raw, dict):
+            return raw.get("status") or None
+    except Exception:
+        pass
+    return None
+
+
+async def build_vcset_embed(session, channel: discord.VoiceChannel) -> discord.Embed:
+    embed = discord.Embed(
+        title="\U0001f39b\ufe0f Session Control Panel",
+        description="Manage your study VC right from Discord.",
+        color=config.msgColor,
+        timestamp=datetime.now(),
+    )
+
+    owner = f"<@{session.owner_id}>" if session.owner_id else "\u2014"
+    embed.add_field(name="\U0001f451 Owner", value=owner, inline=False)
+    embed.add_field(
+        name="\U0001f3af Session Type",
+        value=TYPE_NAMES.get(session.session_type, session.session_type or "\u2014"),
+        inline=False,
+    )
+    embed.add_field(
+        name="\U0001f4cb Session ID",
+        value=f"```\n{session.session_id}\n```",
+        inline=False,
+    )
+    embed.add_field(name="\U0001f4db VC Name", value=channel.name, inline=False)
+    vc_status = await _channel_status(channel)
+    embed.add_field(name="\U0001f4ac Status", value=vc_status or "\u2014", inline=False)
+
+    if session.pomodoro_enabled and session.pomodoro_running:
+        if session.pomodoro_state == "focus":
+            pomo_val = "\U0001f534 Focus"
+        elif session.pomodoro_state == "break":
+            pomo_val = "\U0001f7e2 Break"
+        else:
+            pomo_val = "\u23f8\ufe0f Idle"
+    elif session.pomodoro_enabled:
+        pomo_val = "\u23f8\ufe0f Idle"
+    else:
+        pomo_val = "\u274c Off"
+    embed.add_field(name="\U0001f345 Pomodoro", value=pomo_val, inline=False)
+    embed.add_field(name="\U0001f465 Members", value=str(len(session.members or {})), inline=False)
+
+    embed.set_footer(text="Use the controls below to adjust this session.")
+    return embed
+
+
+async def apply_session_type(session, channel: discord.VoiceChannel, interaction: discord.Interaction):
+    """Apply a new session type and warn + monitor non-compliant members."""
+    study_cog = interaction.client.get_cog("Study")
+    exceptions = study_cog.exceptions if study_cog else None
+    category_id = str(channel.category_id) if channel.category_id else None
+
+    non_compliant = []
+    for vc_member in channel.members:
+        if vc_member.bot:
+            continue
+        act_type = dseshpy.session._get_activity_type(vc_member.voice)
+        if not session._is_allowed(act_type):
+            non_compliant.append(vc_member)
+            if str(vc_member.id) not in session.monitor_tasks:
+                task = asyncio.create_task(
+                    session.activity_monitor(vc_member, exceptions, category_id, None)
+                )
+                session.monitor_tasks[str(vc_member.id)] = task
+
+    if non_compliant:
+        mentions = " ".join(m.mention for m in non_compliant if not is_muted(str(m.id)))
+        await channel.send(
+            content=mentions,
+            embed=discord.Embed(
+                description=f"\u26a0\ufe0f This VC now requires **{session._type_description()}**. "
+                f"Turn on the required devices within 5 minutes or you'll be removed.",
+                color=0x3498DB,
+            ),
+            delete_after=30,
+        )
+
+
+class SessionTypeSelect(ui.Select):
+    def __init__(self, session, channel: discord.VoiceChannel):
+        options = [
+            discord.SelectOption(label="All Types Allowed", value="*", description="No restrictions"),
+            discord.SelectOption(label="CAM Only", value="cam", description="Camera must be on"),
+            discord.SelectOption(label="Screen Share Only", value="ss", description="Screen must be shared"),
+            discord.SelectOption(label="CAM or Screen Share", value="cam+ss", description="Either one required"),
+            discord.SelectOption(label="CAM & Screen Share", value="cam&ss", description="Both required"),
+            discord.SelectOption(label="CAM or No Activity", value="cam+noact", description="Camera on or no activity"),
+            discord.SelectOption(label="Screen Share or No Activity", value="ss+noact", description="Screen share or no activity"),
+        ]
+        super().__init__(placeholder="Set Session Type...", options=options, row=0)
+        self.session = session
+        self.channel = channel
+
+    async def callback(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.session.owner_id:
+            return await interaction.response.send_message(
+                "Only the session owner can change this.", ephemeral=True
+            )
+        value = self.values[0]
+        self.session.update_settings(session_type=value)
+        sm = getattr(interaction.client, "session_manager", None)
+        if sm:
+            sm.sync(self.session)
+        await apply_session_type(self.session, self.channel, interaction)
+
+        embed = await build_vcset_embed(self.session, self.channel)
+        view = VCSetView(self.session, self.channel, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class VCSetModal(ui.Modal, title="Edit Study VC"):
+    def __init__(self, session, channel: discord.VoiceChannel, current_status=None):
+        super().__init__()
+        self.session = session
+        self.channel = channel
+        self.add_item(ui.TextInput(
+            label="VC Name",
+            default=channel.name,
+            required=False,
+            max_length=100,
+        ))
+        self.add_item(ui.TextInput(
+            label="Status",
+            default=current_status or "",
+            required=False,
+            max_length=500,
+            style=discord.TextStyle.short,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.session.owner_id:
+            return await interaction.response.send_message(
+                "Only the session owner can edit this.", ephemeral=True
+            )
+        try:
+            name = self.children[0].value.strip()
+        except Exception:
+            name = None
+        try:
+            status = self.children[1].value.strip()
+        except Exception:
+            status = None
+        kwargs = {}
+        if name:
+            kwargs["name"] = name
+        if status:
+            kwargs["status"] = status
+        try:
+            await self.channel.edit(**kwargs)
+        except Exception as e:
+            return await interaction.response.send_message(f"Failed to update: {e}", ephemeral=True)
+
+        embed = await build_vcset_embed(self.session, self.channel)
+        view = VCSetView(self.session, self.channel, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class PomodoroTimesModal(ui.Modal, title="Pomodoro Timing"):
+    def __init__(self, session, channel: discord.VoiceChannel):
+        super().__init__()
+        self.session = session
+        self.channel = channel
+        self.add_item(ui.TextInput(
+            label="Focus (minutes)",
+            default=str(session.pomodoro_focus_min),
+            required=True,
+            max_length=3,
+            min_length=1,
+            style=discord.TextStyle.short,
+        ))
+        self.add_item(ui.TextInput(
+            label="Break (minutes)",
+            default=str(session.pomodoro_break_min),
+            required=True,
+            max_length=3,
+            min_length=1,
+            style=discord.TextStyle.short,
+        ))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.session.owner_id:
+            return await interaction.response.send_message(
+                "Only the session owner can edit this.", ephemeral=True
+            )
+        try:
+            focus = int(self.children[0].value.strip())
+            brk = int(self.children[1].value.strip())
+            if focus < 1 or focus > 180 or brk < 1 or brk > 60:
+                raise ValueError
+        except ValueError:
+            return await interaction.response.send_message(
+                "Use whole minutes (focus 1\u2013180, break 1\u201360).", ephemeral=True
+            )
+
+        await self.session.set_pomodoro_times(self.channel, focus, brk)
+        embed = await build_vcset_embed(self.session, self.channel)
+        view = VCSetView(self.session, self.channel, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class VCSetView(ui.View):
+    def __init__(self, session, channel: discord.VoiceChannel, bot):
+        super().__init__(timeout=180)
+        self.session = session
+        self.channel = channel
+        self.bot = bot
+        self.add_item(SessionTypeSelect(session, channel))
+
+        pomo_label = "\U0001f345 Pomodoro: ON" if session.pomodoro_enabled else "\U0001f345 Pomodoro: OFF"
+        pomo_style = discord.ButtonStyle.green if session.pomodoro_enabled else discord.ButtonStyle.secondary
+        toggle = ui.Button(label=pomo_label, style=pomo_style, row=1)
+        toggle.callback = self.pomodoro_toggle
+        self.add_item(toggle)
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if str(interaction.user.id) != self.session.owner_id:
+            await interaction.response.send_message(
+                "Only the session owner can control this panel.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def pomodoro_toggle(self, interaction: discord.Interaction):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.defer()
+        if self.session.pomodoro_enabled:
+            await self.session.disable_pomodoro(self.channel)
+        else:
+            await self.session.enable_pomodoro(self.channel)
+
+        embed = await build_vcset_embed(self.session, self.channel)
+        view = VCSetView(self.session, self.channel, interaction.client)
+        await interaction.edit_original_response(embed=embed, view=view)
+
+    @ui.button(label="\u270f\ufe0f Edit", style=discord.ButtonStyle.blurple, row=1)
+    async def edit(self, interaction: discord.Interaction, button: ui.Button):
+        if not await self._guard(interaction):
+            return
+        current_status = await _channel_status(self.channel)
+        await interaction.response.send_modal(VCSetModal(self.session, self.channel, current_status))
+
+    @ui.button(label="\U0001f345 Times", style=discord.ButtonStyle.blurple, row=1)
+    async def pomo_times(self, interaction: discord.Interaction, button: ui.Button):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(PomodoroTimesModal(self.session, self.channel))
+
+    @ui.button(label="Exit", style=discord.ButtonStyle.red, row=2)
+    async def exit(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.edit_message(content="Panel closed.", embed=None, view=None)
+
+
 class Study(commands.Cog):
     def __init__(self, bot):
         # general vars
@@ -774,16 +1171,21 @@ class Study(commands.Cog):
         view=[
             app_commands.Choice(name='View by Username', value='name'),
             app_commands.Choice(name='View by Display Name', value='display_name')
+        ],
+        resource=[
+            app_commands.Choice(name="\U0001fab5 Wood", value="wood"),
+            app_commands.Choice(name="\U0001f529 Iron", value="iron"),
         ]
     )
     @app_commands.describe(
         scope="It describes if you want to see leaderboard within the server or globally.",
         view="It defines based on what choice you view your leaderboard",
+        resource="The resource you want to rank everyone by",
     )
-    async def leaderboard(self, inter: discord.Interaction, view: str="display_name", scope: int = 1):
+    async def leaderboard(self, inter: discord.Interaction, view: str = "display_name", scope: int = 1, resource: str = "wood"):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            cmdLog.process(status_code=0, name='Waiting', details="Fetching leaderboard data...")
+            cmdLog.process(status_code=0, name='Waiting', details=f"Fetching {resource} leaderboard data...")
 
             if scope == 0:
                 await inter.response.send_message("The Leaderboard command is still under development!", ephemeral=True)
@@ -792,7 +1194,9 @@ class Study(commands.Cog):
 
             user_id = str(inter.user.id)
 
-            total_count = userCollection.count_documents({"economy.resources.wood.amount": {"$gt": 0}})
+            resource_field = f"economy.resources.{resource}.amount"
+
+            total_count = userCollection.count_documents({resource_field: {"$gt": 0}})
 
             if total_count < 3:
                 await inter.response.send_message(
@@ -803,15 +1207,15 @@ class Study(commands.Cog):
                 return
 
             pipeline = [
-                {"$match": {"economy.resources.wood.amount": {"$gt": 0}}},
+                {"$match": {resource_field: {"$gt": 0}}},
                 {"$project": {
                     "_id": 1,
                     "name": {"$ifNull": ["$name", "$_id"]},
                     "display_name": {"$ifNull": ["$display_name", "$name", "$_id"]},
                     "pfp": {"$ifNull": ["$pfp", ""]},
-                    "wood": {"$ifNull": ["$economy.resources.wood.amount", 0]},
+                    "amount": {"$ifNull": [f"${resource_field}", 0]},
                 }},
-                {"$sort": {"wood": -1}},
+                {"$sort": {"amount": -1}},
             ]
             all_users = list(userCollection.aggregate(pipeline))
 
@@ -839,7 +1243,7 @@ class Study(commands.Cog):
             if is_premium:
                 await inter.response.defer()
 
-                def fmt_wood(amount):
+                def fmt_amount(amount):
                     return f"{int(amount):,}"
 
                 podium_data = []
@@ -847,7 +1251,7 @@ class Study(commands.Cog):
                     podium_data.append({
                         "rank": u["_rank"],
                         "name": u.get(view, "Unknown"),
-                        "value": fmt_wood(u["wood"]),
+                        "value": fmt_amount(u["amount"]),
                         "avatar_url": u.get("pfp", ""),
                     })
 
@@ -856,7 +1260,7 @@ class Study(commands.Cog):
                     rows_data.append({
                         "rank": u["_rank"],
                         "name": u.get(view, "Unknown"),
-                        "value": fmt_wood(u["wood"]),
+                        "value": fmt_amount(u["amount"]),
                         "avatar_url": u.get("pfp", ""),
                     })
 
@@ -874,7 +1278,7 @@ class Study(commands.Cog):
                 toppers = top3 + rows
                 await inter.response.send_message(
                     embed=discord.Embed(
-                        description=leaderboard_template(toppers=toppers, view=view),
+                        description=leaderboard_template(toppers=toppers, view=view, resource=resource),
                         color=config.msgColor
                     ),
                     delete_after=30
@@ -946,9 +1350,14 @@ class Study(commands.Cog):
 
             cmdLog.process(status_code=0, name="Waiting", details=f"Initiating shell command execution: {cmd}")
 
-            if cmd.startswith('echo '):
-                await inter.channel.send(cmd[5:])
-                await inter.response.send_message('Done', ephemeral=True)
+            if cmd == 'echo':
+                embed = discord.Embed(
+                    title="\U0001f4ac Echo",
+                    description="Choose what you want to do.",
+                    color=config.msgColor,
+                )
+                await inter.response.send_message(embed=embed, view=EchoView(), ephemeral=True)
+                cmdLog.process(status_code=100, name="Executed", details="Echo menu opened.")
                 return
 
             elif cmd.startswith('decho '):
@@ -1041,7 +1450,6 @@ class Study(commands.Cog):
 
             elif cmd == 'sync':
                 await inter.response.send_message("Syncing all users with Discord...", ephemeral=True)
-
                 all_users = list(userCollection.find({}, {"_id": 1}))
                 cmdLog.process(status_code=50, name="Ready", details=f"Found {len(all_users)} total users to sync.")
 
@@ -1080,6 +1488,27 @@ class Study(commands.Cog):
                 else:
                     await inter.followup.send("No users to sync.", ephemeral=True)
                     cmdLog.process(status_code=-25, name="Failed", details="No users synced.")
+
+            elif cmd == 'fix gifs':
+                await inter.response.send_message("Scanning stored reminder GIFs for broken URLs...", ephemeral=True)
+                from library.gifs import repair_reminder_gifs
+                try:
+                    result = await repair_reminder_gifs(db["config"])
+                    await inter.followup.send(
+                        f"**GIF repair complete!**\n- Scanned: {result['total']}\n- Repaired: {result['repaired']}\n- Active: {len(result['gifs'])}",
+                        ephemeral=True
+                    )
+                    cmdLog.process(status_code=100, name="Executed", details=f"GIF repair: {result['repaired']} of {result['total']} fixed.")
+                except Exception as e:
+                    await inter.followup.send(f"Failed to repair GIFs: {e}", ephemeral=True)
+                    cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+
+            else:
+                await inter.response.send_message(
+                    f"Unknown command: `{cmd}`\nAvailable commands: `echo`, `decho`, `update lb`, `sync`, `fix gifs`.",
+                    ephemeral=True,
+                )
+                cmdLog.process(status_code=-25, name="Rejected", details=f"Unknown shell command: {cmd}")
 
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
@@ -1145,59 +1574,12 @@ class Study(commands.Cog):
 
     @app_commands.command(name="vcset", description="Configure study VC settings")
     @app_commands.guild_only()
-    @app_commands.describe(
-        name="Rename the study voice channel",
-        status="Set the channel status message (small text under VC name)",
-        session_type="Restrict which activity types are allowed in the VC",
-    )
-    @app_commands.choices(session_type=[
-        app_commands.Choice(name="All Types Allowed", value="*"),
-        app_commands.Choice(name="CAM Only", value="cam"),
-        app_commands.Choice(name="Screen Share Only", value="ss"),
-        app_commands.Choice(name="CAM or Screen Share Allowed", value="cam+ss"),
-        app_commands.Choice(name="CAM & Screen Share Allowed", value="cam&ss"),
-        app_commands.Choice(name="CAM or No Activity Allowed", value="cam+noact"),
-        app_commands.Choice(name="Screen Share or No Activity Allowed", value="ss+noact"),
-    ])
-    async def vcset(self, inter: discord.Interaction, name: str = None, status: str = None, session_type: str = None):
+    async def vcset(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            server_id = str(inter.guild_id)
+            session, channel = find_session_for_interaction(inter, self.session_manager)
 
-            def _find_session_by_channel(ch_id: str):
-                sid = self.session_manager.channel_sessions.get(ch_id)
-                if sid:
-                    return self.session_manager.active_sessions.get(sid)
-                for sess in self.session_manager.active_sessions.values():
-                    if sess.channel_id == ch_id:
-                        return sess
-                return None
-
-            if name is None and status is None and session_type is None:
-                if inter.user.voice:
-                    session = _find_session_by_channel(str(inter.user.voice.channel.id))
-                    if session:
-                        channel = inter.user.voice.channel
-                        type_names = {
-                            "*": "All Types Allowed",
-                            "cam": "CAM Only",
-                            "ss": "Screen Share Only",
-                            "cam+ss": "CAM or Screen Share Allowed",
-                            "cam&ss": "CAM & Screen Share Allowed",
-                            "cam+noact": "CAM or No Activity Allowed",
-                            "ss+noact": "Screen Share or No Activity Allowed",
-                        }
-                        embed = discord.Embed(
-                            title="Current VC Configuration",
-                            color=config.msgColor,
-                            timestamp=datetime.now(),
-                        )
-                        embed.add_field(name="Name", value=channel.name, inline=True)
-                        embed.add_field(name="Status", value=channel.status or "\u200b", inline=True)
-                        embed.add_field(name="Session Type", value=type_names.get(session.session_type, session.session_type), inline=False)
-                        await inter.response.send_message(embed=embed, ephemeral=True, delete_after=30)
-                        return
-
+            if session is None or channel is None:
                 await inter.response.send_message(
                     embed=discord.Embed(
                         description="You are not in a study VC.",
@@ -1205,85 +1587,13 @@ class Study(commands.Cog):
                     ),
                     ephemeral=True, delete_after=10,
                 )
+                cmdLog.process(status_code=-25, name="No VC", details="User is not in a study VC.")
                 return
 
-            if inter.user.voice:
-                session = _find_session_by_channel(str(inter.user.voice.channel.id))
-                if session:
-                    if str(inter.user.id) != session.owner_id:
-                        await inter.response.send_message(
-                            embed=discord.Embed(
-                                description="You are not the session owner.",
-                                color=config.msgColor,
-                            ),
-                            ephemeral=True, delete_after=10,
-                        )
-                        return
-
-            embed = discord.Embed(
-                title="VC Settings Updated",
-                color=config.msgColor,
-                timestamp=datetime.now(),
-            )
-
-            if session_type is not None and inter.user.voice:
-                session = _find_session_by_channel(str(inter.user.voice.channel.id))
-                if session:
-                    session.update_settings(session_type=session_type)
-                    self.session_manager.sync(session)
-
-                    channel = inter.user.voice.channel
-                    category_id = str(channel.category_id) if channel.category_id else None
-                    non_compliant = []
-                    for vc_member in channel.members:
-                        if vc_member.bot:
-                            continue
-                        act_type = dseshpy.session._get_activity_type(vc_member.voice)
-                        if not session._is_allowed(act_type):
-                            non_compliant.append(vc_member)
-                            if str(vc_member.id) not in session.monitor_tasks:
-                                task = asyncio.create_task(
-                                    session.activity_monitor(
-                                        vc_member, self.exceptions,
-                                        category_id, None
-                                    )
-                                )
-                                session.monitor_tasks[str(vc_member.id)] = task
-
-                    if non_compliant:
-                        mentions = " ".join(m.mention for m in non_compliant if not is_muted(str(m.id)))
-                        await channel.send(
-                            content=mentions,
-                            embed=discord.Embed(
-                                description=f"\u26a0\ufe0f This VC now requires **{session._type_description()}**. "
-                                f"Turn on the required devices within 5 minutes or you'll be removed.",
-                                color=0x3498DB,
-                            ),
-                            delete_after=30,
-                        )
-
-                    type_names = {
-                        "*": "All Types Allowed",
-                        "cam": "CAM Only",
-                        "ss": "Screen Share Only",
-                        "cam+ss": "CAM or Screen Share Allowed",
-                        "cam&ss": "CAM & Screen Share Allowed",
-                        "cam+noact": "CAM or No Activity Allowed",
-                        "ss+noact": "Screen Share or No Activity Allowed",
-                    }
-                    embed.add_field(name="Session Type", value=type_names.get(session_type, session_type), inline=True)
-
-            if inter.user.voice:
-                channel = inter.user.voice.channel
-                if name is not None:
-                    await channel.edit(name=name)
-                    embed.add_field(name="Name", value=name, inline=True)
-                if status is not None:
-                    await channel.edit(status=status)
-                    embed.add_field(name="Status", value=status, inline=True)
-
-            await inter.response.send_message(embed=embed, delete_after=20)
-            cmdLog.process(status_code=100, name="Executed", details="VC settings updated successfully.")
+            embed = await build_vcset_embed(session, channel)
+            view = VCSetView(session, channel, inter.client)
+            await inter.response.send_message(embed=embed, view=view)
+            cmdLog.process(status_code=100, name="Executed", details="VC settings panel opened.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
