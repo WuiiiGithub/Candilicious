@@ -1,3 +1,4 @@
+import os
 import secrets
 import logging
 import httpx
@@ -10,13 +11,32 @@ from starlette.responses import RedirectResponse
 from . import limiter, rate_limit_ip, rate_limit_user, _client_ip
 from library.avatars import extract_avatar_hash
 import config
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
 GUILD_ID = str(config.availableIn["guilds"][0])
 
 router = APIRouter()
+
+
+def _cookie_flags(request: Request) -> dict:
+    """Cookie flags tuned to the connection.
+
+    Over HTTPS the session cookie is SameSite=None + Secure so it travels
+    cross-site (frontend and API are different origins). Over plain HTTP
+    (local/LAN dev) those flags would silently drop the cookie, so it falls
+    back to SameSite=Lax without Secure. COOKIE_SECURE=1 forces Secure.
+    """
+    is_secure = (
+        os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
+        or request.url.scheme == "https"
+    )
+    return {
+        "httponly": True,
+        "secure": is_secure,
+        "samesite": "none" if is_secure else "lax",
+    }
 
 
 async def record_ip(db, user_id: str, ip: str):
@@ -151,13 +171,11 @@ async def callback(request: Request, code: str, state: str):
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    response = RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/#token={quote(encoded_jwt, safe='')}", status_code=302)
+    response = RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/#login", status_code=302)
     response.set_cookie(
         key="session_token",
         value=encoded_jwt,
-        httponly=True,
-        secure=True,
-        samesite="none",
+        **_cookie_flags(request),
         max_age=7 * 24 * 60 * 60,
         path="/",
     )
@@ -179,9 +197,9 @@ async def verify(token: str = None, request: Request = None):
 
 
 @router.post("/logout")
-async def logout():
+async def logout(request: Request = None):
     response = JSONResponse(content={"ok": 1})
-    response.delete_cookie(key="session_token", path="/")
+    response.delete_cookie(key="session_token", path="/", **_cookie_flags(request))
     return response
 
 
@@ -247,9 +265,7 @@ async def exchange_web_token(request: Request, body: WebTokenRequest):
     response.set_cookie(
         key="session_token",
         value=encoded_jwt,
-        httponly=True,
-        secure=True,
-        samesite="none",
+        **_cookie_flags(request),
         max_age=12 * 60 * 60,
         path="/",
     )

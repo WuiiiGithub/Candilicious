@@ -1709,8 +1709,6 @@ class Study(commands.Cog):
                 pending_level_up_data = {
                     "new_level": new_level,
                     "wood_cost": wood_cost,
-                    "paid_by": [],
-                    "total_members": len(session_doc.get("members") or {}),
                 }
                 level_up = True
 
@@ -1751,7 +1749,6 @@ class Study(commands.Cog):
                     await sess._emit_event("level_up", {
                         "new_level": new_level,
                         "wood_cost": pending_level_up_data["wood_cost"],
-                        "total_members": pending_level_up_data["total_members"],
                     })
 
                 try:
@@ -1762,7 +1759,7 @@ class Study(commands.Cog):
                     channel = inter.user.voice.channel
                     level_embed = discord.Embed(
                         title="\u2b06\ufe0f Level Up Available!",
-                        description=f"Level **{current_level}** \u2192 **{new_level}**\nCost: **{pending_level_up_data['wood_cost']}** \U0001fab5 Wood per member\n\n0/{len(session_doc.get('members') or {})} paid",
+                        description=f"Level **{current_level}** \u2192 **{new_level}**\nCost: **{pending_level_up_data['wood_cost']}** \U0001fab5 Wood",
                         color=discord.Color.green(),
                     )
                     pay_view = discord.ui.View()
@@ -1792,12 +1789,12 @@ class Study(commands.Cog):
             embed.add_field(name="VC Level", value=str(new_level), inline=True)
 
             if level_up and pending_level_up_data:
-                embed.description = "⬆️ **LEVEL UP AVAILABLE!** All members must pay wood to level up."
-                embed.add_field(name="Wood Cost", value=f"{pending_level_up_data['wood_cost']} per member", inline=False)
+                embed.description = "⬆️ **LEVEL UP AVAILABLE!** Pay wood to level up."
+                embed.add_field(name="Wood Cost", value=f"{pending_level_up_data['wood_cost']}", inline=False)
 
             embed.add_field(
                 name="How It Works",
-                value="Boost to accumulate XP → 5000 XP triggers level-up → all members pay wood to proceed",
+                value="Boost to accumulate XP → 5000 XP triggers level-up → any member pays wood to proceed",
                 inline=False,
             )
 

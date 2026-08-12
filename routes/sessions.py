@@ -9,7 +9,6 @@ from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user, _client_ip
-from library import is_muted
 from library.avatars import resolve_avatar_url, default_avatar
 import config as app_config
 
@@ -47,6 +46,35 @@ def _normalize_initial_time(raw: dict | None) -> dict:
         clean[key] = max(0, value)
     clean["total"] = clean["cam"] + clean["ss"] + clean["noact"]
     return clean
+
+
+async def _is_live_guild_member(
+    request: Request,
+    guild_id: str,
+    user_id: str,
+    in_guild_claim: bool,
+) -> bool:
+    """Prefer a live membership check against the bot's member cache.
+
+    The `in_guild` JWT claim is a login-time snapshot, so a user kicked from
+    the guild would keep access until the cookie expires. When the bot is
+    connected and the guild has been chunked, the live check decides. When the
+    bot is unavailable or the guild cache is still loading, fall back to the
+    claim so legitimate members are never locked out."""
+    if not guild_id:
+        return True
+    bot = getattr(request.app.state, "bot", None)
+    if bot:
+        try:
+            guild = bot.get_guild(int(guild_id))
+        except (TypeError, ValueError):
+            guild = None
+        if guild and getattr(guild, "chunked", True):
+            try:
+                return guild.get_member(int(user_id)) is not None
+            except (TypeError, ValueError):
+                return False
+    return bool(in_guild_claim)
 
 
 async def _enrich_members(request: Request, session_doc: dict) -> list:
@@ -257,7 +285,7 @@ async def get_session_state(
 
     if not is_member and guild_id != "web":
         in_guild = payload.get("in_guild", False)
-        if not in_guild:
+        if not await _is_live_guild_member(request, guild_id, user_id, bool(in_guild)):
             raise HTTPException(status_code=403, detail="You must be in the guild to view this session")
 
     members = await _enrich_members(request, session_doc)
@@ -294,15 +322,8 @@ async def join_session(
 
     guild_id = session_doc.get("guild_id", "")
     if guild_id != "web":
-        bot = request.app.state.bot
-        guild = bot.get_guild(int(guild_id)) if guild_id else None
-        if guild:
-            member = guild.get_member(int(user_id))
-            if not member and not payload.get("in_guild", False):
-                raise HTTPException(status_code=403, detail="You must be in the Discord guild to join this session")
-        else:
-            if not payload.get("in_guild", False):
-                raise HTTPException(status_code=403, detail="You must be in the Discord guild to join this session")
+        if not await _is_live_guild_member(request, guild_id, user_id, bool(payload.get("in_guild", False))):
+            raise HTTPException(status_code=403, detail="You must be in the Discord guild to join this session")
 
     now = datetime.now(timezone.utc)
 
@@ -643,17 +664,6 @@ async def pay_level_up(
     if user_id not in sess.members:
         raise HTTPException(status_code=403, detail="You must be a session member to pay")
 
-    paid_by = sess.pending_level_up.get("paid_by", [])
-    if user_id in paid_by:
-        return {
-            "ok": 1,
-            "new_level": sess.pending_level_up["new_level"],
-            "wood_cost": sess.pending_level_up["wood_cost"],
-            "paid_count": len(paid_by),
-            "total_members": len(sess.members),
-            "already_paid": True,
-        }
-
     new_level = sess.pending_level_up["new_level"]
     wood_cost = sess.pending_level_up["wood_cost"]
 
@@ -689,15 +699,12 @@ async def pay_level_up(
     if not result:
         raise HTTPException(status_code=409, detail="Concurrent modification, please retry")
 
-    paid_by.append(user_id)
-    sess.pending_level_up["paid_by"] = paid_by
+    sess.vc_level = new_level
+    sess.vc_xp = 0
+    from datetime import datetime as _dt, timezone as _tz
+    sess.last_level_up_at = _dt.now(_tz.utc).isoformat()
+    sess.pending_level_up = None
     sess._sync_session_now()
-
-    current_member_ids = set(sess.members.keys())
-    all_paid = current_member_ids.issubset(set(paid_by))
-
-    paid_count = len(paid_by)
-    total_members = len(sess.members)
 
     if sess.level_up_message_id and sess.guild_id != "web" and bot:
         try:
@@ -705,83 +712,35 @@ async def pay_level_up(
             channel = bot.get_channel(int(sess.channel_id))
             if channel:
                 msg = await channel.fetch_message(int(sess.level_up_message_id))
-                domain = os.getenv("FRONTEND_DOMAIN", "")
-                if domain and not domain.endswith("/"):
-                    domain += "/"
-                link = f"{domain}projects?level_up={session_id}"
-                embed = _discord.Embed(
-                    title="\u2b06\ufe0f Level Up Available!",
-                    description=f"Level **{sess.vc_level}** \u2192 **{new_level}**\nCost: **{wood_cost}** \U0001fab5 Wood per member\n\n**{paid_count}/{total_members}** paid",
-                    color=_discord.Color.green(),
-                )
-                view = _discord.ui.View()
-                view.add_item(_discord.ui.Button(
-                    label=f"Pay {wood_cost} Wood",
-                    style=_discord.ButtonStyle.link,
-                    url=link,
-                    emoji="\U0001fab5",
-                ))
-                await msg.edit(embed=embed, view=view)
+                await msg.delete()
         except Exception:
             pass
 
-    await sess._emit_event("level_up_progress", {
-        "new_level": new_level,
-        "wood_cost": wood_cost,
-        "paid_by": paid_by,
-        "paid_count": paid_count,
-        "total_members": total_members,
-    })
+        try:
+            import discord as _discord
+            channel = bot.get_channel(int(sess.channel_id))
+            if channel:
+                celeb_embed = _discord.Embed(
+                    title="\U0001f525 Level Up!",
+                    description=f"Level **{new_level}** achieved!\n\nPaid by <@{user_id}>",
+                    color=_discord.Color.gold(),
+                )
+                await channel.send(embed=celeb_embed, delete_after=30)
+        except Exception:
+            pass
 
-    if all_paid:
-        sess.vc_level = new_level
-        sess.vc_xp = 0
-        from datetime import datetime as _dt, timezone as _tz
-        sess.last_level_up_at = _dt.now(_tz.utc).isoformat()
-        sess.pending_level_up = None
+        sess.level_up_message_id = None
         sess._sync_session_now()
 
-        if sess.level_up_message_id and sess.guild_id != "web" and bot:
-            try:
-                import discord as _discord
-                channel = bot.get_channel(int(sess.channel_id))
-                if channel:
-                    msg = await channel.fetch_message(int(sess.level_up_message_id))
-                    await msg.delete()
-            except Exception:
-                pass
-
-            try:
-                import discord as _discord
-                channel = bot.get_channel(int(sess.channel_id))
-                if channel:
-                    paid_mentions = " ".join(
-                        f"<@{uid}>" for uid in paid_by if uid in sess.members and not is_muted(uid)
-                    )
-                    celeb_embed = _discord.Embed(
-                        title="\U0001f525 Level Up!",
-                        description=f"Level **{new_level}** achieved!\n\nContributors: {paid_mentions}",
-                        color=_discord.Color.gold(),
-                    )
-                    await channel.send(embed=celeb_embed, delete_after=30)
-            except Exception:
-                pass
-
-            sess.level_up_message_id = None
-            sess._sync_session_now()
-
-        await sess._emit_event("level_up_complete", {
-            "new_level": new_level,
-            "wood_cost": wood_cost,
-        })
+    await sess._emit_event("level_up_complete", {
+        "new_level": new_level,
+        "wood_cost": wood_cost,
+    })
 
     return {
         "ok": 1,
         "new_level": new_level,
         "wood_cost": wood_cost,
-        "paid_count": paid_count,
-        "total_members": total_members,
-        "all_paid": all_paid,
     }
 
 
@@ -850,8 +809,6 @@ async def boostxp_session(
         pending_level_up_data = {
             "new_level": new_level,
             "wood_cost": wood_cost,
-            "paid_by": [],
-            "total_members": len(sess.members),
         }
         sess.pending_level_up = pending_level_up_data
         level_up = True
@@ -873,7 +830,6 @@ async def boostxp_session(
         await sess._emit_event("level_up", {
             "new_level": new_level,
             "wood_cost": pending_level_up_data["wood_cost"],
-            "total_members": pending_level_up_data["total_members"],
         })
 
         if sess.guild_id != "web" and bot:
@@ -887,7 +843,7 @@ async def boostxp_session(
                     link = f"{domain}projects?level_up={session_id}"
                     embed = _discord.Embed(
                         title="\u2b06\ufe0f Level Up Available!",
-                        description=f"Level **{sess.vc_level - 1}** \u2192 **{new_level}**\nCost: **{pending_level_up_data['wood_cost']}** \U0001fab5 Wood per member\n\n0/{len(sess.members)} paid",
+                        description=f"Level **{sess.vc_level - 1}** \u2192 **{new_level}**\nCost: **{pending_level_up_data['wood_cost']}** \U0001fab5 Wood",
                         color=_discord.Color.green(),
                     )
                     view = _discord.ui.View()

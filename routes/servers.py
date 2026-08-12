@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 import config
+from . import verify_token
 
 router = APIRouter()
 
 @router.get("")
-async def list_servers(request: Request):
+async def list_servers(request: Request, payload: dict = Depends(verify_token)):
     guilds = []
     bot = request.app.state.bot
     if bot:

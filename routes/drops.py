@@ -8,6 +8,7 @@ from typing import Optional
 import config
 from library import degrade, is_muted
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
+from .sessions import _is_live_guild_member
 
 router = APIRouter()
 
@@ -49,6 +50,69 @@ async def check_drop(request: Request, token: str):
     claimed = await request.app.db["activity.drops"].find_one({"drop_token": token})
     return {"claimed": claimed is not None}
 
+
+@router.get("/active/{session_id}")
+@limiter.limit("120/minute", key_func=rate_limit_ip)
+@limiter.limit("300/hour", key_func=rate_limit_user)
+async def get_active_drop(
+    request: Request,
+    session_id: str,
+    payload: dict = Depends(verify_token),
+):
+    """Return the currently-live drop for a session, if any.
+
+    The `drop_created` SSE event is fire-and-forget, so a client that was
+    suspended / away (mobile background tabs, etc.) never sees it. This lets
+    the frontend catch up by asking "is there a live drop right now?" on
+    session load, stream reconnect, or focus return."""
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    session = await request.app.db["sessions"].find_one({"session_id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    members_raw = session.get("members", {})
+    is_member = user_id in members_raw
+    guild_id = session.get("guild_id", "")
+    if not is_member and guild_id != "web":
+        in_guild = payload.get("in_guild", False)
+        if not await _is_live_guild_member(request, guild_id, user_id, bool(in_guild)):
+            raise HTTPException(status_code=403, detail="You must be in the guild to view this session")
+
+    now = datetime.now(timezone.utc)
+    offer = await request.app.db["drop.offers"].find_one(
+        {"session_id": session_id, "expire_at": {"$gt": now}},
+        sort=[("created_at", -1)],
+    )
+    if not offer:
+        return {"ok": 1, "drop": None}
+
+    already_claimed = await request.app.db["activity.drops"].find_one(
+        {"drop_token": offer["token"], "user_id": user_id},
+    )
+    if already_claimed:
+        return {"ok": 1, "drop": None}
+
+    def _iso(value) -> str:
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.isoformat()
+        return str(value)
+
+    return {
+        "ok": 1,
+        "drop": {
+            "token": offer["token"],
+            "drop_number": offer.get("drop_number", 0),
+            "created_at": _iso(offer.get("created_at")),
+            "expire_at": _iso(offer.get("expire_at")),
+        },
+    }
+
+
 @router.post("/claim/{token}")
 @limiter.limit("10/minute", key_func=rate_limit_ip)
 @limiter.limit("30/hour", key_func=rate_limit_user)
@@ -58,6 +122,13 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
     drop = await request.app.db["drop.offers"].find_one({"token": token})
     if not drop:
         raise HTTPException(status_code=404, detail="Drop not found")
+
+    expire_at = drop.get("expire_at")
+    if isinstance(expire_at, datetime):
+        if expire_at.tzinfo is None:
+            expire_at = expire_at.replace(tzinfo=timezone.utc)
+        if expire_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=404, detail="Drop has expired")
 
     session_id = drop.get("session_id") or drop.get("channel_id")
     guild_id = drop["guild_id"]

@@ -1,3 +1,4 @@
+import re
 import time
 import hashlib
 import cloudinary
@@ -78,6 +79,49 @@ async def get_signed_params(
     }
 
 
+def _normalize_public_id(value: object) -> str:
+    """Return a clean public_id string or raise 400.
+
+    public_id may be a bare id ("candilicious/pfp/x.png") or a full Cloudinary
+    URL; both are accepted, anything else is rejected."""
+    if isinstance(value, str):
+        public_id = value.strip()
+    else:
+        raise HTTPException(status_code=400, detail="public_id must be a string")
+
+    if not public_id:
+        raise HTTPException(status_code=400, detail="public_id is required")
+    if "?" in public_id or "#" in public_id:
+        public_id = public_id.split("?")[0].split("#")[0]
+
+    match = re.search(r"/v\d+/(.+)\.\w+$", public_id)
+    if match:
+        public_id = match.group(1)
+    return public_id
+
+
+async def _owns_public_id(request: Request, user_id: str, public_id: str) -> bool:
+    """Only allow deleting assets that are referenced by the caller's own docs.
+
+    This closes the IDOR where any authenticated user could destroy any
+    public_id on the account by checking every place app uploads are stored
+    against the requesting user's documents."""
+    escaped = re.escape(public_id)
+    checks = [
+        (request.app.db["users"], {"_id": user_id}, ["pfp", "profile_pfp"]),
+        (request.app.db["social.posts"], {"user_id": user_id}, ["thumbnail_url"]),
+        (request.app.db["posts.custom"], {"user_id": user_id}, ["thumbnail"]),
+        (request.app.db["projects.docs"], {"user_id": user_id}, ["thumbnail_link"]),
+        (request.app.db["boards.docs"], {"user_id": user_id}, ["thumbnail_link"]),
+    ]
+    for collection, query, fields in checks:
+        for field in fields:
+            doc = await collection.find_one({**query, field: {"$regex": escaped}})
+            if doc:
+                return True
+    return False
+
+
 @router.delete("/destroy")
 @limiter.limit("20/minute", key_func=rate_limit_ip)
 @limiter.limit("60/hour", key_func=rate_limit_user)
@@ -86,9 +130,20 @@ async def destroy_asset(
     body: dict,
     payload: dict = Depends(verify_token),
 ):
-    public_id = body.get("public_id")
-    if not public_id:
-        raise HTTPException(status_code=400, detail="public_id is required")
+    public_id = _normalize_public_id(body.get("public_id"))
+
+    if not any(
+        public_id == folder or public_id.startswith(folder + "/")
+        for folder in ALLOWED_FOLDERS
+    ):
+        raise HTTPException(status_code=400, detail="public_id must be in an allowed folder")
+
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if not await _owns_public_id(request, user_id, public_id):
+        raise HTTPException(status_code=403, detail="You can only delete your own uploads")
 
     if not config.CLOUDINARY_URL:
         raise HTTPException(status_code=500, detail="Cloudinary not configured")
