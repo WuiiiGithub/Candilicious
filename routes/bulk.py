@@ -49,6 +49,10 @@ async def _handle_patch_task(request: Request, user_id: str, body: dict):
         update_fields[f"tasks.{task_id}.priority"] = body["priority"]
     if "status" in body:
         update_fields[f"tasks.{task_id}.status"] = body["status"]
+    if "created_at" in body:
+        update_fields[f"tasks.{task_id}.created_at"] = body["created_at"]
+    if "completed_at" in body:
+        update_fields[f"tasks.{task_id}.completed_at"] = body["completed_at"]
 
     if update_fields:
         await request.app.db["boards.docs"].update_one(

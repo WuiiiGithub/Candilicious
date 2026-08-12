@@ -86,6 +86,7 @@ async def get_tasks(request: Request, payload: dict = Depends(verify_token)):
                 "priority": task.get("priority", 1),
                 "status": task.get("status", "todo"),
                 "created_at": task.get("created_at"),
+                "completed_at": task.get("completed_at"),
             })
 
     return result
@@ -202,6 +203,10 @@ async def update_task(request: Request, payload: dict = Depends(verify_token)):
         update_fields[f"tasks.{task_id}.priority"] = body["priority"]
     if "status" in body:
         update_fields[f"tasks.{task_id}.status"] = body["status"]
+    if "created_at" in body:
+        update_fields[f"tasks.{task_id}.created_at"] = body["created_at"]
+    if "completed_at" in body:
+        update_fields[f"tasks.{task_id}.completed_at"] = body["completed_at"]
 
     if update_fields:
         await request.app.db["boards.docs"].update_one(

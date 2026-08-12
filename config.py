@@ -83,6 +83,12 @@ LEVEL_UP_XP_PER_MINUTE = 15
 LEVEL_UP_XP_THRESHOLD = 5000
 LEVEL_UP_WOOD_BASE = 100
 
+# Billu Badmosh (Robber)
+ROB_MEAN_INTERVAL_MIN = 60
+ROB_INTERVAL_JITTER_MIN = 15
+ROB_WOOD_MAX = 50
+ROB_MESSAGE_TTL = 10
+
 # Streak DMs (daily study calls, streak break notifications)
 ENABLE_STREAK_DMS = True if  _getenv('ENABLE_STREAK_DMS') else False
 
