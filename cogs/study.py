@@ -1,4 +1,4 @@
-import discord, os, asyncio, traceback, json, io, qrcode, random, secrets, logging
+import discord, os, asyncio, traceback, json, io, qrcode, random, secrets, logging, time
 import config
 from dotenv import load_dotenv
 from datetime import (
@@ -49,6 +49,23 @@ dseshpy.initialize(
     activity_session_collection=activitySessionCollection,
     config_collection=db["config"]
 )
+
+# Leaderboard user data is cached briefly so repeated lookups don't pay a
+# (possibly slow) MongoDB round-trip every single time.
+_lb_users_cache = {}
+_LB_USERS_TTL = 30
+_LB_USERS_CACHE_MAX = 64
+
+def _get_cached_lb_users(guild_id: str, criterion: str):
+    entry = _lb_users_cache.get((guild_id, criterion))
+    if entry and time.monotonic() - entry[0] < _LB_USERS_TTL:
+        return entry[1]
+    return None
+
+def _cache_lb_users(guild_id: str, criterion: str, users: dict):
+    if len(_lb_users_cache) >= _LB_USERS_CACHE_MAX:
+        _lb_users_cache.clear()
+    _lb_users_cache[(guild_id, criterion)] = (time.monotonic(), users)
 
 # ===================== CONFIG UI =====================
 
@@ -1172,100 +1189,181 @@ class Study(commands.Cog):
             app_commands.Choice(name='View by Username', value='name'),
             app_commands.Choice(name='View by Display Name', value='display_name')
         ],
-        resource=[
+        criterion=[
+            app_commands.Choice(name="\u23f1\ufe0f Time Studied", value="time"),
             app_commands.Choice(name="\U0001fab5 Wood", value="wood"),
             app_commands.Choice(name="\U0001f529 Iron", value="iron"),
-        ]
+        ],
+        style=[
+            app_commands.Choice(name="Embed", value="embed"),
+            app_commands.Choice(name="Image", value="image"),
+        ],
+        border=[
+            app_commands.Choice(name="\U0001f947 Gold", value="gold"),
+            app_commands.Choice(name="\U0001f948 Silver", value="silver"),
+            app_commands.Choice(name="\U0001f949 Bronze", value="bronze"),
+            app_commands.Choice(name="\U0001fab5 Wood", value="wood"),
+        ],
     )
     @app_commands.describe(
         scope="It describes if you want to see leaderboard within the server or globally.",
         view="It defines based on what choice you view your leaderboard",
-        resource="The resource you want to rank everyone by",
+        criterion="The criterion you want to rank everyone by",
+        style="How the leaderboard should be displayed (default: Embed)",
+        border="Image border style (only applies to the Image style)",
     )
-    async def leaderboard(self, inter: discord.Interaction, view: str = "display_name", scope: int = 1, resource: str = "wood"):
+    async def leaderboard(self, inter: discord.Interaction, view: str = "display_name", scope: int = 1, criterion: str = "time", style: str = "embed", border: str = "gold"):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            cmdLog.process(status_code=0, name='Waiting', details=f"Fetching {resource} leaderboard data...")
+            cmdLog.process(status_code=0, name='Waiting', details=f"Fetching {criterion} leaderboard data...")
 
             if scope == 0:
                 await inter.response.send_message("The Leaderboard command is still under development!", ephemeral=True)
                 cmdLog.process(status_code=50, name="Pending")
                 return
 
+            await inter.response.defer()
+
             user_id = str(inter.user.id)
+            guild_id = str(inter.guild_id)
 
-            resource_field = f"economy.resources.{resource}.amount"
+            def score_of(u):
+                if criterion == "time":
+                    guild_time = (u.get("servers") or {}).get(guild_id) or {}
+                    if isinstance(guild_time, dict):
+                        return int(guild_time.get("time") or 0)
+                    return 0
+                resources = (u.get("economy") or {}).get("resources") or {}
+                return int((resources.get(criterion) or {}).get("amount") or 0)
 
-            total_count = userCollection.count_documents({resource_field: {"$gt": 0}})
+            def avatar_url(u):
+                pfp = u.get("pfp") or ""
+                if pfp.startswith("http"):
+                    return pfp
+                if pfp:
+                    return f"https://cdn.discordapp.com/avatars/{u['_id']}/{pfp}.png"
+                return f"https://cdn.discordapp.com/embed/avatars/{int(u['_id']) % 5}.png"
+
+            def fmt_score(amount):
+                if criterion == "time":
+                    return format_duration(amount)
+                return f"{int(amount):,}"
+
+            members = list(inter.guild.members) if inter.guild else []
+            if not members and inter.guild:
+                members = [m async for m in inter.guild.fetch_members() if not m.bot]
+            members = [m for m in members if not m.bot]
+            member_ids = [str(m.id) for m in members]
+
+            # Only fetch the fields we actually need (smaller transfer, faster query).
+            if criterion == "time":
+                projection = {f"servers.{guild_id}.time": 1}
+            else:
+                projection = {f"economy.resources.{criterion}.amount": 1}
+            projection.update({"name": 1, "display_name": 1, "pfp": 1})
+
+            def _fetch_users(ids):
+                return {
+                    u["_id"]: u
+                    for u in userCollection.find({"_id": {"$in": ids}}, projection)
+                }
+
+            # Sync pymongo blocks the event loop, so run it in a worker thread.
+            t_db = time.perf_counter()
+            users = _get_cached_lb_users(guild_id, criterion)
+            if users is not None:
+                cmdLog.process(
+                    status_code=50,
+                    name="DB",
+                    details=f"Served {len(users)} users from cache in {(time.perf_counter() - t_db) * 1000:.0f}ms",
+                )
+            else:
+                users = await asyncio.to_thread(_fetch_users, member_ids)
+                _cache_lb_users(guild_id, criterion, users)
+                cmdLog.process(
+                    status_code=50,
+                    name="DB",
+                    details=f"Loaded {len(users)} users in {(time.perf_counter() - t_db) * 1000:.0f}ms",
+                )
+
+            entries = []
+            for m in members:
+                mid = str(m.id)
+                u = users.get(mid) or {}
+                entries.append({
+                    "_id": mid,
+                    "name": u.get("name") or m.name,
+                    "display_name": u.get("display_name") or m.display_name or m.name,
+                    "pfp": u.get("pfp", ""),
+                    "amount": score_of(u),
+                })
+
+            entries.sort(key=lambda e: e["amount"], reverse=True)
+
+            ranked = [e for e in entries if e["amount"] > 0]
+            padding = [e for e in entries if e["amount"] <= 0]
+            if len(ranked) < config.leaderboardLimit:
+                ranked += padding[: config.leaderboardLimit - len(ranked)]
+
+            board = ranked
+            total_count = len(board)
 
             if total_count < 3:
-                await inter.response.send_message(
+                msg = await inter.followup.send(
                     embed=discord.Embed(description="Not enough users to rank. Need at least 3.", color=config.msgColor),
-                    delete_after=30
+                    wait=True
                 )
+                await msg.delete(delay=30)
                 cmdLog.process(status_code=100, name="Not enough users")
                 return
 
-            pipeline = [
-                {"$match": {resource_field: {"$gt": 0}}},
-                {"$project": {
-                    "_id": 1,
-                    "name": {"$ifNull": ["$name", "$_id"]},
-                    "display_name": {"$ifNull": ["$display_name", "$name", "$_id"]},
-                    "pfp": {"$ifNull": ["$pfp", ""]},
-                    "amount": {"$ifNull": [f"${resource_field}", 0]},
-                }},
-                {"$sort": {"amount": -1}},
-            ]
-            all_users = list(userCollection.aggregate(pipeline))
-
-            for i, u in enumerate(all_users):
+            for i, u in enumerate(board):
                 u["_rank"] = i + 1
 
             user_rank = None
-            for u in all_users:
+            for u in board:
                 if u["_id"] == user_id:
                     user_rank = u["_rank"]
                     break
 
-            top3 = all_users[:3]
+            top3 = board[:3]
 
             if total_count <= 10 or user_rank is None or user_rank <= 10:
-                rows = all_users[3:10]
+                rows = board[3:10]
             else:
                 start = max(3, user_rank - 7)
-                end = min(len(all_users), start + 7)
-                rows = all_users[start:end]
+                end = min(len(board), start + 7)
+                rows = board[start:end]
 
-            user_data = userCollection.find_one({"_id": user_id}, {"premium.type": 1})
-            is_premium = user_data.get("premium", {}).get("type") == "pro" if user_data else False
-
-            if is_premium:
-                await inter.response.defer()
-
-                def fmt_amount(amount):
-                    return f"{int(amount):,}"
-
-                podium_data = []
-                for u in top3:
-                    podium_data.append({
+            if style == "image":
+                podium_data = [
+                    {
                         "rank": u["_rank"],
                         "name": u.get(view, "Unknown"),
-                        "value": fmt_amount(u["amount"]),
-                        "avatar_url": u.get("pfp", ""),
-                    })
+                        "value": fmt_score(u["amount"]),
+                        "avatar_url": avatar_url(u),
+                    }
+                    for u in top3
+                ]
 
-                rows_data = []
-                for u in rows:
-                    rows_data.append({
+                rows_data = [
+                    {
                         "rank": u["_rank"],
                         "name": u.get(view, "Unknown"),
-                        "value": fmt_amount(u["amount"]),
-                        "avatar_url": u.get("pfp", ""),
-                    })
+                        "value": fmt_score(u["amount"]),
+                        "avatar_url": avatar_url(u),
+                    }
+                    for u in rows
+                ]
 
                 lb_data = {"podium": podium_data, "rows": rows_data}
-                image_data = await getNovaLeaderboard(lb_data, "gold")
+                t_render = time.perf_counter()
+                image_data = await getNovaLeaderboard(lb_data, border)
+                cmdLog.process(
+                    status_code=50,
+                    name="Image",
+                    details=f"Rendered in {(time.perf_counter() - t_render) * 1000:.0f}ms",
+                )
 
                 if image_data:
                     file = discord.File(fp=image_data, filename="leaderboard.webp")
@@ -1276,13 +1374,14 @@ class Study(commands.Cog):
                     cmdLog.process(status_code=-100, name="Failed", details="Image generation failed.")
             else:
                 toppers = top3 + rows
-                await inter.response.send_message(
+                msg = await inter.followup.send(
                     embed=discord.Embed(
-                        description=leaderboard_template(toppers=toppers, view=view, resource=resource),
+                        description=leaderboard_template(toppers=toppers, view=view, criterion=criterion),
                         color=config.msgColor
                     ),
-                    delete_after=30
+                    wait=True
                 )
+                await msg.delete(delay=30)
                 cmdLog.process(status_code=100, name="Executed", details="Text leaderboard delivered.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
@@ -1300,45 +1399,6 @@ class Study(commands.Cog):
             color=config.msgColor,
         )
         await inter.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(name='plb', description='placeholder command for leaderboard')
-    async def plb(self, inter: discord.Interaction, style: Literal['gold', 'silver', 'bronze', 'wood']):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            cmdLog.process(status_code=0, name="Waiting", details="Trying to generate the placeholder leaderboard image...")
-            LEADERBOARD_DATA = {
-                "podium": [
-                    {"rank": 1, "name": "Yuvi", "time": "76 hours", "avatar_url": "https://picsum.photos/seed/yuvi/200"},
-                    {"rank": 2, "name": "Patrick Jane", "time": "21 hours", "avatar_url": "https://picsum.photos/seed/patrick/200"},
-                    {"rank": 3, "name": "Mai", "time": "21 hours", "avatar_url": "https://picsum.photos/seed/mai/200"}
-                ],
-                "rows": [
-                    {"rank": 4, "name": "Tanmay", "time": "21:15", "avatar_url": "https://picsum.photos/seed/tanmay/200"},
-                    {"rank": 5, "name": "Kitty", "time": "1977:34", "avatar_url": "https://picsum.photos/seed/kitty/200"},
-                    {"rank": 6, "name": "philia", "time": "18:22", "avatar_url": "https://picsum.photos/seed/philia/200"},
-                    {"rank": 7, "name": "maysem^_^", "time": "15:18", "avatar_url": "https://picsum.photos/seed/maysem/200"},
-                    {"rank": 8, "name": "Jawa", "time": "15:01", "avatar_url": "https://picsum.photos/seed/jawa/200"},
-                    {"rank": 9, "name": "Cyrus", "time": "08:46", "avatar_url": "https://picsum.photos/seed/cyrus/200"},
-                    {"rank": 10, "name": "Hades", "time": "08:18", "avatar_url": "https://picsum.photos/seed/hades/200"}
-                ]
-            }
-
-            # Defer since image processing takes a moment
-            await inter.response.defer()
-
-            image_data = await getNovaLeaderboard(LEADERBOARD_DATA, style)
-            
-            if image_data:
-                file = discord.File(fp=image_data, filename="leaderboard.webp")
-                await inter.followup.send(file=file)
-                cmdLog.process(status_code=100, name="Executed", details="Leaderboard image generated and delivered.")
-            else:
-                await inter.followup.send("Failed to generate the leaderboard image.")
-                cmdLog.process(status_code=-100, name="Failed", details="Image generation failed to return valid data.")
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
 
     @app_commands.command(name='shell', description='execute special commands')
     async def shell(self, inter: discord.Interaction, cmd: str):

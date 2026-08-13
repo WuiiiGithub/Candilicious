@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
 from datetime import datetime, timezone
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
+from .uploads import destroy_image_if_cloudinary
 
 router = APIRouter()
 
@@ -106,7 +107,10 @@ async def update_project(request: Request, payload: dict = Depends(verify_token)
     update_data = {}
     if "title" in body: update_data["title"] = body["title"]
     if "description" in body: update_data["description"] = body["description"]
-    if "thumbnail_link" in body: update_data["thumbnail_link"] = body["thumbnail_link"]
+    if "thumbnail_link" in body:
+        if body["thumbnail_link"] != project.get("thumbnail_link"):
+            destroy_image_if_cloudinary(project.get("thumbnail_link", ""))
+        update_data["thumbnail_link"] = body["thumbnail_link"]
     
     if update_data:
         await request.app.db["projects.docs"].update_one(
@@ -135,10 +139,20 @@ async def delete_project(request: Request, payload: dict = Depends(verify_token)
         project = await request.app.db["projects.docs"].find_one({"project_id": project_id, "user_id": user_id})
         if not project:
             raise HTTPException(status_code=404, detail="Project not found or unauthorized")
-            
+
+        destroy_image_if_cloudinary(project.get("thumbnail_link", ""))
+        boards = await request.app.db["boards.docs"].find({"project_id": project_id}).to_list(length=None)
+        for b in boards:
+            destroy_image_if_cloudinary(b.get("thumbnail_link", ""))
         await request.app.db["projects.docs"].delete_one({"project_id": project_id})
         await request.app.db["boards.docs"].delete_many({"project_id": project_id})
     else:
+        all_projects = await request.app.db["projects.docs"].find({"user_id": user_id}).to_list(length=None)
+        for p in all_projects:
+            destroy_image_if_cloudinary(p.get("thumbnail_link", ""))
+        all_boards = await request.app.db["boards.docs"].find({"user_id": user_id}).to_list(length=None)
+        for b in all_boards:
+            destroy_image_if_cloudinary(b.get("thumbnail_link", ""))
         await request.app.db["projects.docs"].delete_many({"user_id": user_id})
         await request.app.db["boards.docs"].delete_many({"user_id": user_id})
         

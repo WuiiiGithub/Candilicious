@@ -1,6 +1,7 @@
 from os import getenv as _getenv
 from dotenv import load_dotenv as _load
 import logging
+import re as _re
 
 _load()
 
@@ -17,6 +18,12 @@ DISCORD_CLIENT_SECRET = _getenv("DISCORD_CLIENT_SECRET")
 WEBSITE_DOMAIN = _getenv("WEBSITE_DOMAIN").strip('/')
 FRONTEND_DOMAIN=_getenv("FRONTEND_DOMAIN").strip('/')
 SECRET_KEY=_getenv("SECRET_KEY")
+
+_host = WEBSITE_DOMAIN.split("://")[-1].split(":")[0].lower()
+IS_PROD = not (
+    _host == "localhost"
+    or _re.match(r"^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.)", _host)
+)
 CLOUDINARY_URL=_getenv("CLOUDINARY_URL")
 
 if SECRET_KEY and len(SECRET_KEY) < 32:

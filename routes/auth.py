@@ -23,15 +23,12 @@ router = APIRouter()
 def _cookie_flags(request: Request) -> dict:
     """Cookie flags tuned to the connection.
 
-    Over HTTPS the session cookie is SameSite=None + Secure so it travels
-    cross-site (frontend and API are different origins). Over plain HTTP
-    (local/LAN dev) those flags would silently drop the cookie, so it falls
-    back to SameSite=Lax without Secure. COOKIE_SECURE=1 forces Secure.
+    Production (HTTPS behind a proxy): SameSite=None + Secure so the cookie
+    travels cross-site between frontend and API on different origins.
+    Local dev (plain HTTP on a LAN IP): SameSite=Lax without Secure, which
+    is the only combination browsers accept over HTTP.
     """
-    is_secure = (
-        os.getenv("COOKIE_SECURE", "").lower() in ("1", "true", "yes")
-        or request.url.scheme == "https"
-    )
+    is_secure = config.IS_PROD
     return {
         "httponly": True,
         "secure": is_secure,

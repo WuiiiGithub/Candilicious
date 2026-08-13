@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
+from .uploads import destroy_image_if_cloudinary
 
 router = APIRouter()
 
@@ -143,7 +144,10 @@ async def update_board(request: Request, payload: dict = Depends(verify_token)):
     update_data = {}
     if "title" in body: update_data["title"] = body["title"]
     if "description" in body: update_data["description"] = body["description"]
-    if "thumbnail_link" in body: update_data["thumbnail_link"] = body["thumbnail_link"]
+    if "thumbnail_link" in body:
+        if body["thumbnail_link"] != board.get("thumbnail_link"):
+            destroy_image_if_cloudinary(board.get("thumbnail_link", ""))
+        update_data["thumbnail_link"] = body["thumbnail_link"]
     
     if update_data:
         await request.app.db["boards.docs"].update_one(
@@ -173,10 +177,14 @@ async def delete_board(request: Request, payload: dict = Depends(verify_token)):
         board = await request.app.db["boards.docs"].find_one({"board_id": board_id, "project_id": project_id, "user_id": user_id})
         if not board:
             raise HTTPException(status_code=404, detail="Board not found or unauthorized")
-            
+
+        destroy_image_if_cloudinary(board.get("thumbnail_link", ""))
         await request.app.db["boards.docs"].delete_one({"board_id": board_id})
         await recalculate_project_counts(request, project_id)
     else:
+        old_boards = await request.app.db["boards.docs"].find({"project_id": project_id, "user_id": user_id}).to_list(length=None)
+        for b in old_boards:
+            destroy_image_if_cloudinary(b.get("thumbnail_link", ""))
         await request.app.db["boards.docs"].delete_many({"project_id": project_id, "user_id": user_id})
         await recalculate_project_counts(request, project_id)
         

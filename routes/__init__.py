@@ -13,10 +13,9 @@ router = APIRouter()
 def _client_ip(request: Request) -> str:
     """Resolve the real client IP.
 
-    Only trusts X-Forwarded-For when the app is running behind a known proxy
-    (ngrok / reverse proxy). When exposed directly, X-Forwarded-For is spoofable
-    and is ignored so attackers cannot rotate it to bypass limits."""
-    if os.getenv("TRUST_PROXY_HEADERS", "").lower() in ("1", "true", "yes"):
+    In production (behind a proxy), trusts X-Forwarded-For. Locally, uses the
+    direct connection IP since X-Forwarded-For is spoofable when exposed."""
+    if config.IS_PROD:
         fwd = request.headers.get("x-forwarded-for")
         if fwd:
             return fwd.split(",")[0].strip()

@@ -55,11 +55,19 @@ class RobberView(ui.View):
         if not can_jail:
             self.jail.disabled = True
 
-    @ui.button(label="\U0001f694 Jail", style=discord.ButtonStyle.danger)
+    @ui.button(label="Jail", style=discord.ButtonStyle.danger)
     async def jail(self, interaction: discord.Interaction, button: ui.Button):
         if str(interaction.user.id) != self.victim_id:
+            response_embed = discord.Embed(
+                "Breaking News!",
+                description="Only the victim can call the police!",
+                color=discord.Color.red()
+            )
+            response_embed.set_thumbnail(url="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExbXhoeXk1cmhmbGc2eGhqeXJqaTJ0OGVqdWwxdnZyaW1xc2tldnVmaSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/k1oI9MmH9nxJfxfy0o/giphy.gif")
+            response_embed.set_footer(text="Credits to Giphy", icon_url="https://giphy.com/static/img/giphy-logo.webp")
             return await interaction.response.send_message(
-                "Only the victim can call the police!", ephemeral=True
+                embed=response_embed, 
+                ephemeral=True
             )
 
         self.jailed = True
@@ -71,12 +79,12 @@ class RobberView(ui.View):
                 if asyncio.iscoroutine(result):
                     await result
             except Exception:
-                logger.exception("Failed to lock up billu badmosh")
+                logger.exception("Failed to lock up Billu Badmosh")
 
         embed = interaction.message.embeds[0] if interaction.message.embeds else None
         if embed is not None:
             embed.description = (
-                f"\U0001f6a8 Police caught **billu badmosh**! He's locked up for "
+                f"\U0001f6a8 Police caught **Billu Badmosh**! He's locked up for "
                 f"the rest of the day. Your **{self.amount} \U0001fab5 wood** "
                 f"is safe — money returned!"
             )
@@ -158,7 +166,7 @@ class Robber(commands.Cog):
             {"$set": {"jailed_until": until, "jailed_at": now}},
             upsert=True,
         )
-        logger.info("billu badmosh is now jailed until %s", until.isoformat())
+        logger.info("Billu Badmosh is now jailed until %s", until.isoformat())
         return until
 
     def _release_billu(self):
@@ -193,7 +201,10 @@ class Robber(commands.Cog):
             description=description,
             color=discord.Color.dark_red(),
         )
-        embed.set_author(name="billu badmosh")
+        embed.set_author(name="Billu Badmosh", icon_url="https://i.giphy.com/QM5dSUeS2nRL2s8KM4.webp")
+        embed.set_thumbnail(url="https://i.giphy.com/QM5dSUeS2nRL2s8KM4.webp")
+        embed.set_image(url="https://i.giphy.com/jFgZGu2ShCwhkmeoY8.webp")
+        embed.set_footer(text="Credits to Giphy", icon_url="https://giphy.com/static/img/giphy-logo.webp")
         return embed
 
     async def _rob_guild(self, guild_id: int):
@@ -238,7 +249,7 @@ class Robber(commands.Cog):
         amount = random.randint(1, min(config.ROB_WOOD_MAX, wood))
 
         embed = self._build_robber_embed(
-            f"**billu badmosh** robbed **{amount} \U0001fab5 wood** of resources!"
+            f"**Billu Badmosh** robbed **{amount} \U0001fab5 wood** of resources!"
         )
         embed.set_footer(
             text=f"Jail him within {config.ROB_MESSAGE_TTL} seconds to get your wood back!"
@@ -258,11 +269,11 @@ class Robber(commands.Cog):
         await view.wait()
 
         if view.jailed:
-            logger.info("billu badmosh was jailed in guild %s", guild_id)
+            logger.info("Billu Badmosh was jailed in guild %s", guild_id)
             return
 
         logger.info(
-            "billu badmosh stole %s wood from %s in guild %s",
+            "Billu Badmosh stole %s wood from %s in guild %s",
             amount, victim_id, guild_id,
         )
         self._deduct_wood(victim_id, max(0, wood - amount))
@@ -273,7 +284,7 @@ class Robber(commands.Cog):
 
         if self._is_jailed(now):
             logger.info(
-                "billu badmosh is still in jail (until %s) — no robberies today.",
+                "Billu Badmosh is still in jail (until %s) — no robberies today.",
                 self._jailed_until().isoformat(),
             )
             jitter = random.uniform(
@@ -286,7 +297,7 @@ class Robber(commands.Cog):
 
         if self._jailed_until() is not None:
             self._release_billu()
-            logger.info("billu badmosh has been released from jail.")
+            logger.info("Billu Badmosh has been released from jail.")
 
         for guild_id in config.availableIn.get("guilds", []):
             try:

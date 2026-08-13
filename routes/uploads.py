@@ -1,12 +1,15 @@
 import re
 import time
 import hashlib
+import logging
 import cloudinary
 from fastapi import APIRouter, Request, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import config
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -154,3 +157,22 @@ async def destroy_asset(
         return {"ok": 1, "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def destroy_image_if_cloudinary(url: str) -> None:
+    """Best-effort delete of a Cloudinary-hosted image.
+
+    Call this BEFORE overwriting a DB field with a new image URL.
+    Silently ignores errors — orphan cleanup should never block the caller."""
+    if not url or not isinstance(url, str):
+        return
+    if "cloudinary.com" not in url:
+        return
+    if not config.CLOUDINARY_URL:
+        return
+    try:
+        public_id = _normalize_public_id(url)
+        cloudinary.config()
+        cloudinary.uploader.destroy(public_id)
+    except Exception:
+        logger.debug(f"Failed to destroy Cloudinary image: {url}")

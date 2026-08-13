@@ -100,8 +100,8 @@ async def get_owner_id(db) -> str:
 
 
 @router.post("")
-@limiter.limit("10/minute", key_func=rate_limit_ip)
-@limiter.limit("5/minute", key_func=rate_limit_user)
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("20/minute", key_func=rate_limit_user)
 async def workspace(
     body: WorkspaceRequest,
     request: Request,

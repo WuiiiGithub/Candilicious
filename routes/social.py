@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from pydantic import BaseModel
 from . import verify_token, optional_token, limiter
+from .uploads import destroy_image_if_cloudinary
 from cogs.social import notify_followers_of_post
 from library.usersync import sync_user_from_discord
 import config
@@ -257,6 +258,8 @@ async def update_post(
             raise HTTPException(status_code=400, detail="Caption must be 2000 characters or fewer")
         update_fields["caption"] = body.caption
     if body.thumbnail_url is not None:
+        if body.thumbnail_url != post.get("thumbnail_url"):
+            destroy_image_if_cloudinary(post.get("thumbnail_url", ""))
         update_fields["thumbnail_url"] = body.thumbnail_url
 
     if not update_fields:
@@ -291,6 +294,7 @@ async def delete_post(
     if post["user_id"] != user_id:
         raise HTTPException(status_code=403, detail="You can only delete your own posts")
 
+    destroy_image_if_cloudinary(post.get("thumbnail_url", ""))
     await request.app.db["social.posts"].delete_one({"_id": ObjectId(post_id)})
 
     return {"ok": 1}
@@ -522,6 +526,8 @@ async def update_custom_post(
         update_fields["content"] = body.content
         social_fields["content"] = body.content
     if body.thumbnail_url is not None:
+        if body.thumbnail_url != custom_post.get("thumbnail"):
+            destroy_image_if_cloudinary(custom_post.get("thumbnail", ""))
         update_fields["thumbnail"] = body.thumbnail_url
         social_fields["thumbnail_url"] = body.thumbnail_url
 

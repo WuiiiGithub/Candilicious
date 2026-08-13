@@ -19,12 +19,6 @@ def sanitize_name(name: str) -> str:
     return cleaned
 
 
-def ensure_markdown(name: str) -> str:
-    if "." not in name.split("/")[-1]:
-        name = f"{name}.md"
-    return name
-
-
 async def get_note(db, user_id: str, note_id: str) -> dict | None:
     return await db["notes.docs"].find_one({"note_id": note_id, "user_id": user_id})
 
@@ -191,7 +185,7 @@ async def create_file(request: Request, payload: dict = Depends(verify_token)):
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     user_id = payload.get("sub")
-    name = ensure_markdown(sanitize_name(body.get("name", "")))
+    name = sanitize_name(body.get("name", ""))
     parent_id = body.get("parent_id") or None
 
     if parent_id:
@@ -266,7 +260,7 @@ async def update_file(request: Request, payload: dict = Depends(verify_token)):
 
     update_data = {}
     if "name" in body:
-        name = ensure_markdown(sanitize_name(body["name"]))
+        name = sanitize_name(body["name"])
         if await sibling_name_taken(request.app.db, user_id, note.get("parent_id"), name, exclude_id=note_id):
             raise HTTPException(status_code=400, detail="A file with that name already exists here")
         update_data["name"] = name

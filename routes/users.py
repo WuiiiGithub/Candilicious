@@ -8,6 +8,7 @@ import cloudinary
 import cloudinary.uploader
 import config
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
+from .uploads import destroy_image_if_cloudinary
 from library import is_muted
 from library.usersync import sync_user_from_discord
 from library.avatars import resolve_avatar_url, default_avatar
@@ -125,6 +126,8 @@ async def set_pfp(
     if url:
         if not url.startswith(("https://",)):
             raise HTTPException(status_code=400, detail="URL must start with https://")
+        old = await request.app.db["users"].find_one({"_id": user_id}, {"profile_pfp": 1})
+        destroy_image_if_cloudinary((old or {}).get("profile_pfp", ""))
         await request.app.db["users"].update_one(
             {"_id": user_id},
             {"$set": {"profile_pfp": url}},
@@ -140,6 +143,9 @@ async def set_pfp(
 
         if not config.CLOUDINARY_URL:
             raise HTTPException(status_code=500, detail="Cloudinary not configured")
+
+        old = await request.app.db["users"].find_one({"_id": user_id}, {"profile_pfp": 1})
+        destroy_image_if_cloudinary((old or {}).get("profile_pfp", ""))
 
         cloudinary.config(secure=True)
         try:
@@ -164,6 +170,8 @@ async def set_pfp(
 @limiter.limit("10/minute", key_func=rate_limit_ip)
 async def remove_pfp(request: Request, payload: dict = Depends(verify_token)):
     user_id = payload.get("sub")
+    old = await request.app.db["users"].find_one({"_id": user_id}, {"profile_pfp": 1})
+    destroy_image_if_cloudinary((old or {}).get("profile_pfp", ""))
     await request.app.db["users"].update_one(
         {"_id": user_id},
         {"$unset": {"profile_pfp": ""}},

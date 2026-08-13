@@ -168,6 +168,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     app.mongodb_client.close()
+    try:
+        from library.leaderboard import close_http_session
+        await close_http_session()
+    except Exception:
+        pass
     if isNgrokSetup:
         ngrok.kill()
     if isVpnSetup:
@@ -423,8 +428,14 @@ async def on_ready():
             details=f"Failed to sync bot status from MongoDB: {e}",
         )
 
+    # Extensions are loaded concurrently with the connection, so wait for them
+    # to finish before syncing. Otherwise on_ready can fire first and the sync
+    # would miss freshly loaded commands, leaving them to appear late.
+    await bot.extensions_ready.wait()
+
     guild_ids = config.availableIn.get("guilds", [])
-    for g_id in guild_ids:
+
+    async def _sync_guild(g_id):
         try:
             guild = discord.Object(id=g_id)
             await bot.tree.sync(guild=guild)
@@ -440,6 +451,8 @@ async def on_ready():
                 details=f"Failed to sync commands for guild {g_id}:\n{e}",
             )
 
+    await asyncio.gather(*(_sync_guild(g) for g in guild_ids))
+
     log.complete(
         status_code=100,
         message="Executed",
@@ -451,6 +464,7 @@ app.state.bot = bot
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 bot.userNetworkConnection = {}
+bot.extensions_ready = asyncio.Event()
 
 event_bus = EventBus()
 app.state.event_bus = event_bus
@@ -553,21 +567,24 @@ app.include_router(
 
 async def load():
     log = SystemLogger(filename=filename)
-    for ext_file in os.listdir("cogs"):
-        if ext_file.endswith(".py"):
-            try:
-                log.loading(
-                    status_code=50,
-                    message="Extension",
-                    details=f"Attempting to load cog extension: {ext_file}",
-                )
-                await bot.load_extension(f"cogs.{ext_file[:-3]}")
-            except Exception as e:
-                log.error(
-                    status_code=-75,
-                    message="Load Fail",
-                    details=f"Failed to load extension {ext_file}:\n{e}",
-                )
+    try:
+        for ext_file in os.listdir("cogs"):
+            if ext_file.endswith(".py"):
+                try:
+                    log.loading(
+                        status_code=50,
+                        message="Extension",
+                        details=f"Attempting to load cog extension: {ext_file}",
+                    )
+                    await bot.load_extension(f"cogs.{ext_file[:-3]}")
+                except Exception as e:
+                    log.error(
+                        status_code=-75,
+                        message="Load Fail",
+                        details=f"Failed to load extension {ext_file}:\n{e}",
+                    )
+    finally:
+        bot.extensions_ready.set()
 
     log.complete(
         status_code=100,

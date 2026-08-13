@@ -1,17 +1,29 @@
 from datetime import datetime
 
-RESOURCE_LABELS = {
+CRITERION_LABELS = {
+    "time": ("\u23f1\ufe0f", "Time"),
     "wood": ("\U0001fab5", "Wood"),
     "iron": ("\U0001f529", "Iron"),
 }
 
 
-def leaderboard_template(toppers: list, view: str = 'display_name', resource: str = 'wood') -> str:
+def format_duration(secs):
+    secs = int(secs or 0)
+    hours, rem = divmod(secs, 3600)
+    mins = rem // 60
+    if hours >= 100:
+        return f"{hours}h"
+    if hours:
+        return f"{hours}h {mins}m"
+    return f"{mins}m"
+
+
+def leaderboard_template(toppers: list, view: str = 'display_name', criterion: str = 'time') -> str:
     length = len(toppers)
     if length < 3:
         return "Sorry, very less people to rank"
 
-    emoji, label = RESOURCE_LABELS.get(resource, RESOURCE_LABELS["wood"])
+    emoji, label = CRITERION_LABELS.get(criterion, CRITERION_LABELS["time"])
     title = f"{emoji} {label}"
 
     def _name(u):
@@ -22,6 +34,8 @@ def leaderboard_template(toppers: list, view: str = 'display_name', resource: st
 
     def _score(u):
         amount = u.get("amount") or u.get("value") or 0
+        if criterion == "time":
+            return format_duration(amount)
         return f"{int(amount):,}"
 
     header = f"""**`===================================`**
