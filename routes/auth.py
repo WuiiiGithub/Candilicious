@@ -73,21 +73,36 @@ async def record_ip(db, user_id: str, ip: str):
 
 @router.get("/login")
 @limiter.limit("5/minute", key_func=rate_limit_ip)
-async def login(request: Request):
+async def login(request: Request, redirect_uri: str = None):
+    """Start Discord OAuth. `redirect_uri` (the frontend origin) is validated
+    against the allowed frontend domains and carried through the OAuth state so
+    the callback bounces the user back to whichever site started the login."""
+    target = _resolve_redirect_uri(redirect_uri)
     state = secrets.token_urlsafe(16)
     await request.app.db["oauth_pending_states"].insert_one({
         "state": state,
+        "redirect_uri": target,
         "createdAt": datetime.now(timezone.utc)
     })
     params = {
         "client_id": config.DISCORD_CLIENT_ID,
-        "redirect_uri": config.FRONTEND_DOMAIN,
+        "redirect_uri": target,
         "response_type": "code",
         "scope": "identify guilds email",
         "state": state,
     }
     discord_url = f"https://discord.com/api/oauth2/authorize?{urlencode(params)}"
     return {"redirect_url": discord_url}
+
+
+def _resolve_redirect_uri(uri: str | None) -> str:
+    """Normalise a requested frontend origin and reject anything not allowlisted."""
+    allowed = config.allowed_frontend_domains()
+    if uri:
+        uri = uri.strip().strip("/")
+        if uri in allowed:
+            return uri
+    return config.FRONTEND_DOMAIN
 
 
 @router.get("/callback")
@@ -98,13 +113,15 @@ async def callback(request: Request, code: str, state: str):
         logger.warning("Invalid or expired state during OAuth callback")
         return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?error=session_expired", status_code=302)
 
+    target = state_doc.get("redirect_uri") or config.FRONTEND_DOMAIN
+
     async with httpx.AsyncClient() as client:
         token_res = await client.post("https://discord.com/api/oauth2/token", data={
             "client_id": config.DISCORD_CLIENT_ID,
             "client_secret": config.DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": config.FRONTEND_DOMAIN,
+            "redirect_uri": target,
         })
 
         if token_res.status_code != 200:
@@ -113,7 +130,7 @@ async def callback(request: Request, code: str, state: str):
             except Exception:
                 error_detail = token_res.text
             logger.error(f"Discord token exchange failed: {error_detail}")
-            return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?error=auth_failed", status_code=302)
+            return RedirectResponse(url=f"{target}/?error=auth_failed", status_code=302)
 
         token_data = token_res.json()
         headers = {"Authorization": f"Bearer {token_data['access_token']}"}
@@ -125,7 +142,7 @@ async def callback(request: Request, code: str, state: str):
             except Exception:
                 error_detail = user_res.text
             logger.error(f"Failed to fetch Discord user info: {error_detail}")
-            return RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/?error=auth_failed", status_code=302)
+            return RedirectResponse(url=f"{target}/?error=auth_failed", status_code=302)
 
         user_info = user_res.json()
 
@@ -168,7 +185,7 @@ async def callback(request: Request, code: str, state: str):
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    response = RedirectResponse(url=f"{config.FRONTEND_DOMAIN}/#login", status_code=302)
+    response = RedirectResponse(url=f"{target}/#login", status_code=302)
     response.set_cookie(
         key="session_token",
         value=encoded_jwt,

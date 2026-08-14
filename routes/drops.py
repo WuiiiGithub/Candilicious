@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional
 import config
 from library import degrade, is_muted
+from library.ga_mp import track_event
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 from .sessions import _is_live_guild_member
 
@@ -202,6 +203,14 @@ async def claim_drop(request: Request, token: str, body: ClaimRequest, payload: 
         })
     except pymongo.errors.DuplicateKeyError:
         raise HTTPException(status_code=400, detail="You already claimed this drop")
+
+    track_event("drop_claimed", {
+        "session_id": session_id,
+        "guild_id": guild_id,
+        "study_type": body.study_type,
+        "wood": int(wood),
+        "iron": int(iron),
+    }, user_id=user_id)
 
     rates_doc = await request.app.db["config"].find_one({"_id": "degradation_rates"})
     wood_rate = rates_doc.get("wood", 0.05) if rates_doc else 0.05

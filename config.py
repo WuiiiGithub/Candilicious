@@ -19,6 +19,20 @@ WEBSITE_DOMAIN = _getenv("WEBSITE_DOMAIN").strip('/')
 FRONTEND_DOMAIN=_getenv("FRONTEND_DOMAIN").strip('/')
 SECRET_KEY=_getenv("SECRET_KEY")
 
+def allowed_frontend_domains() -> list:
+    """All frontend origins allowed by CORS and as OAuth redirect targets.
+
+    FRONTEND_DOMAINS may hold a comma-separated list of origins, e.g.
+    "https://candilicious.web.app,https://candilicious.wispbyte.app".
+    Falls back to the single FRONTEND_DOMAIN var for backward compatibility.
+    """
+    raw = _getenv("FRONTEND_DOMAINS") or ""
+    domains = [d.strip().strip("/") for d in raw.split(",") if d.strip()]
+    if not domains and FRONTEND_DOMAIN:
+        domains = [FRONTEND_DOMAIN]
+    return domains
+
+
 _host = WEBSITE_DOMAIN.split("://")[-1].split(":")[0].lower()
 IS_PROD = not (
     _host == "localhost"

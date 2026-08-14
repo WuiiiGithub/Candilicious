@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
 from datetime import datetime, timezone
+from library.ga_mp import track_event
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 from .uploads import destroy_image_if_cloudinary
 
@@ -81,7 +82,11 @@ async def create_project(request: Request, payload: dict = Depends(verify_token)
     }
     
     await request.app.db["projects.docs"].insert_one(new_project)
-    
+
+    track_event("project_created", {
+        "project_id": project_id,
+    }, user_id=user_id)
+
     new_project.pop("_id", None)
     return {"status": "success", "project": new_project}
 
@@ -155,5 +160,7 @@ async def delete_project(request: Request, payload: dict = Depends(verify_token)
             destroy_image_if_cloudinary(b.get("thumbnail_link", ""))
         await request.app.db["projects.docs"].delete_many({"user_id": user_id})
         await request.app.db["boards.docs"].delete_many({"user_id": user_id})
-        
+
+    track_event("project_deleted", {"project_id": project_id or "all"}, user_id=user_id)
+
     return {"status": "success"}

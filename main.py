@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
 from routes import (
+    analytics,
     boards,
     bulk,
     drops,
@@ -188,7 +189,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[config.FRONTEND_DOMAIN], 
+    allow_origins=config.allowed_frontend_domains(), 
    allow_credentials=True,
    allow_methods=["*"],  
     allow_headers=["*"],  
@@ -563,6 +564,11 @@ app.include_router(
     router=insights.router,
     prefix="/api/stats",
     tags=["stats"]
+)
+app.include_router(
+    router=analytics.router,
+    prefix="/api/analytics",
+    tags=["analytics"]
 )
 
 async def load():

@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 import pymongo
 from library import is_muted
+from library.ga_mp import track_event
 session_collection = lambda: collections.get('session')
 
 
@@ -305,6 +306,12 @@ class Session:
                         "drop_number": self.routines_fired_count,
                         "created_at": datetime.now(timezone.utc).isoformat(),
                         "expire_at": (datetime.now(timezone.utc) + timedelta(seconds=config.DROP_COLLECTION_TIME)).isoformat(),
+                    })
+
+                    track_event("drop_created", {
+                        "guild_id": str(self.guild_id),
+                        "session_id": str(self.session_id),
+                        "drop_number": self.routines_fired_count,
                     })
 
                     if self.guild_id != "web" and channel:
@@ -666,6 +673,17 @@ class Session:
         if secs > 0:
             self._accrue_time(member_id, activity_type, secs)
 
+        net = self.members.get(member_id, {}).get("net_time") or {}
+        if net.get("total"):
+            track_event("session_ended", {
+                "guild_id": str(self.guild_id),
+                "session_id": str(self.session_id),
+                "total_seconds": float(net.get("total") or 0),
+                "cam_seconds": float(net.get("cam") or 0),
+                "ss_seconds": float(net.get("ss") or 0),
+                "noact_seconds": float(net.get("noact") or 0),
+            }, user_id=member_id)
+
         u_col = collections.get('user')
         if u_col is not None and secs > 0:
             u_col.update_one(
@@ -712,6 +730,11 @@ class Session:
                     )
                     self.members[member_id]["log_id"] = latest["_id"]
                     self._reset_seg(member_id)
+                    track_event("session_started", {
+                        "guild_id": str(self.guild_id),
+                        "session_id": str(self.session_id),
+                        "resumed": 1,
+                    }, user_id=member_id)
                     return
 
         result = act_col.insert_one({
@@ -729,6 +752,11 @@ class Session:
         }) if act_col is not None else None
         if result:
             self.members[member_id]["log_id"] = result.inserted_id
+            track_event("session_started", {
+                "guild_id": str(self.guild_id),
+                "session_id": str(self.session_id),
+                "resumed": 0,
+            }, user_id=member_id)
         self._reset_seg(member_id)
 
     def _update_members_count(self):

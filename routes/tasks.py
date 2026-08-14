@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Depends, HTTPException
 import uuid
+from library.ga_mp import track_event
 from . import verify_token, limiter, rate_limit_ip, rate_limit_user
 
 router = APIRouter()
@@ -236,6 +237,13 @@ async def update_task(request: Request, payload: dict = Depends(verify_token)):
                 avg_pointer_speed=body.get("avg_pointer_speed"),
                 session_id=body.get("session_id"),
             )
+            if body["status"] == "done":
+                track_event("task_completed", {
+                    "project_id": str(project_id),
+                    "board_id": str(board_id),
+                    "task_id": str(task_id),
+                    "session_id": str(body.get("session_id") or ""),
+                }, user_id=user_id)
 
         # Recalculate project counts if status changed
         if "status" in body:
