@@ -568,7 +568,8 @@ async def get_trend(
         prev_total = _round(sum(p["value"] for p in previous))
     delta_pct = _round((cur_total - prev_total) / prev_total * 100) if prev_total else 0.0
 
-    label, unit = DB_METRIC_INFO.get(metric, GA_METRIC_INFO.get(metric, ("", "")))
+    info = DB_METRIC_INFO.get(metric) or GA_METRIC_INFO.get(metric)
+    label, unit = (info[0], info[1]) if info else ("", "")
 
     return {
         "ok": 1,

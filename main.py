@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from discord.ext import commands
+from urllib.parse import urlsplit
 import uvicorn, config
 from library.logging import SystemLogger, CogLogger
 logger = logging.getLogger(__name__)
@@ -106,6 +107,10 @@ async def lifespan(app: FastAPI):
             [("createdAt", ASCENDING)], 
             expireAfterSeconds=600
         )
+        await app.db["auth_codes"].create_index(
+            [("createdAt", ASCENDING)],
+            expireAfterSeconds=60
+        )
 
         try:
             await app.db["drop.offers"].drop_index("created_at_1")
@@ -194,6 +199,53 @@ app.add_middleware(
    allow_methods=["*"],  
     allow_headers=["*"],  
 )
+
+
+class OriginGuardMiddleware:
+    """Reject cross-origin state-changing requests (CSRF hardening).
+
+    Browsers always attach an Origin header on cross-site writes, while HTML
+    forms and cross-site fetches from a foreign origin carry the attacker's
+    origin. Requests with no Origin at all (curl, server-to-server, Discord's
+    token endpoint call) pass through, as do same-host requests. Cost is a
+    single dict/header comparison — no DB, no measurable latency."""
+
+    def __init__(self, app):
+        self.app = app
+        self.allowed_origins = frozenset(config.allowed_frontend_domains())
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        method = scope.get("method", "").upper()
+        if method not in ("POST", "PUT", "PATCH", "DELETE"):
+            return await self.app(scope, receive, send)
+
+        headers = dict(
+            (k.decode("latin-1").lower(), v.decode("latin-1"))
+            for k, v in (scope.get("headers") or [])
+        )
+        origin = headers.get("origin")
+        if not origin:
+            return await self.app(scope, receive, send)
+        if origin in self.allowed_origins:
+            return await self.app(scope, receive, send)
+
+        host_name = headers.get("host", "").split(":")[0].lower()
+        origin_host = (urlsplit(origin).hostname or "").lower()
+        if origin_host == host_name:
+            return await self.app(scope, receive, send)
+
+        body = b'{"detail":"Cross-origin request rejected"}'
+        await send({
+            "type": "http.response.start",
+            "status": 403,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("latin-1")),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 class SecurityHeadersMiddleware:
@@ -304,6 +356,7 @@ class RequestBodySizeMiddleware:
 
 app.add_middleware(RequestBodySizeMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(OriginGuardMiddleware)
 # Bot Setup
 intents = discord.Intents.all()
 

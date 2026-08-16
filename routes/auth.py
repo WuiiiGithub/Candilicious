@@ -1,14 +1,15 @@
 import os
 import secrets
 import logging
+import hashlib
+import base64
 import httpx
 import jwt
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
-from fastapi.responses import JSONResponse
 from starlette.responses import RedirectResponse
-from . import limiter, rate_limit_ip, rate_limit_user, _client_ip
+from . import limiter, rate_limit_ip, rate_limit_user, _client_ip, revoke_token, _is_revoked
 from library.avatars import extract_avatar_hash
 import config
 from urllib.parse import urlencode
@@ -18,22 +19,6 @@ logger = logging.getLogger(__name__)
 GUILD_ID = str(config.availableIn["guilds"][0])
 
 router = APIRouter()
-
-
-def _cookie_flags(request: Request) -> dict:
-    """Cookie flags tuned to the connection.
-
-    Production (HTTPS behind a proxy): SameSite=None + Secure so the cookie
-    travels cross-site between frontend and API on different origins.
-    Local dev (plain HTTP on a LAN IP): SameSite=Lax without Secure, which
-    is the only combination browsers accept over HTTP.
-    """
-    is_secure = config.IS_PROD
-    return {
-        "httponly": True,
-        "secure": is_secure,
-        "samesite": "none" if is_secure else "lax",
-    }
 
 
 async def record_ip(db, user_id: str, ip: str):
@@ -71,17 +56,29 @@ async def record_ip(db, user_id: str, ip: str):
     )
 
 
+def _pkce_challenge(verifier: str) -> str:
+    """RFC 7636 S256 code challenge derived from the verifier."""
+    digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
 @router.get("/login")
 @limiter.limit("5/minute", key_func=rate_limit_ip)
 async def login(request: Request, redirect_uri: str = None):
     """Start Discord OAuth. `redirect_uri` (the frontend origin) is validated
     against the allowed frontend domains and carried through the OAuth state so
-    the callback bounces the user back to whichever site started the login."""
+    the callback bounces the user back to whichever site started the login.
+
+    PKCE is used so the authorization code alone is worthless: the S256
+    challenge goes to Discord and the verifier stays server-side, bound to the
+    (single-use) state document."""
     target = _resolve_redirect_uri(redirect_uri)
     state = secrets.token_urlsafe(16)
+    code_verifier = secrets.token_urlsafe(64)
     await request.app.db["oauth_pending_states"].insert_one({
         "state": state,
         "redirect_uri": target,
+        "code_verifier": code_verifier,
         "createdAt": datetime.now(timezone.utc)
     })
     params = {
@@ -90,6 +87,8 @@ async def login(request: Request, redirect_uri: str = None):
         "response_type": "code",
         "scope": "identify guilds email",
         "state": state,
+        "code_challenge": _pkce_challenge(code_verifier),
+        "code_challenge_method": "S256",
     }
     discord_url = f"https://discord.com/api/oauth2/authorize?{urlencode(params)}"
     return {"redirect_url": discord_url}
@@ -103,6 +102,10 @@ def _resolve_redirect_uri(uri: str | None) -> str:
         if uri in allowed:
             return uri
     return config.FRONTEND_DOMAIN
+
+
+AUTH_CODE_TTL_SECONDS = 60
+SESSION_LIFETIME_HOURS = 24
 
 
 @router.get("/callback")
@@ -122,6 +125,7 @@ async def callback(request: Request, code: str, state: str):
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": target,
+            "code_verifier": state_doc.get("code_verifier") or "",
         })
 
         if token_res.status_code != 200:
@@ -181,40 +185,78 @@ async def callback(request: Request, code: str, state: str):
         "in_guild": in_guild,
         "is_owner": user_id == str(config.OWNER_ID),
         "iat": datetime.now(timezone.utc),
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
+        "exp": datetime.now(timezone.utc) + timedelta(hours=SESSION_LIFETIME_HOURS),
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    response = RedirectResponse(url=f"{target}/#login", status_code=302)
-    response.set_cookie(
-        key="session_token",
-        value=encoded_jwt,
-        **_cookie_flags(request),
-        max_age=7 * 24 * 60 * 60,
-        path="/",
-    )
-    return response
+    # Never put the JWT in a URL. The frontend only ever sees a random,
+    # single-use code that it swaps for the token via POST /exchange. The
+    # explicit expires_at (not just the Mongo TTL index) enforces the strict
+    # 60s window even though the TTL sweeper can lag a full cycle.
+    now = datetime.now(timezone.utc)
+    auth_code = secrets.token_urlsafe(32)
+    await request.app.db["auth_codes"].insert_one({
+        "code": auth_code,
+        "token": encoded_jwt,
+        "createdAt": now,
+        "expires_at": now + timedelta(seconds=AUTH_CODE_TTL_SECONDS),
+    })
+
+    return RedirectResponse(url=f"{target}/#auth={auth_code}", status_code=302)
+
+
+class AuthExchangeRequest(BaseModel):
+    code: str
+
+
+@router.post("/exchange")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("30/hour", key_func=rate_limit_user)
+async def exchange_auth_code(request: Request, body: AuthExchangeRequest):
+    """Swap the single-use OAuth callback code for the session JWT.
+
+    The code is burned atomically on first use (find_one_and_delete) and is
+    additionally hard-rejected past its explicit expires_at, so even if it
+    leaks via history, logs or analytics it is worthless after one redemption
+    or the strict 60-second window."""
+    doc = await request.app.db["auth_codes"].find_one_and_delete({
+        "code": body.code,
+        "expires_at": {"$gte": datetime.now(timezone.utc)},
+    })
+    if not doc or not doc.get("token"):
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+    return {"ok": 1, "token": doc["token"]}
 
 
 @router.get("/verify")
 @limiter.limit("120/minute", key_func=rate_limit_ip)
-async def verify(token: str = None, request: Request = None):
-    if not token and request:
-        token = request.cookies.get("session_token")
-    if not token:
+async def verify(request: Request):
+    auth = request.headers.get("authorization")
+    if not auth or not auth.lower().startswith("bearer "):
         return {"valid": False}
+    token = auth[7:].strip()
     try:
         payload = jwt.decode(token, config.SECRET_KEY, algorithms=["HS256"])
-        return {"valid": True, "payload": payload}
     except jwt.PyJWTError:
         return {"valid": False}
+    if _is_revoked(token):
+        return {"valid": False}
+    return {"valid": True, "payload": payload}
 
 
 @router.post("/logout")
-async def logout(request: Request = None):
-    response = JSONResponse(content={"ok": 1})
-    response.delete_cookie(key="session_token", path="/", **_cookie_flags(request))
-    return response
+async def logout(request: Request):
+    auth = request.headers.get("authorization")
+    token = None
+    if auth and auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+    if token:
+        try:
+            payload = jwt.decode(token, config.SECRET_KEY, algorithms=["HS256"])
+            revoke_token(token, float(payload.get("exp", 0)))
+        except jwt.PyJWTError:
+            pass
+    return {"ok": 1}
 
 
 class WebTokenRequest(BaseModel):
@@ -275,12 +317,4 @@ async def exchange_web_token(request: Request, body: WebTokenRequest):
     }
     encoded_jwt = jwt.encode(payload, config.SECRET_KEY, algorithm="HS256")
 
-    response = JSONResponse(content={"ok": 1, "token": encoded_jwt})
-    response.set_cookie(
-        key="session_token",
-        value=encoded_jwt,
-        **_cookie_flags(request),
-        max_age=12 * 60 * 60,
-        path="/",
-    )
-    return response
+    return {"ok": 1, "token": encoded_jwt}

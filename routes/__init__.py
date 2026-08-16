@@ -1,4 +1,6 @@
 import os
+import time
+import hashlib
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -8,6 +10,34 @@ from slowapi.util import get_remote_address
 import config
 
 router = APIRouter()
+
+# In-memory revocation denylist: sha256(token) -> expiry (unix seconds).
+# Logged-out JWTs are rejected here until they naturally expire. Zero per-request
+# DB cost (a dict lookup is ~microseconds); the only trade-off is that the list
+# is cleared on process restart, so a revoked token revives at most until its
+# own exp claim after a restart.
+_revoked_tokens: dict[str, float] = {}
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def revoke_token(token: str, expires_at: float) -> None:
+    """Server-side kill switch for a JWT. Call on logout."""
+    if expires_at and expires_at > time.time():
+        _revoked_tokens[_token_hash(token)] = expires_at
+
+
+def _is_revoked(token: str) -> bool:
+    key = _token_hash(token)
+    exp = _revoked_tokens.get(key)
+    if exp is None:
+        return False
+    if exp < time.time():
+        _revoked_tokens.pop(key, None)
+        return False
+    return True
 
 
 def _client_ip(request: Request) -> str:
@@ -26,11 +56,10 @@ def _rate_limit_key(request: Request) -> str:
     """Per-request limiter key: real client IP, plus the authenticated user id
     when a valid JWT is present. Binds limits to both IP and account."""
     try:
-        token = request.cookies.get("session_token")
-        if not token:
-            auth = request.headers.get("authorization")
-            if auth and auth.lower().startswith("bearer "):
-                token = auth[7:].strip()
+        token = None
+        auth = request.headers.get("authorization")
+        if auth and auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
         if token:
             payload = _decode_token(token)
             sub = payload.get("sub")
@@ -62,14 +91,15 @@ def verify_token(
     token = None
     if credentials and credentials.credentials:
         token = credentials.credentials
-    else:
-        token = request.cookies.get("session_token")
     if not token:
         raise HTTPException(status_code=401, detail="Unauthorized: no token provided")
     try:
-        return _decode_token(token)
+        payload = _decode_token(token)
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"Unauthorized: {str(e)}")
+    if _is_revoked(token):
+        raise HTTPException(status_code=401, detail="Unauthorized: session revoked")
+    return payload
 
 
 def optional_token(
@@ -79,14 +109,15 @@ def optional_token(
     token = None
     if credentials and credentials.credentials:
         token = credentials.credentials
-    else:
-        token = request.cookies.get("session_token")
     if not token:
         return None
     try:
-        return _decode_token(token)
+        payload = _decode_token(token)
     except jwt.PyJWTError:
         return None
+    if _is_revoked(token):
+        return None
+    return payload
 
 class ExceptionRequest(BaseModel):
     type: str
