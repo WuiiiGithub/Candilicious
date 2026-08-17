@@ -9,12 +9,16 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance, ImageFilter
 
 logger = logging.getLogger(__name__)
 
+# Anchor every asset path to this file's repo root so rendering works no matter
+# what the bot's working directory is.
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 CONFIG = {
     "IMG_SIZE": (858, 932),
-    "CACHE_DIR": "../.cache/pfps", 
+    "CACHE_DIR": os.path.join(_BASE_DIR, ".cache", "pfps"),
     "MAX_CACHE_FILES": 100,
-    "TEMPLATE": "library/templates/leaderboard.webp",
-    "UNKNOWN_PFP": "./templates/unknownPfp.webp",
+    "TEMPLATE": os.path.join(_BASE_DIR, "library", "templates", "leaderboard.webp"),
+    "UNKNOWN_PFP": os.path.join(_BASE_DIR, "templates", "unknownPfp.webp"),
     "PODIUMS": {
         1: {"cx": 430, "cy": 227, "r": 68, "name_y": 361, "time_y": 386, "color": "#FFD700", "time_color": "#FFEC8B"},
         2: {"cx": 213, "cy": 223, "r": 57, "name_y": 358, "time_y": 383, "color": "#C0C0C0", "time_color": "#E8E8E8"},
@@ -27,7 +31,7 @@ CONFIG = {
 }
 
 _DEFAULT_PADDING = 28
-_BORDER_CACHE_DIR = "../.cache/borders"
+_BORDER_CACHE_DIR = os.path.join(_BASE_DIR, ".cache", "borders")
 _AVATAR_CACHE_MAX = 256
 
 _border_overlays = {}

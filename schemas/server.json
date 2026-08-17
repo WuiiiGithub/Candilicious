@@ -8,5 +8,10 @@
         "text": "<str:footer_text>",
         "last_sent": "<datetime:last_reminder_sent_time>",
         "tagged": ["<array:user_ids_already_pinged>"]
+    },
+    "holiday": {
+        "role_id": "<str:discord_role_id_for_holiday_restriction>",
+        "channel_id": "<str:text_channel_id_for_holiday_panel>",
+        "panel_message_id": "<str:persistent_panel_message_id>"
     }
 }

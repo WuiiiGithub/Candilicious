@@ -102,6 +102,18 @@ def build_config_embed(server_data: dict, guild: discord.Guild) -> discord.Embed
         inline=False,
     )
 
+    holiday = server_data.get("holiday") or {}
+    role_id = holiday.get("role_id")
+    channel_id = holiday.get("channel_id")
+    h_ch = "\u2705" if role_id and channel_id else "\u274c"
+    role_val = f"<@&{role_id}>" if role_id else "Not set"
+    ch_val = f"<#{channel_id}>" if channel_id else "Not set"
+    embed.add_field(
+        name=f"{h_ch} Holiday Setup",
+        value=f"**Role:** {role_val}\n**Channel:** {ch_val}",
+        inline=False,
+    )
+
     return embed
 
 
@@ -216,6 +228,19 @@ class ChannelSelectMenu(ui.ChannelSelect):
             if rem_cog:
                 await rem_cog.refresh_reminders_cache()
 
+        elif self.target == "holiday_channel":
+            serverCollection.update_one(
+                {"_id": server_id},
+                {"$set": {"holiday.channel_id": str(selected.id)}},
+                upsert=True,
+            )
+            hcfg = _holiday_config(server_id)
+            role_id = hcfg.get("role_id")
+            if role_id:
+                role = interaction.guild.get_role(int(role_id))
+                if role:
+                    await apply_holiday_overwrites(interaction.guild, role, selected)
+
         server_data = serverCollection.find_one({"_id": server_id}) or {}
         embed = build_config_embed(server_data, interaction.guild)
         view = ConfigView(server_data, interaction.guild, interaction.client)
@@ -231,11 +256,78 @@ class ChannelPickView(ui.View):
         self.target = target
         if target == "category":
             channel_types = [discord.ChannelType.category]
-        elif target == "reminder_channel":
+        elif target in ("reminder_channel", "holiday_channel"):
             channel_types = [discord.ChannelType.text, discord.ChannelType.news]
         else:
             channel_types = [discord.ChannelType.voice]
         self.add_item(ChannelSelectMenu(channel_types, target))
+
+    @ui.button(label="\u2190 Back", style=discord.ButtonStyle.grey, row=1)
+    async def back(self, interaction: discord.Interaction, button: ui.Button):
+        server_data = serverCollection.find_one({"_id": str(interaction.guild_id)}) or {}
+        embed = build_config_embed(server_data, interaction.guild)
+        view = ConfigView(server_data, interaction.guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class HolidayRoleSelect(ui.Select):
+    def __init__(self, guild: discord.Guild, current_role_id: str | None):
+        opts = [
+            discord.SelectOption(
+                label="\u2795 Create New Role",
+                value="create",
+                description="Create '🌴 On Holiday' with gold color",
+            ),
+        ]
+        for role in guild.roles:
+            if role.is_default() or role >= guild.me.top_role:
+                continue
+            opts.append(
+                discord.SelectOption(
+                    label=role.name,
+                    value=str(role.id),
+                    description=f"ID: {role.id}",
+                    default=(str(role.id) == current_role_id),
+                )
+            )
+        super().__init__(placeholder="Choose a role...", options=opts[:25], row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        value = self.values[0]
+        server_id = str(interaction.guild_id)
+        guild = interaction.guild
+
+        if value == "create":
+            role = await setup_holiday_role(guild)
+        else:
+            role = guild.get_role(int(value))
+            if not role:
+                return await interaction.response.send_message("Role not found.", ephemeral=True)
+
+        serverCollection.update_one(
+            {"_id": server_id},
+            {"$set": {"holiday.role_id": str(role.id)}},
+            upsert=True,
+        )
+
+        hcfg = _holiday_config(server_id)
+        channel_id = hcfg.get("channel_id")
+        if channel_id:
+            ch = guild.get_channel(int(channel_id))
+            if ch:
+                await apply_holiday_overwrites(guild, role, ch)
+
+        server_data = serverCollection.find_one({"_id": server_id}) or {}
+        embed = build_config_embed(server_data, guild)
+        view = ConfigView(server_data, guild, interaction.client)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class HolidayRoleSelectView(ui.View):
+    def __init__(self, server_data: dict, guild: discord.Guild, bot):
+        super().__init__(timeout=120)
+        holiday = server_data.get("holiday") or {}
+        self.add_item(HolidayRoleSelect(guild, holiday.get("role_id")))
 
     @ui.button(label="\u2190 Back", style=discord.ButtonStyle.grey, row=1)
     async def back(self, interaction: discord.Interaction, button: ui.Button):
@@ -298,6 +390,12 @@ class ConfigSelect(ui.Select):
                 description="Delete server or user data",
             ),
             discord.SelectOption(
+                label="Holiday Setup",
+                value="holiday",
+                emoji="\U0001f334",
+                description="Configure holiday role and channel",
+            ),
+            discord.SelectOption(
                 label="Degradation Rates",
                 value="degradation",
                 emoji="\U0001f4c9",
@@ -334,6 +432,17 @@ class ConfigSelect(ui.Select):
             rem_f = study_embed.fields[1].value if len(study_embed.fields) > 1 else ""
             embed.description = f"**Current Settings:**\n{rem_f}"
             edit_view = ActionView("reminder", server_data, interaction.guild, interaction.client)
+            await interaction.response.edit_message(embed=embed, view=edit_view)
+
+        elif value == "holiday":
+            embed = discord.Embed(
+                title="\U0001f334 Holiday Setup",
+                color=config.msgColor,
+                timestamp=datetime.now(),
+            )
+            holiday_f = study_embed.fields[2].value if len(study_embed.fields) > 2 else ""
+            embed.description = f"**Current Settings:**\n{holiday_f}"
+            edit_view = ActionView("holiday", server_data, interaction.guild, interaction.client)
             await interaction.response.edit_message(embed=embed, view=edit_view)
 
         elif value == "degradation":
@@ -393,6 +502,13 @@ class SubActionSelect(ui.Select):
             opts = [
                 discord.SelectOption(label="Edit Degradation Rates", value="edit_rates", emoji="\U0001f4c8", description="Change wood and iron degradation rates"),
             ]
+        elif section == "holiday":
+            opts = [
+                discord.SelectOption(label="Set Role", value="role", emoji="\U0001f3f4\ufe0f", description="Create or link a holiday role"),
+                discord.SelectOption(label="Set Channel", value="channel", emoji="#\uFE0F\u20E3", description="Choose the holiday channel"),
+                discord.SelectOption(label="Send Panel", value="panel", emoji="\U0001f4e3", description="Send the holiday panel to the channel"),
+                discord.SelectOption(label="Remove Holiday Config", value="delete_holiday", emoji="\u274c", description="Remove holiday role, channel, and panel"),
+            ]
         elif section == "delete":
             opts = [
                 discord.SelectOption(label="Delete Study Config", value="delete_study", emoji="\U0001f4c2", description="Remove study category and create VC"),
@@ -444,6 +560,72 @@ class SubActionSelect(ui.Select):
             if value == "edit_rates":
                 modal = DegradationModal()
                 await interaction.response.send_modal(modal)
+
+        elif self.section == "holiday":
+            perm_err = _require_perms(interaction.guild)
+            if perm_err:
+                return await interaction.response.send_message(perm_err, ephemeral=True)
+
+            if value == "role":
+                view = HolidayRoleSelectView(server_data, interaction.guild, interaction.client)
+                embed = discord.Embed(
+                    title="\U0001f3f4\ufe0f Holiday Role",
+                    description="Choose an existing role or create a new one.",
+                    color=config.msgColor,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            elif value == "channel":
+                view = ChannelPickView(server_data, interaction.guild, interaction.client, target="holiday_channel")
+                embed = discord.Embed(
+                    title="#\uFE0F\u20E3 Holiday Channel",
+                    description="Choose the text channel for the holiday panel.",
+                    color=config.msgColor,
+                )
+                await interaction.response.edit_message(embed=embed, view=view)
+
+            elif value == "panel":
+                hcfg = _holiday_config(interaction.guild_id)
+                channel_id = hcfg.get("channel_id")
+                if not channel_id:
+                    return await interaction.response.send_message(
+                        "Set a holiday channel first.", ephemeral=True
+                    )
+                ch = interaction.guild.get_channel(int(channel_id))
+                if not ch:
+                    return await interaction.response.send_message(
+                        f"Channel <#{channel_id}> not found.", ephemeral=True
+                    )
+                await interaction.response.defer(ephemeral=True)
+                panel_msg_id = await send_holiday_panel(ch)
+                if panel_msg_id:
+                    serverCollection.update_one(
+                        {"_id": server_id},
+                        {"$set": {"holiday.panel_message_id": panel_msg_id}},
+                    )
+                await interaction.followup.send(
+                    f"\u2705 Panel sent to {ch.mention}.", ephemeral=True
+                )
+
+            elif value == "delete_holiday":
+                hcfg = _holiday_config(interaction.guild_id)
+                role_id = hcfg.get("role_id")
+                if role_id:
+                    role = interaction.guild.get_role(int(role_id))
+                    if role:
+                        try:
+                            await role.delete(reason="Holiday config removed")
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
+                serverCollection.update_one(
+                    {"_id": server_id}, {"$unset": {"holiday": ""}}
+                )
+                server_data = serverCollection.find_one({"_id": server_id}) or {}
+                embed = build_config_embed(server_data, interaction.guild)
+                view = ConfigView(server_data, interaction.guild, interaction.client)
+                await interaction.response.edit_message(
+                    embed=embed, view=view
+                )
 
         elif self.section == "delete":
             if not interaction.user.guild_permissions.manage_guild:
@@ -1985,6 +2167,270 @@ class Study(commands.Cog):
 
 HOLIDAY_COST_PER_DAY = 150
 
+HOLIDAY_PANEL_CUSTOM_ID = "holiday_panel_view"
+HOLIDAY_BTN_CUSTOM_ID = "holiday_panel_take"
+HOLIDAY_BACK_CUSTOM_ID = "holiday_panel_back"
+
+# ===================== HOLIDAY HELPERS =====================
+
+
+def _holiday_config(guild_id) -> dict:
+    """Return the holiday section of a server's config, or empty dict."""
+    server_data = serverCollection.find_one({"_id": str(guild_id)}) or {}
+    return server_data.get("holiday") or {}
+
+
+def _require_perms(guild: discord.Guild) -> str | None:
+    """Return an error string if the bot is missing required permissions, else None."""
+    me = guild.me
+    needed = []
+    if not me.guild_permissions.manage_roles:
+        needed.append("Manage Roles (to create/assign the holiday role)")
+    if not me.guild_permissions.manage_channels:
+        needed.append("Manage Channels (to set channel overwrites)")
+    if needed:
+        return "I need the following permissions:\n" + "\n".join(f"• **{p}**" for p in needed)
+    return None
+
+
+async def setup_holiday_role(guild: discord.Guild, existing_role_id: int | None = None) -> discord.Role:
+    """Return the holiday role, creating one if needed."""
+    if existing_role_id:
+        role = guild.get_role(existing_role_id)
+        if role:
+            return role
+    return await guild.create_role(
+        name="\U0001f334 On Holiday",
+        color=discord.Color.gold(),
+        reason="Holiday system — auto-created",
+    )
+
+
+async def apply_holiday_overwrites(guild: discord.Guild, role: discord.Role, holiday_channel: discord.TextChannel):
+    """Lock the holiday role out of every channel except the holiday channel."""
+    for ch in guild.channels:
+        try:
+            if ch.id == holiday_channel.id:
+                await ch.set_permissions(
+                    role,
+                    overwrite=discord.PermissionOverwrite(
+                        view_channel=True,
+                        send_messages=True,
+                        read_message_history=True,
+                        embed_links=True,
+                        attach_files=True,
+                    ),
+                    reason="Holiday system — allow holiday channel",
+                )
+            else:
+                await ch.set_permissions(
+                    role,
+                    overwrite=discord.PermissionOverwrite(view_channel=False),
+                    reason="Holiday system — deny non-holiday channels",
+                )
+        except discord.Forbidden:
+            continue
+        except discord.HTTPException:
+            continue
+    # Hide the holiday channel from @everyone
+    try:
+        await holiday_channel.set_permissions(
+            guild.default_role,
+            overwrite=discord.PermissionOverwrite(view_channel=False),
+            reason="Holiday system — hide from @everyone",
+        )
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+
+async def assign_holiday_role(member: discord.Member) -> bool:
+    """Assign the holiday role to a member. Returns True on success."""
+    hcfg = _holiday_config(member.guild.id)
+    role_id = hcfg.get("role_id")
+    if not role_id:
+        return False
+    role = member.guild.get_role(int(role_id))
+    if not role:
+        return False
+    if role in member.roles:
+        return True
+    try:
+        await member.add_roles(role, reason="Holiday system")
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
+
+
+async def remove_holiday_role(member: discord.Member) -> bool:
+    """Remove the holiday role from a member. Returns True if removed."""
+    hcfg = _holiday_config(member.guild.id)
+    role_id = hcfg.get("role_id")
+    if not role_id:
+        return False
+    role = member.guild.get_role(int(role_id))
+    if not role or role not in member.roles:
+        return False
+    try:
+        await member.remove_roles(role, reason="Holiday ended")
+        return True
+    except (discord.Forbidden, discord.HTTPException):
+        return False
+
+
+async def send_holiday_panel(channel: discord.TextChannel) -> str | None:
+    """Send the persistent holiday panel embed and return the message ID."""
+    embed = discord.Embed(
+        title="\U0001f334 Holiday Channel",
+        description=(
+            "Take a break without losing your streak.\n\n"
+            "\U0001f334 **Holiday** — Pay with Wood to freeze your streak for 1-7 days.\n"
+            "\U0001f7e2 **I'm Back** — Done resting? Click to restore full server access.\n\n"
+            "_Streak protection continues until your holiday timer expires._"
+        ),
+        color=discord.Color.gold(),
+    )
+    view = HolidayPanelView()
+    msg = await channel.send(embed=embed, view=view)
+    return str(msg.id)
+
+
+class HolidayPanelView(discord.ui.View):
+    """Persistent panel in the holiday channel. Re-attached on bot restart."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Holiday",
+        style=discord.ButtonStyle.green,
+        emoji="\U0001f334",
+        custom_id=HOLIDAY_BTN_CUSTOM_ID,
+    )
+    async def take_holiday(self, inter: discord.Interaction, button: discord.ui.Button):
+        user_id = str(inter.user.id)
+        user_data = userCollection.find_one({"_id": user_id})
+        if not user_data:
+            return await inter.response.send_message(
+                embed=discord.Embed(description="No account found. Visit the website first.", color=discord.Color.red()),
+                ephemeral=True,
+            )
+
+        holiday_until = user_data.get("holiday_until")
+        if holiday_until:
+            if holiday_until.tzinfo is None:
+                holiday_until = holiday_until.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) < holiday_until:
+                remaining = holiday_until - datetime.now(timezone.utc)
+                hours = int(remaining.total_seconds() // 3600)
+                mins = int((remaining.total_seconds() % 3600) // 60)
+                return await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=f"\U0001f3d6\ufe0f You're already on holiday! **{hours}h {mins}m** remaining.",
+                        color=discord.Color.orange(),
+                    ),
+                    ephemeral=True,
+                )
+
+        await inter.response.send_message(
+            embed=discord.Embed(
+                title="\U0001f334 How many days?",
+                description=f"Cost: **{HOLIDAY_COST_PER_DAY} \U0001fab5** per paid day. Free days are used first.",
+                color=discord.Color.gold(),
+            ),
+            view=HolidayDaySelectView(user_id),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="I'm Back",
+        style=discord.ButtonStyle.green,
+        emoji="\U0001f7e2",
+        custom_id=HOLIDAY_BACK_CUSTOM_ID,
+    )
+    async def im_back(self, inter: discord.Interaction, button: discord.ui.Button):
+        member = inter.user if isinstance(inter.user, discord.Member) else inter.guild.get_member(inter.user.id)
+        if not member:
+            return await inter.response.send_message("Could not find your member record.", ephemeral=True)
+
+        removed = await remove_holiday_role(member)
+        if not removed:
+            return await inter.response.send_message(
+                embed=discord.Embed(
+                    description="You don't have the holiday role. You already have full access!",
+                    color=discord.Color.greyple(),
+                ),
+                ephemeral=True,
+            )
+
+        desc = "\u2705 Welcome back! Full server access restored."
+        user_data = userCollection.find_one({"_id": str(inter.user.id)}) or {}
+        holiday_until = user_data.get("holiday_until")
+        if holiday_until:
+            if holiday_until.tzinfo is None:
+                holiday_until = holiday_until.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) < holiday_until:
+                desc += "\n\n_Your streak protection is still active until the holiday timer expires._"
+        await inter.response.send_message(
+            embed=discord.Embed(description=desc, color=discord.Color.green()),
+            ephemeral=True,
+        )
+
+
+class HolidayDaySelectView(ui.View):
+    def __init__(self, user_id: str):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+
+    @ui.select(
+        placeholder="Select days...",
+        options=[discord.SelectOption(label=f"{d} Day{'s' if d > 1 else ''}", value=d) for d in range(1, 8)],
+    )
+    async def select_days(self, inter: discord.Interaction, select: ui.Select):
+        days = int(select.values[0])
+        user_id = self.user_id
+        user_data = userCollection.find_one({"_id": user_id})
+        if not user_data:
+            return await inter.response.edit_message(content="Account not found.", embed=None, view=None)
+
+        free_days = user_data.get("holiday", 0)
+        free_days_used = min(free_days, days)
+        paid_days = days - free_days_used
+        total_wood_cost = paid_days * HOLIDAY_COST_PER_DAY
+
+        resources = user_data.get("economy", {}).get("resources", {})
+        wood_data = resources.get("wood", {})
+        current_wood, _ = degrade.apply(
+            wood_data.get("amount", 0),
+            wood_data.get("degraded_at"),
+            0.05,
+        )
+
+        if paid_days > 0 and current_wood < total_wood_cost:
+            return await inter.response.edit_message(
+                content=f"You need **{total_wood_cost} Wood** for {paid_days} day{'s' if paid_days > 1 else ''}. You have **{int(current_wood)} Wood**.",
+                embed=None,
+                view=None,
+            )
+
+        embed = discord.Embed(
+            title="\U0001f334 Holiday",
+            description=f"Take a **{days} day{'s' if days > 1 else ''}** holiday?\n\nYour streak will be frozen, and mentions/DMs will be paused.\n",
+            color=discord.Color.teal(),
+        )
+        if free_days_used > 0:
+            embed.add_field(name="Free Days", value=f"**{free_days_used}** day{'s' if free_days_used > 1 else ''}", inline=True)
+        if paid_days > 0:
+            embed.add_field(name="Wood Cost", value=f"**{total_wood_cost}** \U0001fab5 ({paid_days} \u00d7 {HOLIDAY_COST_PER_DAY})", inline=True)
+
+        view = HolidayConfirmView(
+            user_id=user_id,
+            days=days,
+            wood_cost=total_wood_cost,
+            free_days_used=free_days_used,
+            paid_days=paid_days,
+        )
+        await inter.response.edit_message(embed=embed, view=view)
+
 
 class HolidayConfirmView(discord.ui.View):
     def __init__(self, user_id: str, days: int, wood_cost: int, free_days_used: int, paid_days: int):
@@ -2032,13 +2478,21 @@ class HolidayConfirmView(discord.ui.View):
 
         userCollection.update_one({"_id": self.user_id}, update_ops)
 
+        # Assign the holiday role so the user is locked to the holiday channel.
+        member = inter.guild.get_member(int(self.user_id)) if inter.guild else None
+        role_assigned = False
+        if member:
+            role_assigned = await assign_holiday_role(member)
+
         desc = f"Holiday activated for **{self.days} day{'s' if self.days > 1 else ''}**!\n"
         desc += f"Expires: <t:{int(holiday_end.timestamp())}:R>\n\n"
         if self.free_days_used > 0:
             desc += f"Free days used: **{self.free_days_used}**\n"
         if self.paid_days > 0:
-            desc += f"Wood spent: **{self.paid_days * HOLIDAY_COST_PER_DAY}** 🪵\n"
+            desc += f"Wood spent: **{self.paid_days * HOLIDAY_COST_PER_DAY}** \U0001fab5\n"
         desc += "\nStreak frozen. Mentions and DMs paused."
+        if not role_assigned:
+            desc += "\n\n_\u26a0\ufe0f Could not apply the holiday role. Ask an admin to check bot permissions._"
 
         embed = discord.Embed(
             title="🏖️ Holiday Activated!",
@@ -2057,6 +2511,11 @@ class HolidayConfirmView(discord.ui.View):
 class Holiday(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.bot.add_view(HolidayPanelView())
+        logger.info("HolidayPanelView registered")
 
     @app_commands.command(
         name="holiday",
@@ -2142,6 +2601,99 @@ class Holiday(commands.Cog):
             paid_days=paid_days,
         )
         await inter.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @app_commands.command(
+        name="revise-holiday",
+        description="Audit holiday status: who's on holiday, who broke streak, who's intact."
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def revise_holiday(self, inter: discord.Interaction):
+        if not inter.user.guild_permissions.manage_guild:
+            return await inter.response.send_message(
+                "You need **Manage Server** permission.", ephemeral=True
+            )
+        await inter.response.defer(ephemeral=True)
+
+        now = datetime.now(timezone.utc)
+        yesterday = (now - timedelta(days=1)).date().isoformat()
+
+        on_holiday = []
+        broken_streak = []
+        intact_streak = []
+
+        cursor = userCollection.find(
+            {},
+            {"_id": 1, "name": 1, "streak": 1, "holiday_until": 1, "last_study_time": 1, "last_study_date": 1}
+        )
+
+        for doc in cursor:
+            uid = doc["_id"]
+            streak = doc.get("streak", 0)
+            holiday_until = doc.get("holiday_until")
+            name = doc.get("name") or uid
+
+            if holiday_until:
+                if holiday_until.tzinfo is None:
+                    holiday_until = holiday_until.replace(tzinfo=timezone.utc)
+                if now < holiday_until:
+                    remaining = holiday_until - now
+                    hrs = int(remaining.total_seconds() // 3600)
+                    mins = int((remaining.total_seconds() % 3600) // 60)
+                    on_holiday.append(f"\u2705 **{name}** \u2014 streak {streak}, holiday ends in {hrs}h {mins}m")
+                    continue
+
+            last_study = doc.get("last_study_time") or doc.get("last_study_date")
+            if last_study:
+                if isinstance(last_study, str):
+                    last_date = last_study
+                else:
+                    if last_study.tzinfo is None:
+                        last_study = last_study.replace(tzinfo=timezone.utc)
+                    last_date = last_study.date().isoformat()
+            else:
+                last_date = None
+
+            if streak > 0 and (last_date is None or last_date < yesterday):
+                broken_streak.append(f"\u274c **{name}** \u2014 had {streak}-day streak")
+            elif streak > 0:
+                intact_streak.append(f"\U0001f525 **{name}** \u2014 {streak}-day streak")
+
+        def _chunks(items, size=15):
+            for i in range(0, len(items), size):
+                yield "\n".join(items[i:i+size])
+
+        embed = discord.Embed(
+            title="\U0001f4cb Holiday Audit",
+            description=f"Scanned **{sum(len(x) for x in [on_holiday, broken_streak, intact_streak])}** users.",
+            color=config.msgColor,
+            timestamp=now,
+        )
+
+        if on_holiday:
+            pages = list(_chunks(on_holiday))
+            embed.add_field(name=f"\U0001f3d6\ufe0f On Holiday ({len(on_holiday)})", value=pages[0], inline=False)
+            for page in pages[1:]:
+                embed.add_field(name="\u200b", value=page, inline=False)
+        else:
+            embed.add_field(name="\U0001f3d6\ufe0f On Holiday (0)", value="Nobody currently on holiday.", inline=False)
+
+        if broken_streak:
+            pages = list(_chunks(broken_streak))
+            embed.add_field(name=f"\u274c Broken Streak ({len(broken_streak)})", value=pages[0], inline=False)
+            for page in pages[1:]:
+                embed.add_field(name="\u200b", value=page, inline=False)
+        else:
+            embed.add_field(name="\u274c Broken Streak (0)", value="No broken streaks.", inline=False)
+
+        if intact_streak:
+            pages = list(_chunks(intact_streak))
+            embed.add_field(name=f"\U0001f525 Intact Streak ({len(intact_streak)})", value=pages[0], inline=False)
+            for page in pages[1:]:
+                embed.add_field(name="\u200b", value=page, inline=False)
+        else:
+            embed.add_field(name="\U0001f525 Intact Streak (0)", value="No intact streaks.", inline=False)
+
+        await inter.followup.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot):

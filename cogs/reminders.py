@@ -627,6 +627,31 @@ class Reminders(commands.Cog):
         msg = msg.replace("{streak}", str(streak))
         return msg
 
+    async def _auto_holiday_role(self, uid: str):
+        """Assign the holiday role to a member after their streak breaks."""
+        try:
+            for guild in self.bot.guilds:
+                server_data = serverCollection.find_one({"_id": str(guild.id)}) or {}
+                hcfg = server_data.get("holiday") or {}
+                role_id = hcfg.get("role_id")
+                if not role_id:
+                    continue
+                role = guild.get_role(int(role_id))
+                if not role:
+                    continue
+                member = guild.get_member(int(uid))
+                if not member:
+                    continue
+                if role in member.roles:
+                    continue
+                try:
+                    await member.add_roles(role, reason="Streak broken — auto-holiday")
+                except (discord.Forbidden, discord.HTTPException):
+                    pass
+                return
+        except Exception:
+            pass
+
     # ===================== CACHE REFRESH =====================
 
     async def refresh_reminders_cache(self):
@@ -968,6 +993,10 @@ class Reminders(commands.Cog):
                         pass
 
                     self._break_streak(uid)
+
+                    # Auto-assign holiday role so broken-streak users are
+                    # restricted to the holiday channel.
+                    await self._auto_holiday_role(uid)
 
                     taskLog.during(
                         status_code=50,
