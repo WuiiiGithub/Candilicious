@@ -487,30 +487,47 @@ async def on_ready():
     # would miss freshly loaded commands, leaving them to appear late.
     await bot.extensions_ready.wait()
 
+    try:
+        global_cmds = await bot.tree.sync()
+        cmd_names = [c.name for c in global_cmds]
+        log.complete(
+            status_code=100,
+            message="Global Sync",
+            details=f"Synced {len(global_cmds)} global command(s): {', '.join(cmd_names)}",
+        )
+    except Exception as e:
+        log.error(
+            status_code=-75,
+            message="Global Sync Fail",
+            details=f"Failed to sync global commands: {e}",
+        )
+
     guild_ids = config.availableIn.get("guilds", [])
 
     async def _sync_guild(g_id):
         try:
             guild = discord.Object(id=g_id)
-            await bot.tree.sync(guild=guild)
-            log.process(
-                status_code=75,
-                message="Synced",
-                details=f"Synced application commands for guild: {g_id}",
+            guild_cmds = await bot.tree.sync(guild=guild)
+            cmd_names = [c.name for c in guild_cmds]
+            log.complete(
+                status_code=100,
+                message="Guild Sync",
+                details=f"Guild {g_id} — {len(guild_cmds)} command(s): {', '.join(cmd_names)}",
             )
         except Exception as e:
             log.error(
                 status_code=-75,
-                message="Sync Fail",
-                details=f"Failed to sync commands for guild {g_id}:\n{e}",
+                message="Guild Sync Fail",
+                details=f"Failed to sync commands for guild {g_id}: {e}",
             )
 
-    await asyncio.gather(*(_sync_guild(g) for g in guild_ids))
+    if guild_ids:
+        await asyncio.gather(*(_sync_guild(g) for g in guild_ids))
 
     log.complete(
         status_code=100,
-        message="Executed",
-        details="Successfully synced application commands for all configured guilds.",
+        message="Sync Complete",
+        details=f"Global sync done. {len(guild_ids)} guild(s) synced individually.",
     )
     log.send("Bot Events")
 
@@ -626,29 +643,38 @@ app.include_router(
 
 async def load():
     log = SystemLogger(filename=filename)
+    loaded_cogs = []
+    failed_cogs = []
     try:
-        for ext_file in os.listdir("cogs"):
-            if ext_file.endswith(".py"):
+        for ext_file in sorted(os.listdir("cogs")):
+            if ext_file.endswith(".py") and not ext_file.startswith("__"):
+                cog_name = ext_file[:-3]
                 try:
-                    log.loading(
-                        status_code=50,
-                        message="Extension",
-                        details=f"Attempting to load cog extension: {ext_file}",
+                    await bot.load_extension(f"cogs.{cog_name}")
+                    cog_obj = bot.get_cog(cog_name)
+                    cmd_count = len(cog_obj.app_commands) if cog_obj else 0
+                    cmd_names = [c.name for c in cog_obj.app_commands] if cog_obj else []
+                    loaded_cogs.append((cog_name, cmd_names))
+                    log.complete(
+                        status_code=100,
+                        message="Loaded",
+                        details=f"{cog_name} — {cmd_count} command(s): {', '.join(cmd_names) if cmd_names else '(none)'}",
                     )
-                    await bot.load_extension(f"cogs.{ext_file[:-3]}")
                 except Exception as e:
+                    failed_cogs.append((cog_name, str(e)))
                     log.error(
                         status_code=-75,
                         message="Load Fail",
-                        details=f"Failed to load extension {ext_file}:\n{e}",
+                        details=f"Failed to load {cog_name}: {e}",
                     )
     finally:
         bot.extensions_ready.set()
 
+    total_cmds = sum(len(cmds) for _, cmds in loaded_cogs)
     log.complete(
         status_code=100,
-        message="Executed",
-        details="Extension loading process completed.",
+        message="Loader Complete",
+        details=f"{len(loaded_cogs)} cog(s) loaded, {len(failed_cogs)} failed, {total_cmds} command(s) total",
     )
     log.send("Loader")
 
