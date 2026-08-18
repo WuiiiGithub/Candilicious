@@ -32,6 +32,10 @@ class JoinRequest(BaseModel):
     initial_time: dict | None = None
 
 
+class AbsorbRequest(BaseModel):
+    target_session_id: str
+
+
 def _normalize_initial_time(raw: dict | None) -> dict:
     """Whitelist initial_time so clients cannot smuggle arbitrary fields into
     the members document."""
@@ -263,6 +267,119 @@ async def _remove_user_from_session(request: Request, user_id: str, session_doc:
             {"session_id": session_id},
             {"$set": {"members_count": sess.members_count}},
         )
+
+
+@router.get("/my-active")
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
+async def get_my_active_session(
+    request: Request,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+    user_doc = await request.app.db["users"].find_one(
+        {"_id": user_id},
+        {"current_session": 1},
+    )
+    if not user_doc or not user_doc.get("current_session"):
+        return {"session_id": None}
+
+    session_id = user_doc["current_session"]
+    session_doc = await request.app.db["sessions"].find_one({"session_id": session_id})
+    if not session_doc:
+        await request.app.db["users"].update_one(
+            {"_id": user_id},
+            {"$unset": {"current_session": ""}},
+        )
+        return {"session_id": None}
+
+    members_raw = session_doc.get("members", {})
+    if user_id not in members_raw:
+        return {"session_id": None}
+
+    return {
+        "session_id": session_id,
+        "guild_id": session_doc.get("guild_id", ""),
+        "channel_id": session_doc.get("channel_id", ""),
+        "owner_id": session_doc.get("owner_id"),
+        "is_owner": session_doc.get("owner_id") == user_id,
+    }
+
+
+@router.post("/{session_id}/absorb")
+@limiter.limit("10/minute", key_func=rate_limit_ip)
+@limiter.limit("20/hour", key_func=rate_limit_user)
+async def absorb_session(
+    request: Request,
+    session_id: str,
+    body: AbsorbRequest,
+    payload: dict = Depends(verify_token),
+):
+    user_id = payload.get("sub")
+    target_session_id = body.target_session_id
+
+    web_doc = await request.app.db["sessions"].find_one({"session_id": session_id})
+    if not web_doc:
+        raise HTTPException(status_code=404, detail="Web session not found")
+
+    web_members = web_doc.get("members", {})
+    if user_id not in web_members:
+        raise HTTPException(status_code=400, detail="You are not in this session")
+
+    if web_doc.get("owner_id") != user_id:
+        raise HTTPException(status_code=403, detail="Only the session owner can absorb")
+
+    target_doc = await request.app.db["sessions"].find_one({"session_id": target_session_id})
+    if not target_doc:
+        raise HTTPException(status_code=404, detail="Target Discord session not found")
+
+    target_members = target_doc.get("members", {})
+    if user_id not in target_members:
+        raise HTTPException(status_code=400, detail="You are not in the target session")
+
+    web_member_data = web_members[user_id]
+    if isinstance(web_member_data, dict):
+        web_time = web_member_data.get("net_time", {"cam": 0, "ss": 0, "noact": 0, "total": 0})
+    else:
+        web_time = {"cam": 0, "ss": 0, "noact": 0, "total": 0}
+
+    target_member_data = target_members.get(user_id, {})
+    if isinstance(target_member_data, dict):
+        existing_time = target_member_data.get("net_time", {"cam": 0, "ss": 0, "noact": 0, "total": 0})
+    else:
+        existing_time = {"cam": 0, "ss": 0, "noact": 0, "total": 0}
+
+    merged_time = {
+        "cam": existing_time.get("cam", 0) + web_time.get("cam", 0),
+        "ss": existing_time.get("ss", 0) + web_time.get("ss", 0),
+        "noact": existing_time.get("noact", 0) + web_time.get("noact", 0),
+        "total": existing_time.get("total", 0) + web_time.get("total", 0),
+    }
+
+    await request.app.db["sessions"].update_one(
+        {"session_id": target_session_id},
+        {"$set": {f"members.{user_id}.net_time": merged_time}},
+    )
+
+    sm = getattr(getattr(request.app.state, "bot", None), "session_manager", None)
+    if sm and target_session_id in sm.active_sessions:
+        sess = sm.active_sessions[target_session_id]
+        if user_id in sess.members and isinstance(sess.members[user_id], dict):
+            sess.members[user_id]["net_time"] = merged_time
+        sm.sync(sess)
+
+    event_bus = getattr(request.app.state, "event_bus", None)
+    await _remove_user_from_session(request, user_id, web_doc, event_bus)
+
+    await request.app.db["users"].update_one(
+        {"_id": user_id},
+        {"$set": {"current_session": target_session_id}},
+    )
+
+    if sm:
+        sm.user_sessions[user_id] = target_session_id
+
+    return {"ok": 1, "merged_time": merged_time}
 
 
 @router.get("/{session_id}")

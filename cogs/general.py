@@ -199,24 +199,6 @@ class General(commands.Cog):
         finally:
             cmdLog.send()
 
-    @app_commands.command(name="vote", description="Vote for the bot.")
-    async def vote(self, inter: discord.Interaction):
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        try:
-            cmdLog.process(status_code=50, name="Vote", details="Handling vote command request...")
-            await inter.response.send_message(
-                embed=discord.Embed(
-                    description="This command will be available in the next release.",
-                    color=discord.Color.blurple()
-                ),
-                ephemeral=True
-            )
-            cmdLog.process(status_code=100, name="Disabled", details="Vote command disabled — future release.")
-        except Exception:
-            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
-        finally:
-            cmdLog.send()
-
     @app_commands.command(name="mute", description="Mute bot notifications for yourself")
     @app_commands.choices(duration=[
         app_commands.Choice(name="1 Hour", value="1hr"),

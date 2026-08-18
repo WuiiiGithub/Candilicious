@@ -39,6 +39,8 @@ except pymongo.errors.OperationFailure:
     pass
 dropsCollection.create_index("expire_at", expireAfterSeconds=0)
 activitySessionCollection = db["session.logs"]
+shieldCollection = db["vc.shields"]
+shieldCollection.create_index("expires_at", expireAfterSeconds=0)
 
 from library import dseshpy
 from library.recovery import RecoveryManager
@@ -1199,6 +1201,17 @@ class Study(commands.Cog):
             if before.channel and str(getattr(before.channel, 'category_id', '')) == category_id and str(before.channel.id) != create_vc_id:
                 # Delete it if it's empty
                 if len(before.channel.members) == 0:
+                    # Check if channel is shielded
+                    channel_id_str = str(before.channel.id)
+                    now = datetime.now(timezone.utc)
+                    shield_doc = shieldCollection.find_one({
+                        "channel_id": channel_id_str,
+                        "expires_at": {"$gt": now}
+                    })
+                    if shield_doc:
+                        log.process(status_code=75, message="Shield Active", details=f"VC {channel_id_str} is shielded, skipping deletion.")
+                        log.send()
+                        return
                     try:
                         await before.channel.delete()
                         old_ch_id = str(before.channel.id)
@@ -1242,6 +1255,216 @@ class Study(commands.Cog):
             log.error(status_code=-100, message="Error", details=traceback.format_exc())
             log.send()
 
+
+
+class ShieldConfirmView(discord.ui.View):
+    def __init__(self, user_id: str, channel_id: str, channel_name: str, shield_cost: int, wood_amount: float, wood_dt):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.channel_id = channel_id
+        self.channel_name = channel_name
+        self.shield_cost = shield_cost
+        self.wood_amount = wood_amount
+        self.wood_dt = wood_dt
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green, emoji="\U0001f6e1\ufe0f")
+    async def confirm(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.user_id:
+            return await inter.response.send_message("This isn't your menu.", ephemeral=True)
+
+        await inter.response.defer(ephemeral=True)
+
+        user_data = userCollection.find_one({"_id": self.user_id})
+        if not user_data:
+            return await inter.followup.send("Account not found.", ephemeral=True)
+
+        resources = user_data.get("economy", {}).get("resources", {})
+        wood_data = resources.get("wood", {})
+        current_wood, wood_dt = degrade.apply(
+            wood_data.get("amount", 0),
+            wood_data.get("degraded_at"),
+            0.05
+        )
+
+        if current_wood < self.shield_cost:
+            return await inter.followup.send(
+                f"Not enough Wood. You need **`{self.shield_cost}`** but only have **`{int(current_wood)}`**. Try again.",
+                ephemeral=True
+            )
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=config.SHIELD_TTL_HOURS)
+
+        userCollection.update_one(
+            {"_id": self.user_id},
+            {"$set": {
+                "economy.resources.wood.amount": current_wood - self.shield_cost,
+                "economy.resources.wood.degraded_at": wood_dt,
+            }}
+        )
+
+        shieldCollection.insert_one({
+            "channel_id": self.channel_id,
+            "guild_id": str(inter.guild.id),
+            "shielded_by": self.user_id,
+            "shielded_at": now,
+            "expires_at": expires_at,
+        })
+
+        embed = discord.Embed(
+            title="\U0001f6e1\ufe0f VC Shielded",
+            description=(
+                f"**{self.channel_name}** is now protected from deletion for **{config.SHIELD_TTL_HOURS} hours**.\n"
+                f"Expires: <t:{int(expires_at.timestamp())}:R>\n\n"
+                f"-\U0001fab5 **{self.shield_cost}** Wood"
+            ),
+            color=discord.Color.green()
+        )
+        embed.set_thumbnail(url="https://i.imgur.com/8XyyFqG.png")
+
+        await inter.followup.send(embed=embed, ephemeral=True)
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        cmdLog.process(status_code=100, name="Shielded", details=f"User {self.user_id} shielded VC {self.channel_id} for {config.SHIELD_TTL_HOURS}h (-{self.shield_cost} wood)")
+        cmdLog.send()
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red, emoji="\u2716\ufe0f")
+    async def cancel(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.user_id:
+            return
+        await inter.response.edit_message(content="Shield cancelled.", embed=None, view=None)
+        self.stop()
+
+
+    @app_commands.guild_only()
+    @app_commands.command(
+        name="shield",
+        description="Shield your study VC from deletion for 24 hours.",
+    )
+    async def shield(self, inter: discord.Interaction):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            user_id = str(inter.user.id)
+
+            if not inter.user.voice or not inter.user.voice.channel:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="You need to be in a study voice channel to use this.",
+                        color=discord.Color.red()
+                    ),
+                    ephemeral=True
+                )
+                return
+
+            channel = inter.user.voice.channel
+            channel_id = str(channel.id)
+
+            study_data = serverCollection.find_one({"_id": str(inter.guild.id)})
+            category_id = study_data.get("category") if study_data else None
+            if not category_id or str(channel.category_id) != category_id:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="This command only works in a study voice channel.",
+                        color=discord.Color.red()
+                    ),
+                    ephemeral=True
+                )
+                return
+
+            existing = shieldCollection.find_one({
+                "channel_id": channel_id,
+                "expires_at": {"$gt": datetime.now(timezone.utc)}
+            })
+            if existing:
+                expires = existing["expires_at"]
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=f"This channel is already shielded until <t:{int(expires.timestamp())}:R>.",
+                        color=discord.Color.orange()
+                    ),
+                    ephemeral=True
+                )
+                return
+
+            user_data = userCollection.find_one({"_id": user_id})
+            if not user_data:
+                await inter.response.send_message(
+                    embed=discord.Embed(description="No account found. Visit the website first.", color=discord.Color.red()),
+                    ephemeral=True
+                )
+                return
+
+            resources = user_data.get("economy", {}).get("resources", {})
+
+            is_premium = False
+            premium_data = user_data.get("premium", {})
+            if premium_data and premium_data.get("expire_at"):
+                exp = premium_data["expire_at"]
+                if isinstance(exp, datetime):
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                    is_premium = exp > datetime.now(timezone.utc)
+
+            if not is_premium:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description="This command is exclusive to **Pro** subscribers.\n\n**[Subscribe](https://candilicious.web.app)** to unlock VC Shield.",
+                        color=discord.Color.red()
+                    ),
+                    ephemeral=True
+                )
+                return
+
+            wood_data = resources.get("wood", {})
+            wood_amount, wood_dt = degrade.apply(
+                wood_data.get("amount", 0),
+                wood_data.get("degraded_at"),
+                0.05
+            )
+
+            shield_cost = config.SHIELD_WOOD_COST
+
+            if wood_amount < shield_cost:
+                await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=f"You need **`{shield_cost}`** \U0001fab5 Wood to shield this VC. You have **`{int(wood_amount)}`**.",
+                        color=discord.Color.red()
+                    ),
+                    ephemeral=True
+                )
+                return
+
+            embed = discord.Embed(
+                title="\U0001f6e1\ufe0f VC Shield",
+                description=(
+                    f"Protect **{channel.name}** from deletion for **{config.SHIELD_TTL_HOURS} hours**?\n\n"
+                    f"\U0001fab5 Wood: **`{int(wood_amount)}`** \u2192 **`{int(wood_amount) - shield_cost}`**\n"
+                    f"Cost: **`{shield_cost}`** \U0001fab5 Wood\n"
+                    f"Expires: <t:{int((datetime.now(timezone.utc) + timedelta(hours=config.SHIELD_TTL_HOURS)).timestamp())}:R>"
+                ),
+                color=discord.Color.gold()
+            )
+            embed.set_thumbnail(url="https://i.imgur.com/8XyyFqG.png")
+            embed.set_footer(text="Click Confirm to activate the shield.")
+
+            view = ShieldConfirmView(
+                user_id=user_id,
+                channel_id=channel_id,
+                channel_name=channel.name,
+                shield_cost=shield_cost,
+                wood_amount=wood_amount,
+                wood_dt=wood_dt,
+            )
+            await inter.response.send_message(embed=embed, view=view, ephemeral=True)
+
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+            if not inter.response.is_done():
+                await inter.response.send_message("Something went wrong.", ephemeral=True)
+        finally:
+            cmdLog.send()
 
 
     @app_commands.guild_only()
@@ -1569,18 +1792,6 @@ class Study(commands.Cog):
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
             cmdLog.send()
-
-    @app_commands.guild_only()
-    @app_commands.command(
-        name="delete", description="Request deletion of your data"
-    )
-    async def delete(self, inter: discord.Interaction):
-        embed = discord.Embed(
-            title="\U0001f4ac Data Deletion Request",
-            description="To delete your personal data, please join the **Candilicious** support server and open a ticket.\n\n**[Join Candilicious Server](https://discord.gg/candilicious)**",
-            color=config.msgColor,
-        )
-        await inter.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name='shell', description='execute special commands')
     async def shell(self, inter: discord.Interaction, cmd: str):

@@ -163,8 +163,8 @@ class Community(commands.Cog):
             pass
 
     @app_commands.guild_only()
-    @app_commands.command(name='find', description='Find a study buddy.')
-    async def find(self, inter: discord.Interaction):
+    @app_commands.command(name='lookup', description='Find a study buddy.')
+    async def lookup(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
             user_id = str(inter.user.id)

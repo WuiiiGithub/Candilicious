@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import math
 import random
 from datetime import datetime, timedelta, timezone
 
+import pymongo
 import config
 import discord
 from discord import ui
@@ -18,13 +20,27 @@ logger = logging.getLogger(__name__)
 userCollection = db["users"]
 configCollection = db["config"]
 jailCollection = db["robber"]
+activityChannels = db["robber.activity.channels"]
+activityMembers = db["robber.activity.members"]
+
+try:
+    activityChannels.drop_index("last_at_1")
+except pymongo.errors.OperationFailure:
+    pass
+activityChannels.create_index("last_at", expireAfterSeconds=7 * 86400)
+
+try:
+    activityMembers.drop_index("last_at_1")
+except pymongo.errors.OperationFailure:
+    pass
+activityMembers.create_index("last_at", expireAfterSeconds=7 * 86400)
 
 ROAST_LINES = [
     "Nothing to rob here! Someone skipped too many study sessions.",
     "Zero wood? Go study first, then we'll talk business!",
     "I came for your wood but found nothing but excuses. Hit the books, my friend!",
     "Your pockets are as empty as your study logs. Get back to studying!",
-    "Not a single piece of wood to steal — that's what no studying does to a person!",
+    "Not a single piece of wood to steal \u2014 that's what no studying does to a person!",
     "Even your wood is scared of you. Try studying, then I'll come back for a real robbery!",
     "This robbery is a bust! Come back when you've actually studied and earned some wood!",
     "I'd rob you, but your wallet has cobwebs. Maybe open a book before opening a shop!",
@@ -32,14 +48,6 @@ ROAST_LINES = [
 
 
 class RobberView(ui.View):
-    """The jail button. Only the victim can press it.
-
-    The view times out after ``config.ROB_MESSAGE_TTL`` seconds; if the victim
-    presses jail before that, ``jailed`` is set, ``on_jail`` fires (locking
-    Billu up for the day) and ``stop()`` is called so the caller knows the wood
-    must be returned instead of stolen.
-    """
-
     def __init__(
         self,
         victim_id: str,
@@ -66,7 +74,7 @@ class RobberView(ui.View):
             response_embed.set_thumbnail(url="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExbXhoeXk1cmhmbGc2eGhqeXJqaTJ0OGVqdWwxdnZyaW1xc2tldnVmaSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/k1oI9MmH9nxJfxfy0o/giphy.gif")
             response_embed.set_footer(text="Credits to Giphy", icon_url="https://giphy.com/static/img/giphy-logo.webp")
             return await interaction.response.send_message(
-                embed=response_embed, 
+                embed=response_embed,
                 ephemeral=True
             )
 
@@ -86,7 +94,7 @@ class RobberView(ui.View):
             embed.description = (
                 f"\U0001f6a8 Police caught **Billu Badmosh**! He's locked up for "
                 f"the rest of the day. Your **{self.amount} \U0001fab5 wood** "
-                f"is safe — money returned!"
+                f"is safe \u2014 money returned!"
             )
             embed.color = discord.Color.green()
 
@@ -97,18 +105,19 @@ class RobberView(ui.View):
 
 
 class Robber(commands.Cog):
-    """Billu Badmosh — a mischievous robber who visits every server roughly
-    every hour (plus or minus a random 15 minutes).
+    """Billu Badmosh \u2014 a mischievous robber who appears when the server is active.
 
-    He picks a random member, tries to steal up to 50 wood from them and gives
-    the victim 10 seconds to hit the Jail button. If jailed, the police catch
-    him and the wood is returned. Otherwise the wood is gone. Victims with no
-    wood at all just get roasted instead.
+    Victim selection is weighted by chat activity in the most active channel.
+    Top chatters have higher odds, but noise ensures random members also get
+    a chance \u2014 keeping things unpredictable and fair.
     """
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.robber_loop.start()
+        self._track_channel = None
+        if config.ROB_TRACK_CHANNEL:
+            self._track_channel = config.ROB_TRACK_CHANNEL.lower()
 
         cogLog.log_cog(
             action="starting",
@@ -119,11 +128,47 @@ class Robber(commands.Cog):
     def cog_unload(self):
         self.robber_loop.cancel()
 
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot or message.guild is None:
+            return
+        if self._track_channel is not None:
+            ch_name = (message.channel.name or "").lower()
+            if ch_name != self._track_channel:
+                return
+
+        now = datetime.now(timezone.utc)
+        guild_id = str(message.guild.id)
+        channel_id = str(message.channel.id)
+        user_id = str(message.author.id)
+
+        activityChannels.update_one(
+            {"_id": channel_id},
+            {"$set": {"guild_id": guild_id, "last_at": now}, "$inc": {"count": 1}},
+            upsert=True,
+        )
+        activityMembers.update_one(
+            {"_id": f"{channel_id}:{user_id}"},
+            {"$set": {"guild_id": guild_id, "channel_id": channel_id, "user_id": user_id, "last_at": now}, "$inc": {"count": 1}},
+            upsert=True,
+        )
+
     def _find_target_channel(self, guild: discord.Guild):
-        """Prefer the server's general channel, else its default channel."""
+        """Pick the most active text channel from activity tracking, fallback to general."""
+        window = datetime.now(timezone.utc) - timedelta(hours=24)
+        guild_id = str(guild.id)
+
+        top = activityChannels.find_one(
+            {"guild_id": guild_id, "last_at": {"$gt": window}},
+            sort=[("count", -1)],
+        )
+        if top:
+            ch = guild.get_channel(int(top["_id"]))
+            if ch and ch.permissions_for(guild.me).send_messages:
+                return ch
+
         candidates = [
-            c
-            for c in guild.text_channels
+            c for c in guild.text_channels
             if c.permissions_for(guild.me).send_messages
         ]
         if not candidates:
@@ -133,13 +178,84 @@ class Robber(commands.Cog):
             if channel.name.lower() in ("general", "general-chat", "main", "main-chat"):
                 return channel
 
-        if (
-            guild.system_channel
-            and guild.system_channel.permissions_for(guild.me).send_messages
-        ):
+        if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
             return guild.system_channel
 
         return candidates[0]
+
+    async def _pick_victim(self, guild: discord.Guild, channel: discord.TextChannel):
+        """Weighted victim selection based on chat activity with noise.
+
+        - Top 10 chatters share ~60% probability, decaying exponentially (#1 > #2 > ... > #10).
+        - Remaining ~40% spread across ALL non-bot guild members (including top 10).
+        - 20% noise chance: fully random pick, ignoring weights entirely.
+        """
+        guild_id = str(guild.id)
+        channel_id = str(channel.id)
+
+        all_members = [m for m in guild.members if not m.bot]
+        if not all_members:
+            try:
+                all_members = [m async for m in guild.fetch_members() if not m.bot]
+            except Exception:
+                return None
+        if not all_members:
+            return None
+
+        noise = random.random() < config.ROB_NOISE_CHANCE
+        if noise:
+            return random.choice(all_members)
+
+        top_docs = list(
+            activityMembers.find({"channel_id": channel_id, "guild_id": guild_id})
+            .sort("count", -1)
+            .limit(10)
+        )
+
+        if not top_docs:
+            return random.choice(all_members)
+
+        top_ids = [d["user_id"] for d in top_docs]
+        top_counts = [d["count"] for d in top_docs]
+
+        total_top = sum(top_counts)
+        if total_top == 0:
+            return random.choice(all_members)
+
+        active_mass = 0.60
+        random_mass = 0.40
+
+        weights = {}
+        for i, uid in enumerate(top_ids):
+            rank_weight = math.exp(-0.25 * i)
+            ratio = top_counts[i] / total_top
+            weights[uid] = rank_weight * ratio
+
+        total_weight = sum(weights.values())
+        if total_weight > 0:
+            for uid in weights:
+                weights[uid] = (weights[uid] / total_weight) * active_mass
+
+        per_random = random_mass / max(len(all_members), 1)
+        for m in all_members:
+            mid = str(m.id)
+            if mid in weights:
+                weights[mid] += per_random
+            else:
+                weights[mid] = per_random
+
+        total = sum(weights.values())
+        if total <= 0:
+            return random.choice(all_members)
+
+        r = random.random() * total
+        cumulative = 0.0
+        for m in all_members:
+            cumulative += weights.get(str(m.id), 0)
+            if r <= cumulative:
+                return m
+
+        return all_members[-1]
 
     def _jailed_until(self):
         doc = jailCollection.find_one({"_id": "state"}, {"jailed_until": 1})
@@ -156,7 +272,6 @@ class Robber(commands.Cog):
         return until is not None and now < until
 
     def _jail_billu(self) -> datetime:
-        """Lock Billu up for the rest of the current (UTC) day."""
         now = datetime.now(timezone.utc)
         until = (now + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
@@ -207,25 +322,31 @@ class Robber(commands.Cog):
         embed.set_footer(text="Credits to Giphy", icon_url="https://giphy.com/static/img/giphy-logo.webp")
         return embed
 
+    def _has_recent_activity(self, guild_id: str) -> bool:
+        """Check if there's been message activity in the last window."""
+        window = datetime.now(timezone.utc) - timedelta(minutes=config.ROB_ACTIVITY_WINDOW_MIN)
+        return activityChannels.count_documents(
+            {"guild_id": guild_id, "last_at": {"$gt": window}},
+            limit=1,
+        ) > 0
+
     async def _rob_guild(self, guild_id: int):
         guild = self.bot.get_guild(guild_id)
         if not guild:
+            return
+
+        if not self._has_recent_activity(str(guild_id)):
+            logger.info("No recent activity in guild %s, skipping robbery.", guild_id)
             return
 
         channel = self._find_target_channel(guild)
         if not channel:
             return
 
-        members = [m for m in guild.members if not m.bot]
-        if not members:
-            try:
-                members = [m async for m in guild.fetch_members() if not m.bot]
-            except Exception:
-                members = []
-        if not members:
+        victim = await self._pick_victim(guild, channel)
+        if not victim:
             return
 
-        victim = random.choice(members)
         victim_id = str(victim.id)
         wood = self._get_wood(victim_id)
         who = f"<@{victim_id}>" if not is_muted(victim_id) else victim_id
@@ -284,7 +405,7 @@ class Robber(commands.Cog):
 
         if self._is_jailed(now):
             logger.info(
-                "Billu Badmosh is still in jail (until %s) — no robberies today.",
+                "Billu Badmosh is still in jail (until %s) \u2014 no robberies today.",
                 self._jailed_until().isoformat(),
             )
             jitter = random.uniform(

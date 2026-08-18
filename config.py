@@ -87,17 +87,24 @@ RESOURCE_VARIANCE_FACTOR_RATE = 0.001
 RESOURCE_VARIANCE_FACTOR_MIN = 0.1
 
 # Activity tiers
+# iron_chance: No Activity gets 0.02 because Discord API only detects
+# "Go Live" (self_stream), NOT regular screen share.  Screen-share-only
+# users would otherwise land here with 0 % iron forever.
 ACTIVITY_TIERS = [
-    ("No Activity", 1.0, 0.00),
-    ("Stream", 1.5, 0.03),
-    ("Cam", 2.0, 0.08),
-    ("Cam + Stream", 2.5, 0.15),
+    ("No Activity", 1.0, 0.02),
+    ("Stream", 1.5, 0.05),
+    ("Cam", 2.0, 0.10),
+    ("Cam + Stream", 2.5, 0.20),
 ]
 
 # Premium
 PREMIUM_COST = 100
 PREMIUM_TTL_DAYS = 7
 PREMIUM_UNIT = "iron"
+
+# Shield (VC protection) — Pro only
+SHIELD_TTL_HOURS = 24
+SHIELD_WOOD_COST = 50
 
 # Level Up
 LEVEL_UP_XP_PER_MINUTE = 15
@@ -109,6 +116,9 @@ ROB_MEAN_INTERVAL_MIN = 60
 ROB_INTERVAL_JITTER_MIN = 15
 ROB_WOOD_MAX = 50
 ROB_MESSAGE_TTL = 10
+ROB_ACTIVITY_WINDOW_MIN = 30
+ROB_NOISE_CHANCE = 0.20
+ROB_TRACK_CHANNEL = _getenv("ROB_TRACK_CHANNEL", "")
 
 # Streak DMs (daily study calls, streak break notifications)
 ENABLE_STREAK_DMS = True if  _getenv('ENABLE_STREAK_DMS') else False

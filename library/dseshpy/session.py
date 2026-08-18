@@ -1056,6 +1056,7 @@ class SessionManager:
         self.channel_sessions = {}
         self.user_sessions = {}
         self.event_bus = event_bus
+        self._absorption_timeouts: dict[str, asyncio.Task] = {}
 
     def _get_collection(self):
         col = session_collection()
@@ -1126,42 +1127,59 @@ class SessionManager:
             if current_sid and session.session_id != current_sid:
                 old_session = self.active_sessions.get(current_sid)
                 if old_session:
-                    old_user_data = old_session.members.get(member_id)
-                    if old_user_data:
-                        leave_act = old_user_data.get("last_activity", "noact")
-                        old_session._close_sub_session(member_id, leave_act)
-                        old_session.members.pop(member_id, None)
-                        old_owner = old_session.owner_id
-                        if member_id == old_owner:
-                            old_session.owner_id = next(iter(old_session.members)) if old_session.members else None
-                        old_session._update_members_count()
+                    is_web_owner_transfer = (
+                        old_session.channel_id.startswith("w")
+                        and old_session.owner_id == member_id
+                        and old_session.guild_id == "web"
+                    )
 
-                        u_col = collections.get('user')
-                        if u_col is not None:
-                            u_col.update_one(
-                                {"_id": member_id},
-                                {"$unset": {"webToken": "", "current_session": ""}}
-                            )
-
-                        has_discord = any(
-                            not m.get("is_web_user", False)
-                            for m in old_session.members.values()
-                            if isinstance(m, dict)
+                    if is_web_owner_transfer and self.event_bus:
+                        self._cancel_absorption_timeout(member_id)
+                        await old_session._emit_event("absorption_requested", {
+                            "user_id": member_id,
+                            "discord_session_id": session.session_id,
+                        })
+                        self._absorption_timeouts[member_id] = asyncio.create_task(
+                            self._absorption_timeout(member_id, old_session)
                         )
-                        old_ch = old_session.channel_id
-                        if not old_ch.startswith("w") and not has_discord and old_session.members:
-                            old_session.channel_id = f"w{old_session.owner_id}"
-                            old_session.guild_id = "web"
-                            self.channel_sessions.pop(old_ch, None)
-                            self.channel_sessions[old_session.channel_id] = old_session.session_id
+                        current_sid = None
+                    else:
+                        old_user_data = old_session.members.get(member_id)
+                        if old_user_data:
+                            leave_act = old_user_data.get("last_activity", "noact")
+                            old_session._close_sub_session(member_id, leave_act)
+                            old_session.members.pop(member_id, None)
+                            old_owner = old_session.owner_id
+                            if member_id == old_owner:
+                                old_session.owner_id = next(iter(old_session.members)) if old_session.members else None
+                            old_session._update_members_count()
 
-                        if len(old_session.members) == 0:
-                            self._cleanup_session(old_session)
-                        else:
-                            await old_session._emit_event("member_leave", {"user_id": member_id})
-                            if old_session.owner_id != old_owner:
-                                await old_session._emit_event("owner_change", {"owner_id": old_session.owner_id})
-                            self.sync(old_session)
+                            u_col = collections.get('user')
+                            if u_col is not None:
+                                u_col.update_one(
+                                    {"_id": member_id},
+                                    {"$unset": {"webToken": "", "current_session": ""}}
+                                )
+
+                            has_discord = any(
+                                not m.get("is_web_user", False)
+                                for m in old_session.members.values()
+                                if isinstance(m, dict)
+                            )
+                            old_ch = old_session.channel_id
+                            if not old_ch.startswith("w") and not has_discord and old_session.members:
+                                old_session.channel_id = f"w{old_session.owner_id}"
+                                old_session.guild_id = "web"
+                                self.channel_sessions.pop(old_ch, None)
+                                self.channel_sessions[old_session.channel_id] = old_session.session_id
+
+                            if len(old_session.members) == 0:
+                                self._cleanup_session(old_session)
+                            else:
+                                await old_session._emit_event("member_leave", {"user_id": member_id})
+                                if old_session.owner_id != old_owner:
+                                    await old_session._emit_event("owner_change", {"owner_id": old_session.owner_id})
+                                self.sync(old_session)
                 else:
                     u_col = collections.get('user')
                     if u_col is not None:
@@ -1187,6 +1205,46 @@ class SessionManager:
                 self.user_sessions[member_id] = session.session_id
             else:
                 self.user_sessions.pop(member_id, None)
+
+    def _cancel_absorption_timeout(self, member_id: str):
+        task = self._absorption_timeouts.pop(member_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _absorption_timeout(self, member_id: str, web_session: Session):
+        """After 60s with no web confirmation, remove user from web session."""
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            return
+
+        self._absorption_timeouts.pop(member_id, None)
+
+        if member_id not in web_session.members:
+            return
+
+        leave_act = web_session.members[member_id].get("last_activity", "noact") if isinstance(web_session.members[member_id], dict) else "noact"
+        web_session._close_sub_session(member_id, leave_act)
+        web_session.members.pop(member_id, None)
+        old_owner = web_session.owner_id
+        if member_id == old_owner:
+            web_session.owner_id = next(iter(web_session.members)) if web_session.members else None
+        web_session._update_members_count()
+
+        u_col = collections.get('user')
+        if u_col is not None:
+            u_col.update_one(
+                {"_id": member_id},
+                {"$unset": {"webToken": "", "current_session": ""}}
+            )
+
+        if len(web_session.members) == 0:
+            self._cleanup_session(web_session)
+        else:
+            await web_session._emit_event("member_leave", {"user_id": member_id})
+            if web_session.owner_id != old_owner:
+                await web_session._emit_event("owner_change", {"owner_id": web_session.owner_id})
+            self.sync(web_session)
 
     def _cleanup_session(self, session: Session):
         """Remove a session from memory and DB."""
