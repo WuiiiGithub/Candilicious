@@ -1175,19 +1175,8 @@ class Study(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        log = ListenerLogger(filename=filename, event_name="on_ready")
         logger.info("Study cog on_ready fired")
         try:
-            log.process(status_code=0, message="Syncing", details="Trying to sync with Bot Tree...")
-            await self.bot.tree.sync()
-            log.complete(status_code=100, message="Success", details="Bot Tree has been successfully synced.")
-        except Exception:
-            log.error(status_code=-100, message="Error", details=traceback.format_exc())
-        finally:
-            log.send()
-
-        try:
-            # Wait for guild voice states to populate before recovery
             await asyncio.sleep(3)
             await self.recovery.recover()
             self.recovery.start_snapshot_task(interval_minutes=5)

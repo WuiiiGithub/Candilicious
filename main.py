@@ -487,13 +487,18 @@ async def on_ready():
     # would miss freshly loaded commands, leaving them to appear late.
     await bot.extensions_ready.wait()
 
-    try:
-        global_cmds = await bot.tree.sync()
+    def _cog_map(cmds):
         by_cog = {}
-        for c in global_cmds:
-            qualname = getattr(c.callback, "__qualname__", "")
+        for c in cmds:
+            cb = getattr(c, "callback", None)
+            qualname = getattr(cb, "__qualname__", "") if cb is not None else ""
             cog_name = qualname.split(".")[0] if "." in qualname else "top-level"
             by_cog.setdefault(cog_name, []).append(c.name)
+        return by_cog
+
+    try:
+        global_cmds = await bot.tree.sync()
+        by_cog = _cog_map(global_cmds)
         lines = [f"{cog}: {', '.join(cmds)}" for cog, cmds in sorted(by_cog.items())]
         log.complete(
             status_code=100,
@@ -513,11 +518,7 @@ async def on_ready():
         try:
             guild = discord.Object(id=g_id)
             guild_cmds = await bot.tree.sync(guild=guild)
-            by_cog = {}
-            for c in guild_cmds:
-                qualname = getattr(c.callback, "__qualname__", "")
-                cog_name = qualname.split(".")[0] if "." in qualname else "top-level"
-                by_cog.setdefault(cog_name, []).append(c.name)
+            by_cog = _cog_map(guild_cmds)
             lines = [f"{cog}: {', '.join(cmds)}" for cog, cmds in sorted(by_cog.items())]
             log.complete(
                 status_code=100,

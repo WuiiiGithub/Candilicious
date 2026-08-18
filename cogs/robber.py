@@ -103,14 +103,17 @@ class RobberView(ui.View):
             except Exception:
                 logger.exception("Failed to lock up Billu Badmosh")
 
-        embed = interaction.message.embeds[0] if interaction.message.embeds else None
-        if embed is not None:
-            embed.description = (
-                f"\U0001f6a8 Police caught **Billu Badmosh**! He's locked up for "
+        embed = discord.Embed(
+            title="\U0001f6a8 Billu Badmosh Caught!",
+            description=(
+                f"Police caught **Billu Badmosh**! He's locked up for "
                 f"the rest of the day. Your **{self.amount} \U0001fab5 wood** "
                 f"is safe \u2014 money returned!"
-            )
-            embed.color = discord.Color.green()
+            ),
+            color=discord.Color.green(),
+        )
+        embed.set_thumbnail(url="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExbXhoeXk1cmhmbGc2eGhqeXJqaTJ0OGVqdWwxdnZyaW1xc2tldnVmaSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/k1oI9MmH9nxJfxfy0o/giphy.gif")
+        embed.set_footer(text="Credits to Giphy", icon_url="https://giphy.com/static/img/giphy-logo.webp")
 
         await interaction.response.edit_message(
             content=interaction.message.content, embed=embed, view=self

@@ -4,7 +4,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from datetime import datetime
 import os, traceback, random
-from library.logging import CogLogger, CommandLogger, ListenerLogger
+from library.logging import CogLogger, CommandLogger
 from library import degrade, db
 from library.usersync import sync_member_from_discord
 
@@ -138,18 +138,6 @@ class Community(commands.Cog):
         self.bot = bot
         self.activeMembers = set()
         cogLog.log_cog(action="starting", status_code=0, details="Community Cog has been initialized and is ready for member interactions.")
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        log = ListenerLogger(filename=filename, event_name="on_ready")
-        try:
-            log.process(status_code=0, message="Tree Sync", details="Trying to sync the application command tree...")
-            await self.bot.tree.sync()
-            log.complete(status_code=100, message="Sync Success", details="Bot Tree has been successfully synced for the Community cog.")
-        except Exception:
-            log.error(status_code=-100, message="Sync Fail", details=traceback.format_exc())
-        finally:
-            log.send()
 
     @commands.Cog.listener()
     async def on_interaction(self, inter: discord.Interaction):

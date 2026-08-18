@@ -1,7 +1,7 @@
 import discord, config, traceback
 from discord import app_commands, ui
 from discord.ext import commands
-from library.logging import CogLogger, CommandLogger, ListenerLogger
+from library.logging import CogLogger, CommandLogger
 
 filename = __name__.title()
 cogLog = CogLogger(filename=filename)
@@ -74,18 +74,6 @@ class Help(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         cogLog.log_cog(action="starting", status_code=0, details="Help Cog has been initialized.")
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        log = ListenerLogger(filename=filename, event_name="on_ready")
-        try:
-            log.process(status_code=0, message="Tree Sync", details="Trying to sync the application command tree...")
-            await self.bot.tree.sync()
-            log.complete(status_code=100, message="Sync Success", details="Bot Tree has been successfully synced for the Help cog.")
-        except Exception:
-            log.error(status_code=-100, message="Sync Fail", details=traceback.format_exc())
-        finally:
-            log.send()
 
     @app_commands.command(name="help", description="Shows all commands grouped by category.")
     async def help(self, inter: discord.Interaction):

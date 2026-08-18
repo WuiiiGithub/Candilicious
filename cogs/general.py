@@ -2,7 +2,7 @@ from discord import app_commands, Object
 from discord.ext import commands, tasks
 from datetime import datetime, timezone, timedelta
 import os, traceback, discord
-from library.logging import CogLogger, CommandLogger, ListenerLogger
+from library.logging import CogLogger, CommandLogger
 from library import is_muted, db
 import config
 
@@ -49,18 +49,6 @@ class General(commands.Cog):
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
             cmdLog.send()
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        log = ListenerLogger(filename=filename, event_name="on_ready")
-        try:
-            log.process(status_code=0, message="Tree Sync", details="Trying to sync the application command tree...")
-            await self.bot.tree.sync()
-            log.complete(status_code=100, message="Sync Success", details="Bot Tree has been successfully synced for the General cog.")
-        except Exception:
-            log.error(status_code=-100, message="Sync Fail", details=traceback.format_exc())
-        finally:
-            log.send()
 
     @app_commands.command(name='site', description='Shows the site of the bot')
     async def site(self, inter: discord.Interaction):

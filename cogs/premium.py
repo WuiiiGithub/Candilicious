@@ -2,7 +2,7 @@ import discord, os, pymongo, traceback, config
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
-from library.logging import CogLogger, CommandLogger, ListenerLogger
+from library.logging import CogLogger, CommandLogger
 from library import degrade, db
 from datetime import datetime, timezone, timedelta
 
@@ -103,18 +103,6 @@ class Premium(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         cogLog.log_cog(action="starting", status_code=0, details="Premium Cog Initialized")
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        log = ListenerLogger(filename=filename, event_name="on_ready")
-        try:
-            log.process(status_code=0, message="Syncing Tree")
-            await self.bot.tree.sync()
-            log.complete(status_code=100, message="Sync Success")
-        except Exception:
-            log.error(status_code=-100, message="Sync Failed", details=traceback.format_exc())
-        finally:
-            log.send()
 
     @app_commands.command(name="subscribe", description="Subscribe to premium or redeem an offer code")
     async def subscribe(self, inter: discord.Interaction, code: Optional[str] = None):
