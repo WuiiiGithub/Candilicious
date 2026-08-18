@@ -45,7 +45,12 @@ class SubscribeView(discord.ui.View):
 
             existing = premiumCollection.find_one({"user_id": self.user_id})
             if existing:
-                return await inter.response.send_message("You're already subscribed!", ephemeral=True)
+                old_exp = existing.get("expire_at")
+                if isinstance(old_exp, datetime):
+                    if old_exp.tzinfo is None:
+                        old_exp = old_exp.replace(tzinfo=timezone.utc)
+                    if old_exp > datetime.now(timezone.utc):
+                        return await inter.response.send_message("You're already subscribed!", ephemeral=True)
 
             resources = user_data.get("economy", {}).get("resources", {})
             unit_data = resources.get(RESOURCE_UNIT, {})
@@ -98,6 +103,13 @@ class SubscribeView(discord.ui.View):
             cmdLog.send()
             self.stop()
 
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red, emoji="✖\ufe0f")
+    async def cancel_button(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.user_id:
+            return await inter.response.send_message("This isn't your menu.", ephemeral=True)
+        await inter.response.edit_message(content="Cancelled.", embed=None, view=None)
+        self.stop()
+
 
 class Premium(commands.Cog):
     def __init__(self, bot):
@@ -105,17 +117,92 @@ class Premium(commands.Cog):
         cogLog.log_cog(action="starting", status_code=0, details="Premium Cog Initialized")
 
     @app_commands.command(name="subscribe", description="Subscribe to premium or redeem an offer code")
+    @app_commands.describe(code="Optional offer code to redeem")
     async def subscribe(self, inter: discord.Interaction, code: Optional[str] = None):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
-            await inter.response.send_message(
-                embed=discord.Embed(
-                    description="This command will be available in the next release.",
-                    color=discord.Color.blurple()
+            user_id = str(inter.user.id)
+            user_data = userCollection.find_one({"_id": user_id})
+            if not user_data:
+                return await inter.response.send_message(
+                    embed=discord.Embed(description="No account found. Visit the website first.", color=discord.Color.red()),
+                    ephemeral=True
+                )
+
+            if code:
+                offer = premiumOffersCollection.find_one({"code": code.upper()})
+                if not offer:
+                    return await inter.response.send_message(
+                        embed=discord.Embed(description="Invalid offer code.", color=discord.Color.red()),
+                        ephemeral=True
+                    )
+                now = datetime.now(timezone.utc)
+                expire_at = now + timedelta(days=offer.get("ttl_days", config.PREMIUM_TTL_DAYS))
+
+                existing = premiumCollection.find_one({"user_id": user_id})
+                if existing:
+                    old_exp = existing.get("expire_at")
+                    if isinstance(old_exp, datetime):
+                        if old_exp.tzinfo is None:
+                            old_exp = old_exp.replace(tzinfo=timezone.utc)
+                        if old_exp > now:
+                            expire_at = old_exp + timedelta(days=offer.get("ttl_days", config.PREMIUM_TTL_DAYS))
+
+                userCollection.update_one(
+                    {"_id": user_id},
+                    {"$set": {
+                        "premium.type": "pro",
+                        "premium.purchased_at": now,
+                        "premium.expire_at": expire_at,
+                    }}
+                )
+                premiumCollection.update_one(
+                    {"user_id": user_id},
+                    {"$set": {
+                        "type": "pro",
+                        "purchased_at": now,
+                        "expire_at": expire_at,
+                    }},
+                    upsert=True
+                )
+                premiumOffersCollection.delete_one({"code": code.upper()})
+
+                embed = discord.Embed(
+                    title="Premium Activated",
+                    description=f"Offer redeemed! Expires: <t:{int(expire_at.timestamp())}:R>",
+                    color=discord.Color.green()
+                )
+                await inter.response.send_message(embed=embed, ephemeral=True)
+                cmdLog.process(status_code=100, name="Offer Redeemed", details=f"Code {code} redeemed")
+                return
+
+            existing = premiumCollection.find_one({"user_id": user_id})
+            if existing:
+                old_exp = existing.get("expire_at")
+                if isinstance(old_exp, datetime):
+                    if old_exp.tzinfo is None:
+                        old_exp = old_exp.replace(tzinfo=timezone.utc)
+                    if old_exp > datetime.now(timezone.utc):
+                        return await inter.response.send_message(
+                            embed=discord.Embed(
+                                description=f"You're already **Pro**!\nExpires: <t:{int(old_exp.timestamp())}:R>",
+                                color=discord.Color.green()
+                            ),
+                            ephemeral=True
+                        )
+
+            embed = discord.Embed(
+                title="Candilicious Pro",
+                description=(
+                    f"Unlock VC Shield, boost XP, and more.\n\n"
+                    f"**Cost:** {config.PREMIUM_COST} {UNIT_TITLE}\n"
+                    f"**Duration:** {config.PREMIUM_TTL_DAYS} days"
                 ),
-                ephemeral=True
+                color=discord.Color.gold()
             )
-            cmdLog.process(status_code=100, name="Disabled", details="Subscribe command disabled — future release.")
+            view = SubscribeView(user_id=user_id, cost=config.PREMIUM_COST, duration_days=config.PREMIUM_TTL_DAYS)
+            await inter.response.send_message(embed=embed, view=view, ephemeral=True)
+            cmdLog.process(status_code=0, name="Sub Menu", details="Sent subscribe menu")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
@@ -125,14 +212,25 @@ class Premium(commands.Cog):
     async def unsubscribe(self, inter: discord.Interaction):
         cmdLog = CommandLogger(filename=filename, inter=inter)
         try:
+            user_id = str(inter.user.id)
+            existing = premiumCollection.find_one({"user_id": user_id})
+            if not existing:
+                return await inter.response.send_message(
+                    embed=discord.Embed(description="You don't have an active subscription.", color=discord.Color.red()),
+                    ephemeral=True
+                )
+
+            premiumCollection.delete_one({"user_id": user_id})
+            userCollection.update_one(
+                {"_id": user_id},
+                {"$set": {"premium.expire_at": datetime.now(timezone.utc)}}
+            )
+
             await inter.response.send_message(
-                embed=discord.Embed(
-                    description="This command will be available in the next release.",
-                    color=discord.Color.blurple()
-                ),
+                embed=discord.Embed(description="Your **Pro** subscription has been cancelled.", color=discord.Color.orange()),
                 ephemeral=True
             )
-            cmdLog.process(status_code=100, name="Disabled", details="Unsubscribe command disabled — future release.")
+            cmdLog.process(status_code=100, name="Unsubscribed")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
