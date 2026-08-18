@@ -46,6 +46,20 @@ ROAST_LINES = [
     "I'd rob you, but your wallet has cobwebs. Maybe open a book before opening a shop!",
 ]
 
+DONATE_LINES = [
+    "A mysterious billionaire appeared and is throwing resources at everyone!",
+    "Money rain! A generous billionaire is feeling lucky today!",
+    "Breaking: Local billionaire loses wallet, demands you pick it up!",
+    "A wild philanthropist has entered the chat!",
+    "Someone tell Elon \u2014 there's a new billionaire in town!",
+]
+
+DONATE_IRON_LINES = [
+    "A mysterious billionaire appeared and is tossing rare iron scraps!",
+    "Iron rain! A generous billionaire is feeling extra generous today!",
+    "Breaking: Local billionaire found a mine, demands you take some iron!",
+]
+
 
 class RobberView(ui.View):
     def __init__(
@@ -104,8 +118,109 @@ class RobberView(ui.View):
         self.stop()
 
 
+class DonateView(ui.View):
+    def __init__(self, wood: int, iron: int):
+        super().__init__(timeout=config.DONATE_MESSAGE_TTL)
+        self.wood = wood
+        self.iron = iron
+        self.claimed = False
+        self.claimer_id = None
+        if iron <= 0:
+            self.claim_iron.disabled = True
+
+    @ui.button(label="Claim Wood", style=discord.ButtonStyle.green, emoji="\U0001fab5")
+    async def claim_wood(self, interaction: discord.Interaction, button: ui.Button):
+        if self.claimed:
+            return await interaction.response.send_message(
+                "Someone already claimed it!", ephemeral=True
+            )
+        self.claimed = True
+        self.claimer_id = str(interaction.user.id)
+        self.stop()
+
+        userCollection.update_one(
+            {"_id": self.claimer_id},
+            {"$inc": {
+                "economy.resources.wood.amount": self.wood,
+            },
+            "$set": {
+                "economy.resources.wood.degraded_at": datetime.now(timezone.utc),
+            }},
+            upsert=True,
+        )
+
+        embed = discord.Embed(
+            title="\U0001f4b0 Resource Claimed!",
+            description=(
+                f"**{interaction.user.display_name}** claimed "
+                f"**{self.wood} \U0001fab5 wood**"
+                + (f" and **{self.iron} \u26cf iron**!" if self.iron > 0 else "!")
+            ),
+            color=discord.Color.gold(),
+        )
+        embed.set_thumbnail(url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+        embed.set_footer(text="The billionaire tips their hat to you!", icon_url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+
+        await interaction.response.edit_message(
+            embed=embed, view=None
+        )
+
+    @ui.button(label="Claim Iron", style=discord.ButtonStyle.blurple, emoji="\u26cf")
+    async def claim_iron(self, interaction: discord.Interaction, button: ui.Button):
+        if self.claimed:
+            return await interaction.response.send_message(
+                "Someone already claimed it!", ephemeral=True
+            )
+        self.claimed = True
+        self.claimer_id = str(interaction.user.id)
+        self.stop()
+
+        userCollection.update_one(
+            {"_id": self.claimer_id},
+            {"$inc": {
+                "economy.resources.iron.amount": self.iron,
+            },
+            "$set": {
+                "economy.resources.iron.degraded_at": datetime.now(timezone.utc),
+            }},
+            upsert=True,
+        )
+
+        embed = discord.Embed(
+            title="\U0001f4b0 Resource Claimed!",
+            description=(
+                f"**{interaction.user.display_name}** claimed "
+                f"**{self.iron} \u26cf iron**"
+                + (f" and **{self.wood} \U0001fab5 wood**!" if self.wood > 0 else "!")
+            ),
+            color=discord.Color.gold(),
+        )
+        embed.set_thumbnail(url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+        embed.set_footer(text="The billionaire tips their hat to you!", icon_url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+
+        await interaction.response.edit_message(
+            embed=embed, view=None
+        )
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            embed = discord.Embed(
+                title="\U0001f4b0 Donation Expired",
+                description="The billionaire got bored and left. Nobody claimed the resources in time!",
+                color=discord.Color.greyple(),
+            )
+            embed.set_thumbnail(url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+            try:
+                await self.message.edit(embed=embed, view=None)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
 class Robber(commands.Cog):
     """Billu Badmosh \u2014 a mischievous robber who appears when the server is active.
+    A billionaire also occasionally appears to donate resources.
 
     Victim selection is weighted by chat activity in the most active channel.
     Top chatters have higher odds, but noise ensures random members also get
@@ -322,6 +437,28 @@ class Robber(commands.Cog):
         embed.set_footer(text="Credits to Giphy", icon_url="https://giphy.com/static/img/giphy-logo.webp")
         return embed
 
+    def _build_donate_embed(self, wood: int, iron: int) -> discord.Embed:
+        resource_text = f"**{wood} \U0001fab5 wood**"
+        if iron > 0:
+            resource_text += f" and **{iron} \u26cf iron**"
+
+        description = random.choice(DONATE_IRON_LINES if iron > 0 and wood <= 0 else DONATE_LINES)
+        description += f"\n\nFirst to claim gets **{resource_text}**!"
+
+        embed = discord.Embed(
+            title="\U0001f4b0 Billionaire Donated!",
+            description=description,
+            color=discord.Color.gold(),
+        )
+        embed.set_author(name="Mr. Billionaire", icon_url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+        embed.set_thumbnail(url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+        embed.set_image(url="https://i.giphy.com/WoRz0xf3fUBWTWXUJ0.webp")
+        embed.set_footer(
+            text=f"Claim within {config.DONATE_MESSAGE_TTL} seconds!",
+            icon_url="https://giphy.com/static/img/giphy-logo.webp",
+        )
+        return embed
+
     def _has_recent_activity(self, guild_id: str) -> bool:
         """Check if there's been message activity in the last window."""
         window = datetime.now(timezone.utc) - timedelta(minutes=config.ROB_ACTIVITY_WINDOW_MIN)
@@ -329,6 +466,44 @@ class Robber(commands.Cog):
             {"guild_id": guild_id, "last_at": {"$gt": window}},
             limit=1,
         ) > 0
+
+    async def _donate_guild(self, guild_id: int):
+        """Billionaire donates resources to the server. Anyone can claim."""
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
+
+        if not self._has_recent_activity(str(guild_id)):
+            logger.info("No recent activity in guild %s, skipping donation.", guild_id)
+            return
+
+        channel = self._find_target_channel(guild)
+        if not channel:
+            return
+
+        wood = random.randint(config.DONATE_WOOD_MIN, config.DONATE_WOOD_MAX)
+        iron = 0
+        if random.random() < config.DONATE_IRON_CHANCE:
+            iron = random.randint(config.DONATE_IRON_MIN, config.DONATE_IRON_MAX)
+
+        embed = self._build_donate_embed(wood, iron)
+        view = DonateView(wood, iron)
+
+        try:
+            msg = await channel.send(embed=embed, view=view)
+            view.message = msg
+        except (discord.HTTPException, discord.NotFound):
+            return
+
+        await view.wait()
+
+        if view.claimed:
+            logger.info(
+                "Billionaire donation claimed by %s in guild %s (%s wood, %s iron)",
+                view.claimer_id, guild_id, wood, iron,
+            )
+        else:
+            logger.info("Billionaire donation expired unclaimed in guild %s", guild_id)
 
     async def _rob_guild(self, guild_id: int):
         guild = self.bot.get_guild(guild_id)
@@ -422,10 +597,13 @@ class Robber(commands.Cog):
 
         for guild_id in config.availableIn.get("guilds", []):
             try:
-                await self._rob_guild(int(guild_id))
+                if random.random() < config.DONATE_CHANCE:
+                    await self._donate_guild(int(guild_id))
+                else:
+                    await self._rob_guild(int(guild_id))
             except Exception as e:
                 logger.exception(
-                    "Robbery routine failed for guild %s: %s", guild_id, e
+                    "Rob/Donate routine failed for guild %s: %s", guild_id, e
                 )
 
         jitter = random.uniform(

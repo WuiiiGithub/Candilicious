@@ -489,11 +489,16 @@ async def on_ready():
 
     try:
         global_cmds = await bot.tree.sync()
-        cmd_names = [c.name for c in global_cmds]
+        by_cog = {}
+        for c in global_cmds:
+            qualname = getattr(c.callback, "__qualname__", "")
+            cog_name = qualname.split(".")[0] if "." in qualname else "top-level"
+            by_cog.setdefault(cog_name, []).append(c.name)
+        lines = [f"{cog}: {', '.join(cmds)}" for cog, cmds in sorted(by_cog.items())]
         log.complete(
             status_code=100,
             message="Global Sync",
-            details=f"Synced {len(global_cmds)} global command(s): {', '.join(cmd_names)}",
+            details=f"Synced {len(global_cmds)} global command(s):\n" + "\n".join(lines),
         )
     except Exception as e:
         log.error(
@@ -508,11 +513,16 @@ async def on_ready():
         try:
             guild = discord.Object(id=g_id)
             guild_cmds = await bot.tree.sync(guild=guild)
-            cmd_names = [c.name for c in guild_cmds]
+            by_cog = {}
+            for c in guild_cmds:
+                qualname = getattr(c.callback, "__qualname__", "")
+                cog_name = qualname.split(".")[0] if "." in qualname else "top-level"
+                by_cog.setdefault(cog_name, []).append(c.name)
+            lines = [f"{cog}: {', '.join(cmds)}" for cog, cmds in sorted(by_cog.items())]
             log.complete(
                 status_code=100,
                 message="Guild Sync",
-                details=f"Guild {g_id} — {len(guild_cmds)} command(s): {', '.join(cmd_names)}",
+                details=f"Guild {g_id} — {len(guild_cmds)} command(s):\n" + "\n".join(lines),
             )
         except Exception as e:
             log.error(
@@ -651,14 +661,11 @@ async def load():
                 cog_name = ext_file[:-3]
                 try:
                     await bot.load_extension(f"cogs.{cog_name}")
-                    cog_obj = bot.get_cog(cog_name)
-                    cmd_count = len(cog_obj.app_commands) if cog_obj else 0
-                    cmd_names = [c.name for c in cog_obj.app_commands] if cog_obj else []
-                    loaded_cogs.append((cog_name, cmd_names))
+                    loaded_cogs.append(cog_name)
                     log.complete(
                         status_code=100,
                         message="Loaded",
-                        details=f"{cog_name} — {cmd_count} command(s): {', '.join(cmd_names) if cmd_names else '(none)'}",
+                        details=f"{cog_name} — extension loaded",
                     )
                 except Exception as e:
                     failed_cogs.append((cog_name, str(e)))
@@ -670,11 +677,10 @@ async def load():
     finally:
         bot.extensions_ready.set()
 
-    total_cmds = sum(len(cmds) for _, cmds in loaded_cogs)
     log.complete(
         status_code=100,
         message="Loader Complete",
-        details=f"{len(loaded_cogs)} cog(s) loaded, {len(failed_cogs)} failed, {total_cmds} command(s) total",
+        details=f"{len(loaded_cogs)} cog(s) loaded, {len(failed_cogs)} failed",
     )
     log.send("Loader")
 

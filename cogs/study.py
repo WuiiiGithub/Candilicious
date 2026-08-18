@@ -1072,6 +1072,85 @@ class VCSetView(ui.View):
         await interaction.response.edit_message(content="Panel closed.", embed=None, view=None)
 
 
+class ShieldConfirmView(discord.ui.View):
+    def __init__(self, user_id: str, channel_id: str, channel_name: str, shield_cost: int, wood_amount: float, wood_dt):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.channel_id = channel_id
+        self.channel_name = channel_name
+        self.shield_cost = shield_cost
+        self.wood_amount = wood_amount
+        self.wood_dt = wood_dt
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green, emoji="\U0001f6e1\ufe0f")
+    async def confirm(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.user_id:
+            return await inter.response.send_message("This isn't your menu.", ephemeral=True)
+
+        await inter.response.defer(ephemeral=True)
+
+        user_data = userCollection.find_one({"_id": self.user_id})
+        if not user_data:
+            return await inter.followup.send("Account not found.", ephemeral=True)
+
+        resources = user_data.get("economy", {}).get("resources", {})
+        wood_data = resources.get("wood", {})
+        current_wood, wood_dt = degrade.apply(
+            wood_data.get("amount", 0),
+            wood_data.get("degraded_at"),
+            0.05
+        )
+
+        if current_wood < self.shield_cost:
+            return await inter.followup.send(
+                f"Not enough Wood. You need **`{self.shield_cost}`** but only have **`{int(current_wood)}`**. Try again.",
+                ephemeral=True
+            )
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=config.SHIELD_TTL_HOURS)
+
+        userCollection.update_one(
+            {"_id": self.user_id},
+            {"$set": {
+                "economy.resources.wood.amount": current_wood - self.shield_cost,
+                "economy.resources.wood.degraded_at": wood_dt,
+            }}
+        )
+
+        shieldCollection.insert_one({
+            "channel_id": self.channel_id,
+            "guild_id": str(inter.guild.id),
+            "shielded_by": self.user_id,
+            "shielded_at": now,
+            "expires_at": expires_at,
+        })
+
+        embed = discord.Embed(
+            title="\U0001f6e1\ufe0f VC Shielded",
+            description=(
+                f"**{self.channel_name}** is now protected from deletion for **{config.SHIELD_TTL_HOURS} hours**.\n"
+                f"Expires: <t:{int(expires_at.timestamp())}:R>\n\n"
+                f"-\U0001fab5 **{self.shield_cost}** Wood"
+            ),
+            color=discord.Color.green()
+        )
+        embed.set_thumbnail(url="https://i.imgur.com/8XyyFqG.png")
+
+        await inter.followup.send(embed=embed, ephemeral=True)
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        cmdLog.process(status_code=100, name="Shielded", details=f"User {self.user_id} shielded VC {self.channel_id} for {config.SHIELD_TTL_HOURS}h (-{self.shield_cost} wood)")
+        cmdLog.send()
+        self.stop()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red, emoji="\u2716\ufe0f")
+    async def cancel(self, inter: discord.Interaction, button: discord.ui.Button):
+        if str(inter.user.id) != self.user_id:
+            return
+        await inter.response.edit_message(content="Shield cancelled.", embed=None, view=None)
+        self.stop()
+
+
 class Study(commands.Cog):
     def __init__(self, bot):
         # general vars
@@ -1255,85 +1334,6 @@ class Study(commands.Cog):
             log.error(status_code=-100, message="Error", details=traceback.format_exc())
             log.send()
 
-
-
-class ShieldConfirmView(discord.ui.View):
-    def __init__(self, user_id: str, channel_id: str, channel_name: str, shield_cost: int, wood_amount: float, wood_dt):
-        super().__init__(timeout=60)
-        self.user_id = user_id
-        self.channel_id = channel_id
-        self.channel_name = channel_name
-        self.shield_cost = shield_cost
-        self.wood_amount = wood_amount
-        self.wood_dt = wood_dt
-
-    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green, emoji="\U0001f6e1\ufe0f")
-    async def confirm(self, inter: discord.Interaction, button: discord.ui.Button):
-        if str(inter.user.id) != self.user_id:
-            return await inter.response.send_message("This isn't your menu.", ephemeral=True)
-
-        await inter.response.defer(ephemeral=True)
-
-        user_data = userCollection.find_one({"_id": self.user_id})
-        if not user_data:
-            return await inter.followup.send("Account not found.", ephemeral=True)
-
-        resources = user_data.get("economy", {}).get("resources", {})
-        wood_data = resources.get("wood", {})
-        current_wood, wood_dt = degrade.apply(
-            wood_data.get("amount", 0),
-            wood_data.get("degraded_at"),
-            0.05
-        )
-
-        if current_wood < self.shield_cost:
-            return await inter.followup.send(
-                f"Not enough Wood. You need **`{self.shield_cost}`** but only have **`{int(current_wood)}`**. Try again.",
-                ephemeral=True
-            )
-
-        now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(hours=config.SHIELD_TTL_HOURS)
-
-        userCollection.update_one(
-            {"_id": self.user_id},
-            {"$set": {
-                "economy.resources.wood.amount": current_wood - self.shield_cost,
-                "economy.resources.wood.degraded_at": wood_dt,
-            }}
-        )
-
-        shieldCollection.insert_one({
-            "channel_id": self.channel_id,
-            "guild_id": str(inter.guild.id),
-            "shielded_by": self.user_id,
-            "shielded_at": now,
-            "expires_at": expires_at,
-        })
-
-        embed = discord.Embed(
-            title="\U0001f6e1\ufe0f VC Shielded",
-            description=(
-                f"**{self.channel_name}** is now protected from deletion for **{config.SHIELD_TTL_HOURS} hours**.\n"
-                f"Expires: <t:{int(expires_at.timestamp())}:R>\n\n"
-                f"-\U0001fab5 **{self.shield_cost}** Wood"
-            ),
-            color=discord.Color.green()
-        )
-        embed.set_thumbnail(url="https://i.imgur.com/8XyyFqG.png")
-
-        await inter.followup.send(embed=embed, ephemeral=True)
-        cmdLog = CommandLogger(filename=filename, inter=inter)
-        cmdLog.process(status_code=100, name="Shielded", details=f"User {self.user_id} shielded VC {self.channel_id} for {config.SHIELD_TTL_HOURS}h (-{self.shield_cost} wood)")
-        cmdLog.send()
-        self.stop()
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.red, emoji="\u2716\ufe0f")
-    async def cancel(self, inter: discord.Interaction, button: discord.ui.Button):
-        if str(inter.user.id) != self.user_id:
-            return
-        await inter.response.edit_message(content="Shield cancelled.", embed=None, view=None)
-        self.stop()
 
 
     @app_commands.guild_only()
@@ -2020,6 +2020,93 @@ class ShieldConfirmView(discord.ui.View):
 
             await inter.response.send_message(embed=embed)
             cmdLog.process(status_code=100, name="Executed", details="Balance displayed.")
+        except Exception:
+            cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
+        finally:
+            cmdLog.send()
+
+    @app_commands.command(name='donate', description='Donate wood or iron to another user')
+    @app_commands.describe(user="The user to donate to", amount="Amount to donate", resource="Wood or iron (default: wood)")
+    @app_commands.choices(resource=[
+        app_commands.Choice(name="\U0001fab5 Wood", value="wood"),
+        app_commands.Choice(name="\U0001f529 Iron", value="iron"),
+    ])
+    async def donate(self, inter: discord.Interaction, user: discord.Member, amount: int, resource: app_commands.Choice[str] = None):
+        cmdLog = CommandLogger(filename=filename, inter=inter)
+        try:
+            if user.bot:
+                return await inter.response.send_message(
+                    embed=discord.Embed(description="You can't donate to bots!", color=discord.Color.red()),
+                    ephemeral=True,
+                )
+            if user.id == inter.user.id:
+                return await inter.response.send_message(
+                    embed=discord.Embed(description="You can't donate to yourself!", color=discord.Color.red()),
+                    ephemeral=True,
+                )
+            if amount <= 0:
+                return await inter.response.send_message(
+                    embed=discord.Embed(description="Amount must be positive!", color=discord.Color.red()),
+                    ephemeral=True,
+                )
+
+            resource_type = resource.value if resource else "wood"
+            resource_emoji = "\U0001fab5" if resource_type == "wood" else "\U0001f529"
+            resource_name = "Wood" if resource_type == "wood" else "Iron"
+
+            cmdLog.process(status_code=0, name="Waiting", details=f"Fetching {inter.user.display_name}'s balance...")
+            sender_id = str(inter.user.id)
+            receiver_id = str(user.id)
+
+            sender_data = userCollection.find_one({"_id": sender_id}) or {}
+            rates_doc = db["config"].find_one({"_id": "degradation_rates"}) or {}
+            wood_rate = rates_doc.get("wood", 0.05)
+            iron_rate = rates_doc.get("iron", 0.03)
+
+            sender_resources = sender_data.get("economy", {}).get("resources", {})
+            res_data = sender_resources.get(resource_type, {})
+            current_amount, degraded_dt = degrade.apply(
+                res_data.get("amount", 0), res_data.get("degraded_at"),
+                wood_rate if resource_type == "wood" else iron_rate,
+            )
+
+            if current_amount < amount:
+                return await inter.response.send_message(
+                    embed=discord.Embed(
+                        description=f"Not enough {resource_name.lower()}! You have **`{int(current_amount)}`** {resource_emoji} but tried to donate **`{amount}`**.",
+                        color=discord.Color.red(),
+                    ),
+                    ephemeral=True,
+                )
+
+            userCollection.update_one(
+                {"_id": sender_id},
+                {"$set": {
+                    f"economy.resources.{resource_type}.amount": current_amount - amount,
+                    f"economy.resources.{resource_type}.degraded_at": degraded_dt,
+                }},
+            )
+            userCollection.update_one(
+                {"_id": receiver_id},
+                {"$inc": {
+                    f"economy.resources.{resource_type}.amount": amount,
+                },
+                "$set": {
+                    f"economy.resources.{resource_type}.degraded_at": datetime.now(timezone.utc),
+                    "name": user.name,
+                    "display_name": user.display_name,
+                    "pfp": str(user.display_avatar.url),
+                }},
+                upsert=True,
+            )
+
+            embed = discord.Embed(
+                title="\U0001f4b0 Donation Sent!",
+                description=f"**{inter.user.display_name}** donated **`{amount}`** {resource_emoji} **{resource_name.lower()}** to **{user.display_name}**!",
+                color=discord.Color.green(),
+            )
+            await inter.response.send_message(embed=embed)
+            cmdLog.process(status_code=100, name="Executed", details=f"Donated {amount} {resource_type} from {sender_id} to {receiver_id}.")
         except Exception:
             cmdLog.process(status_code=-100, name="Error", details=traceback.format_exc())
         finally:
