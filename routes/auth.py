@@ -229,7 +229,8 @@ async def exchange_auth_code(request: Request, body: AuthExchangeRequest):
 
 
 @router.get("/verify")
-@limiter.limit("120/minute", key_func=rate_limit_ip)
+@limiter.limit("30/minute", key_func=rate_limit_ip)
+@limiter.limit("60/hour", key_func=rate_limit_user)
 async def verify(request: Request):
     auth = request.headers.get("authorization")
     if not auth or not auth.lower().startswith("bearer "):

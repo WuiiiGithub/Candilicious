@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 from motor.motor_asyncio import AsyncIOMotorClient
 import routes 
 from routes import (
+    abuse as abuse_routes,
     analytics,
     boards,
     bulk,
@@ -357,6 +358,8 @@ class RequestBodySizeMiddleware:
 app.add_middleware(RequestBodySizeMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(OriginGuardMiddleware)
+from library.abuse import AbuseGuard
+app.add_middleware(AbuseGuard)
 # Bot Setup
 intents = discord.Intents.all()
 
@@ -650,6 +653,11 @@ app.include_router(
     router=analytics.router,
     prefix="/api/analytics",
     tags=["analytics"]
+)
+app.include_router(
+    router=abuse_routes.router,
+    prefix="/api/admin",
+    tags=["abuse"]
 )
 
 async def load():
